@@ -25,14 +25,7 @@ impl HexCoord {
     }
 
     pub const fn neighbor(self, direction: usize) -> Self {
-        const DIRECTIONS: [(i32, i32); 6] = [
-            (1, 0),
-            (1, -1),
-            (0, -1),
-            (-1, 0),
-            (-1, 1),
-            (0, 1),
-        ];
+        const DIRECTIONS: [(i32, i32); 6] = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];
         let (dq, dr) = DIRECTIONS[direction % 6];
         Self::new(self.q + dq, self.r + dr)
     }
