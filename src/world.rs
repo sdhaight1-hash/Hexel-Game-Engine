@@ -15,7 +15,7 @@ impl World {
         let mut world = Self {
             heights: HashMap::new(),
         };
-        let radius = 8;
+        let radius: i32 = 8;
         for q in -radius..=radius {
             for r in -radius..=radius {
                 if (q + r).abs() <= radius {
@@ -141,7 +141,8 @@ fn push_triangle(
         vertices.push(Vertex {
             position: corner,
             uv,
-            color,
+            color: color.into(),
+            normal: macroquad::prelude::Vec4::ZERO,
         });
     }
     indices.extend_from_slice(&[base, base + 1, base + 2]);
