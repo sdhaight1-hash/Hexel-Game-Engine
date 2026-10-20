@@ -77,11 +77,7 @@ impl World {
         for (coord, height) in &self.heights {
             let center = coord.world_xz();
             for y in 0..*height {
-                let corners = hex_corners(
-                    center.x,
-                    center.y,
-                    (y as f32 + 1.0) * HEX_HEIGHT,
-                );
+                let corners = hex_corners(center.x, center.y, (y as f32 + 1.0) * HEX_HEIGHT);
                 let color = terrain_color(*coord, y);
 
                 // Only the top of a column is visible.
