@@ -1,0 +1,9 @@
+[package]
+name = "hexel-engine"
+version = "0.1.0"
+edition = "2021"
+description = "A playable 3D hexagonal-prism world prototype"
+license = "UNLICENSED"
+
+[dependencies]
+macroquad = "0.4.14"
