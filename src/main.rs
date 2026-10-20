@@ -130,7 +130,13 @@ async fn main() {
             2.0,
             WHITE,
         );
-        draw_text("HEXEL ENGINE  /  PLAYABLE PROTOTYPE", 20.0, 30.0, 22.0, WHITE);
+        draw_text(
+            "HEXEL ENGINE  /  PLAYABLE PROTOTYPE",
+            20.0,
+            30.0,
+            22.0,
+            WHITE,
+        );
         draw_text(
             "WASD move  |  Mouse look  |  Left click remove  |  E add  |  R reset",
             20.0,
