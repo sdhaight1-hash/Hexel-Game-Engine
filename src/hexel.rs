@@ -1,4 +1,4 @@
-use macroquad::prelude::{Color, Vec2, Vec3, Vertex};
+use macroquad::prelude::{Color, Vec2, Vec3, Vec4, Vertex};
 
 pub const HEX_RADIUS: f32 = 0.58;
 pub const HEX_HEIGHT: f32 = 1.0;
@@ -57,7 +57,8 @@ pub fn push_quad(
         vertices.push(Vertex {
             position: corner,
             uv,
-            color,
+            color: color.into(),
+            normal: Vec4::ZERO,
         });
     }
     indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
