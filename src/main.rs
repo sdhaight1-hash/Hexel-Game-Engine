@@ -3,7 +3,6 @@ mod world;
 
 use macroquad::prelude::*;
 
-use hexel::HexCoord;
 use world::World;
 
 const LOOK_SENSITIVITY: f32 = 0.003;
@@ -158,9 +157,4 @@ async fn main() {
 
         next_frame().await;
     }
-}
-
-#[allow(dead_code)]
-fn _coord_example(q: i32, r: i32) -> HexCoord {
-    HexCoord::new(q, r)
 }
