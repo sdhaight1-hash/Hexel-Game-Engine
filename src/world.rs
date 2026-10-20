@@ -106,8 +106,9 @@ impl World {
                     if self.height(coord.neighbor(direction)) > y {
                         continue;
                     }
-                    let a = corners[direction];
-                    let b = corners[(direction + 1) % 6];
+                    let edge = (6 - direction) % 6;
+                    let a = corners[edge];
+                    let b = corners[(edge + 1) % 6];
                     push_quad(
                         &mut vertices,
                         &mut indices,
