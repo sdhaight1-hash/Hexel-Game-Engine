@@ -20,10 +20,11 @@ cargo run
 Controls:
 
 - `W A S D`: move
-- Mouse: look around (click the window to capture the mouse; press `Esc` to release)
+- Mouse: look around after capturing it with right-click; press `Esc` to release
 - `Space` / `Left Shift`: move up / down (prototype free-fly movement)
 - Left click: remove the targeted top hexel
-- Right click: add a hexel to the targeted column
+- `E`: add a hexel to the targeted column
+- Right click: capture the mouse (while released)
 - `R`: regenerate the demo terrain
 - `Esc`: release mouse capture
 
