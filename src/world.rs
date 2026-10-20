@@ -21,7 +21,9 @@ impl World {
                 if (q + r).abs() <= radius {
                     let ripple = (q * 3 + r * 5 + q * r).rem_euclid(4) as u32;
                     let edge = ((q.abs() + r.abs() + (q + r).abs()) / 5).min(2) as u32;
-                    world.heights.insert(HexCoord::new(q, r), 2 + ripple - edge.min(1));
+                    world
+                        .heights
+                        .insert(HexCoord::new(q, r), 2 + ripple - edge.min(1));
                 }
             }
         }
@@ -82,11 +84,7 @@ impl World {
 
                 // Only the top of a column is visible.
                 if y + 1 == *height {
-                    let top_center = Vec3::new(
-                        center.x,
-                        (y as f32 + 1.0) * HEX_HEIGHT,
-                        center.y,
-                    );
+                    let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
                     for i in 0..6 {
                         push_triangle(
                             &mut vertices,
