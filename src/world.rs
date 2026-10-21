@@ -94,7 +94,7 @@ impl World {
                 let corners = hex_corners(center.x, center.y, (y as f32 + 1.0) * HEX_HEIGHT);
                 let color = terrain_color(coord, y);
 
-                if y + 1 == *height {
+                if y + 1 == height {
                     let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
                     for i in 0..6 {
                         push_triangle(
