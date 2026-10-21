@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use macroquad::prelude::{Mesh, Vec3, Vertex};
 
-use crate::hexel::{hex_corners, push_quad, terrain_color, HexCoord, HEX_HEIGHT, HEX_RADIUS};
+use crate::hexel::{push_quad, terrain_color, HexCoord, HEX_HEIGHT, HEX_RADIUS};
 
 #[derive(Debug)]
 pub struct World {
@@ -90,7 +90,7 @@ impl World {
 
         let center = coord.world_xz();
         for y in 0..height {
-                let corners = hex_corners(center.x, center.y, (y as f32 + 1.0) * HEX_HEIGHT);
+                let corners = coord_corners(coord, (y as f32 + 1.0) * HEX_HEIGHT);
                 let color = terrain_color(coord, y);
 
                 if y + 1 == height {
@@ -129,6 +129,24 @@ impl World {
 
         Mesh { vertices, indices, texture: None }
     }
+}
+
+
+/// Compute corners from integer grid coordinates rather than adding trigonometric
+/// offsets to each column center. Adjacent columns therefore produce bit-identical
+/// positions for shared vertices, avoiding tiny rasterization cracks at seams.
+fn coord_corners(coord: HexCoord, y: f32) -> [Vec3; 6] {
+    const X_OFFSETS: [i32; 6] = [1, 0, -1, -1, 0, 1];
+    const Z_OFFSETS: [i32; 6] = [1, 2, 1, -1, -2, -1];
+    std::array::from_fn(|i| {
+        let x_twice = 2 * coord.q + coord.r + X_OFFSETS[i];
+        let z_sixths = 3 * coord.r + Z_OFFSETS[i];
+        Vec3::new(
+            x_twice as f32 * 0.5,
+            y,
+            z_sixths as f32 * (3.0_f32.sqrt() / 6.0),
+        )
+    })
 }
 
 fn push_triangle(
@@ -196,13 +214,38 @@ mod tests {
     }
 
     #[test]
-    fn adjacent_hexes_share_an_edge() {
-        let a = hex_corners(0.0, 0.0, 1.0);
-        let east = HexCoord::new(1, 0).world_xz();
-        let b = hex_corners(east.x, east.y, 1.0);
-        assert!((a[5].x - b[3].x).abs() < 0.0001);
-        assert!((a[5].z - b[3].z).abs() < 0.0001);
-        assert!((a[0].x - b[2].x).abs() < 0.0001);
-        assert!((a[0].z - b[2].z).abs() < 0.0001);
+    fn all_six_neighbors_share_bit_identical_edges() {
+        let origin = HexCoord::new(0, 0);
+        let a = coord_corners(origin, 1.0);
+        let edge_pairs = [(5, 0, 3, 2), (4, 5, 2, 1), (3, 4, 1, 0),
+                          (2, 3, 0, 5), (1, 2, 5, 4), (0, 1, 4, 3)];
+        for (direction, (a0, a1, b0, b1)) in edge_pairs.into_iter().enumerate() {
+            let b = coord_corners(origin.neighbor(direction), 1.0);
+            assert_eq!(a[a0], b[b0], "first shared corner in direction {direction}");
+            assert_eq!(a[a1], b[b1], "second shared corner in direction {direction}");
+        }
+    }
+
+    #[test]
+    fn editing_a_column_preserves_neighbor_mesh_edges() {
+        let mut world = World::demo();
+        let coord = HexCoord::new(0, 0);
+        world.add_hexel(coord);
+        world.remove_hexel(coord);
+        let a = coord_corners(coord, 1.0);
+        for direction in 0..6 {
+            let neighbor = coord.neighbor(direction);
+            let b = coord_corners(neighbor, 1.0);
+            let (a0, a1, b0, b1) = match direction {
+                0 => (5, 0, 3, 2),
+                1 => (4, 5, 2, 1),
+                2 => (3, 4, 1, 0),
+                3 => (2, 3, 0, 5),
+                4 => (1, 2, 5, 4),
+                _ => (0, 1, 4, 3),
+            };
+            assert_eq!(a[a0], b[b0]);
+            assert_eq!(a[a1], b[b1]);
+        }
     }
 }
