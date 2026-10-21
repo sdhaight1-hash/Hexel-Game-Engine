@@ -21,8 +21,7 @@ impl World {
                 if (q + r).abs() <= radius {
                     // Keep the starting landscape low and connected; players can
                     // build taller columns with left-click after capturing the mouse.
-                    let ripple = (q * 3 + r * 5 + q * r).rem_euclid(2) as u32;
-                    world.heights.insert(HexCoord::new(q, r), 1 + ripple);
+                    world.heights.insert(HexCoord::new(q, r), 1);
                 }
             }
         }
