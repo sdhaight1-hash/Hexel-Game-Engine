@@ -5,9 +5,11 @@ use macroquad::prelude::*;
 
 use world::World;
 
-const LOOK_SENSITIVITY: f32 = 0.003;
-const MOVE_SPEED: f32 = 8.0;
-const WHEEL_VERTICAL_SPEED: f32 = 0.15;
+const DEFAULT_LOOK_SENSITIVITY: f32 = 0.00015;
+const DEFAULT_MOVE_SPEED: f32 = 8.0;
+const DEFAULT_CAMERA_FOV: f32 = 50.0;
+const DEFAULT_WHEEL_VERTICAL_SPEED: f32 = 0.15;
+
 
 fn window_conf() -> Conf {
     Conf {
@@ -19,9 +21,79 @@ fn window_conf() -> Conf {
     }
 }
 
+fn debug_slider(
+    label: &str,
+    x: f32,
+    y: f32,
+    width: f32,
+    value: &mut f32,
+    min: f32,
+    max: f32,
+) {
+    draw_text(label, x, y, 20.0, WHITE);
+    draw_text(
+        &format!("{:.5}", *value),
+        x + width - 85.0,
+        y,
+        18.0,
+        LIGHTGRAY,
+    );
+
+    let track_x = x;
+    let track_y = y + 18.0;
+    let track_width = width;
+    let track_height = 8.0;
+
+    draw_rectangle(
+        track_x,
+        track_y,
+        track_width,
+        track_height,
+        DARKGRAY,
+    );
+
+    let mut fraction = (*value - min) / (max - min);
+    fraction = fraction.clamp(0.0, 1.0);
+
+    let mouse = mouse_position();
+    let inside_track =
+        mouse.0 >= track_x
+        && mouse.0 <= track_x + track_width
+        && mouse.1 >= track_y - 8.0
+        && mouse.1 <= track_y + track_height + 8.0;
+
+    if is_mouse_button_down(MouseButton::Left) && inside_track {
+        fraction = ((mouse.0 - track_x) / track_width).clamp(0.0, 1.0);
+        *value = min + fraction * (max - min);
+    }
+
+    draw_rectangle(
+        track_x,
+        track_y,
+        track_width * fraction,
+        track_height,
+        SKYBLUE,
+    );
+
+    draw_circle(
+        track_x + track_width * fraction,
+        track_y + track_height * 0.5,
+        7.0,
+        WHITE,
+    );
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut world = World::demo();
+    let mut look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
+    let mut move_speed = DEFAULT_MOVE_SPEED;
+    let mut camera_fov = DEFAULT_CAMERA_FOV;
+    let mut wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
+    let mut debug_menu_open = false;
+    let mut show_grid = true;
+    let mut show_target_outline = true;
+    let mut show_crosshair = true;
     let mut position = vec3(0.0, 9.0, -16.0);
     let mut yaw = 0.0_f32;
     let mut pitch = -0.35_f32;
@@ -36,8 +108,19 @@ async fn main() {
             show_mouse(true);
             set_cursor_grab(false);
         }
+
+        if is_key_pressed(KeyCode::F1) {
+            debug_menu_open = !debug_menu_open;
+
+        if debug_menu_open {
+            captured = false;
+            show_mouse(true);
+            set_cursor_grab(false);
+        }
+        }
+
         // C toggles mouse capture so both mouse buttons remain available for editing.
-        if is_key_pressed(KeyCode::C) {
+        if is_key_pressed(KeyCode::C) && !debug_menu_open {
             captured = !captured;
             show_mouse(!captured);
             set_cursor_grab(captured);
@@ -46,8 +129,8 @@ async fn main() {
 
         if captured {
             let mouse = mouse_position();
-            yaw -= (mouse.0 - previous_mouse.0) * LOOK_SENSITIVITY;
-            pitch -= (mouse.1 - previous_mouse.1) * LOOK_SENSITIVITY;
+            yaw -= (mouse.0 - previous_mouse.0) * look_sensitivity;
+            pitch -= (mouse.1 - previous_mouse.1) * look_sensitivity;
             pitch = pitch.clamp(-1.45, 1.45);
             previous_mouse = mouse;
         }
@@ -55,7 +138,7 @@ async fn main() {
         // Mouse-wheel deltas are discrete; clamp each frame's input and use a
         // small step so a scroll notch nudges the camera rather than jumping it.
         let wheel = mouse_wheel();
-        position.y += wheel.1.clamp(-1.0, 1.0) * WHEEL_VERTICAL_SPEED;
+        position.y += wheel.1.clamp(-1.0, 1.0) * wheel_vertical_speed;
 
         let forward = vec3(
             yaw.sin() * pitch.cos(),
@@ -89,7 +172,7 @@ async fn main() {
             movement.y -= 1.0;
         }
         if movement.length_squared() > 0.0 {
-            position += movement.normalize() * MOVE_SPEED * dt;
+            position += movement.normalize() * move_speed * dt;
         }
 
         if is_key_pressed(KeyCode::R) {
@@ -135,11 +218,15 @@ async fn main() {
             position,
             target: position + forward,
             up: Vec3::new(0.0, -1.0, 0.0),
-            fovy: 50.0,
+            fovy: camera_fov,
             ..Default::default()
         };
+        
         set_camera(&camera);
-        draw_grid(40, 1.0, GRAY, Color::new(0.12, 0.15, 0.19, 1.0));
+        if show_grid {
+            draw_grid(40, 1.0, GRAY, Color::new(0.12, 0.15, 0.19, 1.0));
+        }
+       
         
         
         world.rebuild_dirty_chunks();
@@ -148,35 +235,37 @@ async fn main() {
             draw_mesh(world_mesh);
         }
 
-        // Outline the full targeted hex column.
-       if let Some((coord, layer, _side)) = target {
-            let height = world.height(coord);
+       // Outline the full targeted hex column.
+        if show_target_outline {
+            if let Some((coord, layer, _side)) = target {
+                let height = world.height(coord);
 
-            if height > 0 {
-               let bottom = layer as f32 * hexel::HEX_HEIGHT + 0.015;
-               let top = (layer as f32 + 1.0) * hexel::HEX_HEIGHT + 0.025;
+                if height > 0 {
+                    let bottom = layer as f32 * hexel::HEX_HEIGHT + 0.015;
+                    let top = (layer as f32 + 1.0) * hexel::HEX_HEIGHT + 0.025;
 
-                let bottom_corners = world::coord_corners(coord, bottom);
-                let top_corners = world::coord_corners(coord, top);
+                    let bottom_corners = world::coord_corners(coord, bottom);
+                    let top_corners = world::coord_corners(coord, top);
 
-                for i in 0..6 {
-                    let next = (i + 1) % 6;
+                    for i in 0..6 {
+                        let next = (i + 1) % 6;
 
-                    draw_line_3d(
-                        bottom_corners[i],
-                        bottom_corners[next],
-                        YELLOW,
-                    );
-                    draw_line_3d(
-                        top_corners[i],
-                        top_corners[next],
-                        YELLOW,
-                    );
-                    draw_line_3d(
-                        bottom_corners[i],
-                        top_corners[i],
-                        YELLOW,
-                    );
+                        draw_line_3d(
+                            bottom_corners[i],
+                            bottom_corners[next],
+                            YELLOW,
+                        );
+                        draw_line_3d(
+                            top_corners[i],
+                            top_corners[next],
+                            YELLOW,
+                        );
+                        draw_line_3d(
+                            bottom_corners[i],
+                            top_corners[i],
+                            YELLOW,
+                        );
+                    }
                 }
             }
         }
@@ -185,6 +274,226 @@ async fn main() {
 
 
         let (screen_w, screen_h) = (screen_width(), screen_height());
+        if debug_menu_open {
+    let panel_x = screen_w * 0.5 - 230.0;
+    let panel_y = 90.0;
+    let panel_w = 460.0;
+    let panel_h = 500.0;
+
+    draw_rectangle(
+        panel_x,
+        panel_y,
+        panel_w,
+        panel_h,
+        Color::new(0.035, 0.05, 0.08, 0.97),
+    );
+
+    draw_rectangle_lines(
+        panel_x,
+        panel_y,
+        panel_w,
+        panel_h,
+        2.0,
+        SKYBLUE,
+    );
+
+    draw_text(
+        "DEBUG OPTIONS",
+        panel_x + 20.0,
+        panel_y + 35.0,
+        28.0,
+        SKYBLUE,
+    );
+
+    draw_text(
+        "Camera and movement settings",
+        panel_x + 20.0,
+        panel_y + 60.0,
+        18.0,
+        LIGHTGRAY,
+    );
+
+    let slider_x = panel_x + 20.0;
+    let slider_w = panel_w - 40.0;
+
+    debug_slider(
+        "Mouse sensitivity",
+        slider_x,
+        panel_y + 100.0,
+        slider_w,
+        &mut look_sensitivity,
+        0.00002,
+        0.001,
+    );
+
+    debug_slider(
+        "Camera field of view",
+        slider_x,
+        panel_y + 165.0,
+        slider_w,
+        &mut camera_fov,
+        25.0,
+        85.0,
+    );
+
+    debug_slider(
+        "Movement speed",
+        slider_x,
+        panel_y + 230.0,
+        slider_w,
+        &mut move_speed,
+        1.0,
+        20.0,
+    );
+
+    debug_slider(
+        "Wheel vertical speed",
+        slider_x,
+        panel_y + 295.0,
+        slider_w,
+        &mut wheel_vertical_speed,
+        0.02,
+        1.0,
+    );
+
+        draw_text(
+        "Rendering",
+        panel_x + 20.0,
+        panel_y + 350.0,
+        20.0,
+        SKYBLUE,
+    );
+
+    let toggle_x = panel_x + 20.0;
+    let toggle_y = panel_y + 365.0;
+    let toggle_w = 130.0;
+    let toggle_h = 28.0;
+    let toggle_gap = 145.0;
+    let mouse = mouse_position();
+
+    // Grid toggle
+    let grid_hovered =
+        mouse.0 >= toggle_x
+        && mouse.0 <= toggle_x + toggle_w
+        && mouse.1 >= toggle_y
+        && mouse.1 <= toggle_y + toggle_h;
+
+    draw_rectangle(
+        toggle_x,
+        toggle_y,
+        toggle_w,
+        toggle_h,
+        if grid_hovered { BLUE } else { DARKGRAY },
+    );
+    draw_text(
+        if show_grid { "Grid: ON" } else { "Grid: OFF" },
+        toggle_x + 10.0,
+        toggle_y + 20.0,
+        18.0,
+        WHITE,
+    );
+    if grid_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        show_grid = !show_grid;
+    }
+
+    // Target outline toggle
+    let outline_x = toggle_x + toggle_gap;
+    let outline_hovered =
+        mouse.0 >= outline_x
+        && mouse.0 <= outline_x + toggle_w
+        && mouse.1 >= toggle_y
+        && mouse.1 <= toggle_y + toggle_h;
+
+    draw_rectangle(
+        outline_x,
+        toggle_y,
+        toggle_w,
+        toggle_h,
+        if outline_hovered { BLUE } else { DARKGRAY },
+    );
+    draw_text(
+        if show_target_outline { "Outline: ON" } else { "Outline: OFF" },
+        outline_x + 8.0,
+        toggle_y + 20.0,
+        17.0,
+        WHITE,
+    );
+    if outline_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        show_target_outline = !show_target_outline;
+    }
+
+    // Crosshair toggle
+    let crosshair_x = toggle_x;
+    let crosshair_y = toggle_y + 35.0;
+    let crosshair_hovered =
+        mouse.0 >= crosshair_x
+        && mouse.0 <= crosshair_x + toggle_w
+        && mouse.1 >= crosshair_y
+        && mouse.1 <= crosshair_y + toggle_h;
+
+    draw_rectangle(
+        crosshair_x,
+        crosshair_y,
+        toggle_w,
+        toggle_h,
+        if crosshair_hovered { BLUE } else { DARKGRAY },
+    );
+    draw_text(
+        if show_crosshair { "Crosshair: ON" } else { "Crosshair: OFF" },
+        crosshair_x + 8.0,
+        crosshair_y + 20.0,
+        16.0,
+        WHITE,
+    );
+    if crosshair_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        show_crosshair = !show_crosshair;
+    }
+
+    let reset_x = panel_x + 20.0;
+    let reset_y = panel_y + 435.0;
+    let reset_w = 180.0;
+    let reset_h = 38.0;
+    let mouse = mouse_position();
+
+    let reset_hovered =
+        mouse.0 >= reset_x
+        && mouse.0 <= reset_x + reset_w
+        && mouse.1 >= reset_y
+        && mouse.1 <= reset_y + reset_h;
+
+    draw_rectangle(
+        reset_x,
+        reset_y,
+        reset_w,
+        reset_h,
+        if reset_hovered { BLUE } else { DARKGRAY },
+    );
+
+    draw_text(
+        "Reset defaults",
+        reset_x + 15.0,
+        reset_y + 25.0,
+        20.0,
+        WHITE,
+    );
+
+    if reset_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
+        move_speed = DEFAULT_MOVE_SPEED;
+        camera_fov = DEFAULT_CAMERA_FOV;
+        wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
+    }
+
+        draw_text(
+        "F1: close menu",
+        panel_x + 245.0,
+        reset_y + 25.0,
+        18.0,
+        LIGHTGRAY,
+    );
+    }
+
+       if show_crosshair {
         draw_line(
             screen_w * 0.5 - 7.0,
             screen_h * 0.5,
@@ -201,36 +510,38 @@ async fn main() {
             2.0,
             WHITE,
         );
+    }
+
+    draw_text(
+        "HEXEL ENGINE  /  PLAYABLE PROTOTYPE",
+        20.0,
+        30.0,
+        22.0,
+        WHITE,
+    );
+    draw_text(
+        "WASD move  |  Mouse look  |  Left click add  |  Right click remove  |  R reset",
+        20.0,
+        56.0,
+        18.0,
+        LIGHTGRAY,
+    );
+    draw_text(
+        "Mouse wheel: fine vertical move  |  Space / Shift: vertical move  |  C: capture/release  |  Esc: release",
+        20.0,
+        80.0,
+        16.0,
+        LIGHTGRAY,
+    );
+    if !captured {
         draw_text(
-            "HEXEL ENGINE  /  PLAYABLE PROTOTYPE",
+            "Press C to capture the mouse and edit; press Esc to release it",
             20.0,
-            30.0,
-            22.0,
-            WHITE,
-        );
-        draw_text(
-            "WASD move  |  Mouse look  |  Left click add  |  Right click remove  |  R reset",
-            20.0,
-            56.0,
+            screen_h - 24.0,
             18.0,
-            LIGHTGRAY,
+            YELLOW,
         );
-        draw_text(
-            "Mouse wheel: fine vertical move  |  Space / Shift: vertical move  |  C: capture/release  |  Esc: release",
-            20.0,
-            80.0,
-            16.0,
-            LIGHTGRAY,
-        );
-        if !captured {
-            draw_text(
-                "Press C to capture the mouse and edit; press Esc to release it",
-                20.0,
-                screen_h - 24.0,
-                18.0,
-                YELLOW,
-            );
-        }
+    }
 
         next_frame().await;
     }
