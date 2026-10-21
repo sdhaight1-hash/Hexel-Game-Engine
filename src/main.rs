@@ -120,8 +120,9 @@ async fn main() {
         };
         set_camera(&camera);
         draw_grid(40, 1.0, GRAY, Color::new(0.12, 0.15, 0.19, 1.0));
-        let world_mesh = world.mesh();
-        draw_mesh(&world_mesh);
+        for world_mesh in world.meshes() {
+            draw_mesh(&world_mesh);
+        }
         set_default_camera();
 
         let (screen_w, screen_h) = (screen_width(), screen_height());
