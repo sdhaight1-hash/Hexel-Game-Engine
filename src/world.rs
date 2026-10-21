@@ -48,30 +48,33 @@ impl World {
         }
     }
 
-    /// Approximate raycast by stepping through the view ray and testing hex footprints.
+    /// Step along the view ray and test against a pointy-top hex footprint.
     pub fn raycast(&self, origin: Vec3, direction: Vec3) -> Option<HexCoord> {
         let mut distance = 0.0;
-        while distance < 16.0 {
+        while distance < 32.0 {
             let point = origin + direction * distance;
             if point.y >= 0.0 {
                 let candidate = self.heights.iter().find_map(|(coord, height)| {
                     let center = coord.world_xz();
-                    let dx = point.x - center.x;
-                    let dz = point.z - center.y;
-                    (dx * dx + dz * dz < HEX_RADIUS * HEX_RADIUS * 0.78
-                        && point.y <= *height as f32 * HEX_HEIGHT)
+                    let dx = (point.x - center.x).abs();
+                    let dz = (point.z - center.y).abs();
+                    // Pointy-top hex: |x| <= sqrt(3)R/2 and
+                    // |z| + |x|/sqrt(3) <= R.
+                    let inside_hex = dx <= HEX_RADIUS * 0.866_025_4
+                        && dz + dx * 0.577_350_3 <= HEX_RADIUS;
+                    (inside_hex && point.y <= *height as f32 * HEX_HEIGHT)
                         .then_some(*coord)
                 });
                 if candidate.is_some() {
                     return candidate;
                 }
             }
-            distance += 0.12;
+            distance += 0.04;
         }
         None
     }
 
-    /// Build one combined, flat-shaded mesh. Neighboring internal faces are omitted.
+    /// Build one combined mesh. Internal faces between adjacent columns are omitted.
     pub fn mesh(&self) -> Mesh {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u16> = Vec::new();
@@ -82,35 +85,38 @@ impl World {
                 let corners = hex_corners(center.x, center.y, (y as f32 + 1.0) * HEX_HEIGHT);
                 let color = terrain_color(*coord, y);
 
-                // Only the top of a column is visible.
+                // Reverse the ring order so top triangles face upward.
                 if y + 1 == *height {
                     let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
                     for i in 0..6 {
                         push_triangle(
                             &mut vertices,
                             &mut indices,
-                            [top_center, corners[i], corners[(i + 1) % 6]],
+                            [top_center, corners[(i + 1) % 6], corners[i]],
                             color,
                         );
                     }
                 }
 
-                // Each axial direction corresponds to one hex edge.
+                // Neighbor direction 0 points +X, along edge 5 -> 0.
+                // Each subsequent axial direction advances one edge around the hex.
                 for direction in 0..6 {
                     if self.height(coord.neighbor(direction)) > y {
                         continue;
                     }
-                    let edge = (6 - direction) % 6;
+                    let edge = (5 + 6 - direction) % 6;
                     let a = corners[edge];
                     let b = corners[(edge + 1) % 6];
+
+                    // Reverse the side quad winding so normals face outwards.
                     push_quad(
                         &mut vertices,
                         &mut indices,
                         [
-                            Vec3::new(a.x, y as f32 * HEX_HEIGHT, a.z),
                             Vec3::new(b.x, y as f32 * HEX_HEIGHT, b.z),
-                            b,
+                            Vec3::new(a.x, y as f32 * HEX_HEIGHT, a.z),
                             a,
+                            b,
                         ],
                         shade(color, 0.78 + direction as f32 * 0.035),
                     );
@@ -188,5 +194,17 @@ mod tests {
         assert_eq!(world.height(coord), 1);
         world.remove_hexel(coord);
         assert_eq!(world.height(coord), 0);
+    }
+
+    #[test]
+    fn adjacent_hexes_share_an_edge() {
+        // Direction 0 is +X. The matching edge is corners 5 and 0.
+        let a = hex_corners(0.0, 0.0, 1.0);
+        let east = HexCoord::new(1, 0).world_xz();
+        let b = hex_corners(east.x, east.y, 1.0);
+        assert!((a[5].x - b[2].x).abs() < 0.0001);
+        assert!((a[5].z - b[2].z).abs() < 0.0001);
+        assert!((a[0].x - b[3].x).abs() < 0.0001);
+        assert!((a[0].z - b[3].z).abs() < 0.0001);
     }
 }
