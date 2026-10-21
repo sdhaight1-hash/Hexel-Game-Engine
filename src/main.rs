@@ -22,9 +22,9 @@ fn window_conf() -> Conf {
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut world = World::demo();
-    let mut position = vec3(0.0, 7.0, -13.0);
+    let mut position = vec3(0.0, 9.0, -16.0);
     let mut yaw = 0.0_f32;
-    let mut pitch = -0.22_f32;
+    let mut pitch = -0.62_f32;
     let mut captured = false;
     let mut previous_mouse = mouse_position();
 
