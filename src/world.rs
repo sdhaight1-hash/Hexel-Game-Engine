@@ -58,8 +58,6 @@ impl World {
                     let center = coord.world_xz();
                     let dx = (point.x - center.x).abs();
                     let dz = (point.z - center.y).abs();
-                    // Pointy-top hex: |x| <= sqrt(3)R/2 and
-                    // |z| + |x|/sqrt(3) <= R.
                     let inside_hex = dx <= HEX_RADIUS * 0.866_025_4
                         && dz + dx * 0.577_350_3 <= HEX_RADIUS;
                     (inside_hex && point.y <= *height as f32 * HEX_HEIGHT)
@@ -85,7 +83,6 @@ impl World {
                 let corners = hex_corners(center.x, center.y, (y as f32 + 1.0) * HEX_HEIGHT);
                 let color = terrain_color(*coord, y);
 
-                // Reverse the ring order so top triangles face upward.
                 if y + 1 == *height {
                     let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
                     for i in 0..6 {
@@ -98,8 +95,7 @@ impl World {
                     }
                 }
 
-                // Neighbor direction 0 points +X, along edge 5 -> 0.
-                // Each subsequent axial direction advances one edge around the hex.
+                // Axial direction 0 is +X, matching edge 5 -> 0.
                 for direction in 0..6 {
                     if self.height(coord.neighbor(direction)) > y {
                         continue;
@@ -107,8 +103,6 @@ impl World {
                     let edge = (5 + 6 - direction) % 6;
                     let a = corners[edge];
                     let b = corners[(edge + 1) % 6];
-
-                    // Reverse the side quad winding so normals face outwards.
                     push_quad(
                         &mut vertices,
                         &mut indices,
@@ -198,13 +192,12 @@ mod tests {
 
     #[test]
     fn adjacent_hexes_share_an_edge() {
-        // Direction 0 is +X. The matching edge is corners 5 and 0.
         let a = hex_corners(0.0, 0.0, 1.0);
         let east = HexCoord::new(1, 0).world_xz();
         let b = hex_corners(east.x, east.y, 1.0);
-        assert!((a[5].x - b[2].x).abs() < 0.0001);
-        assert!((a[5].z - b[2].z).abs() < 0.0001);
-        assert!((a[0].x - b[3].x).abs() < 0.0001);
-        assert!((a[0].z - b[3].z).abs() < 0.0001);
+        assert!((a[5].x - b[3].x).abs() < 0.0001);
+        assert!((a[5].z - b[3].z).abs() < 0.0001);
+        assert!((a[0].x - b[2].x).abs() < 0.0001);
+        assert!((a[0].z - b[2].z).abs() < 0.0001);
     }
 }
