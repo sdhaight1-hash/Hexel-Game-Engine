@@ -7,7 +7,7 @@ use world::World;
 
 const LOOK_SENSITIVITY: f32 = 0.003;
 const MOVE_SPEED: f32 = 8.0;
-const WHEEL_VERTICAL_SPEED: f32 = 1.0;
+const WHEEL_VERTICAL_SPEED: f32 = 0.15;
 
 fn window_conf() -> Conf {
     Conf {
@@ -36,10 +36,11 @@ async fn main() {
             show_mouse(true);
             set_cursor_grab(false);
         }
-        if is_mouse_button_pressed(MouseButton::Right) && !captured {
-            captured = true;
-            show_mouse(false);
-            set_cursor_grab(true);
+        // C toggles mouse capture so both mouse buttons remain available for editing.
+        if is_key_pressed(KeyCode::C) {
+            captured = !captured;
+            show_mouse(!captured);
+            set_cursor_grab(captured);
             previous_mouse = mouse_position();
         }
 
@@ -51,10 +52,10 @@ async fn main() {
             previous_mouse = mouse;
         }
 
-        // The wheel moves the free-fly camera vertically. This is independent
-        // of frame time because mouse-wheel input is a per-frame scroll delta.
+        // Mouse-wheel deltas are discrete; clamp each frame's input and use a
+        // small step so a scroll notch nudges the camera rather than jumping it.
         let wheel = mouse_wheel();
-        position.y += wheel.1 * WHEEL_VERTICAL_SPEED;
+        position.y += wheel.1.clamp(-1.0, 1.0) * WHEEL_VERTICAL_SPEED;
 
         let forward = vec3(
             yaw.sin() * pitch.cos(),
@@ -99,12 +100,12 @@ async fn main() {
             let target = world.raycast(position, forward);
             if is_mouse_button_pressed(MouseButton::Left) {
                 if let Some(coord) = target {
-                    world.remove_hexel(coord);
+                    world.add_hexel(coord);
                 }
             }
-            if is_key_pressed(KeyCode::E) {
+            if is_mouse_button_pressed(MouseButton::Right) {
                 if let Some(coord) = target {
-                    world.add_hexel(coord);
+                    world.remove_hexel(coord);
                 }
             }
         }
@@ -148,14 +149,14 @@ async fn main() {
             WHITE,
         );
         draw_text(
-            "WASD move  |  Mouse look  |  Left click remove  |  E add  |  R reset",
+            "WASD move  |  Mouse look  |  Left click add  |  Right click remove  |  R reset",
             20.0,
             56.0,
             18.0,
             LIGHTGRAY,
         );
         draw_text(
-            "Mouse wheel: vertical move  |  Space / Shift: vertical move  |  Right click: capture  |  Esc: release",
+            "Mouse wheel: fine vertical move  |  Space / Shift: vertical move  |  C: capture/release  |  Esc: release",
             20.0,
             80.0,
             16.0,
@@ -163,7 +164,7 @@ async fn main() {
         );
         if !captured {
             draw_text(
-                "Right-click the window to capture the mouse and begin editing",
+                "Press C to capture the mouse and edit; press Esc to release it",
                 20.0,
                 screen_h - 24.0,
                 18.0,
