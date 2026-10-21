@@ -66,18 +66,18 @@ async fn main() {
         let flat_forward = vec3(forward.x, 0.0, forward.z).normalize_or_zero();
         let right = vec3(flat_forward.z, 0.0, -flat_forward.x);
         let mut movement = Vec3::ZERO;
-        if is_key_down(KeyCode::W) {
+        if is_key_down(KeyCode::W) || is_key_down(KeyCode::Up) {
             movement += flat_forward;
         }
-        if is_key_down(KeyCode::S) {
+        if is_key_down(KeyCode::S) || is_key_down(KeyCode::Down) {
             movement -= flat_forward;
         }
 
         // Keep the requested A/D mapping: A moves left, D moves right.
-        if is_key_down(KeyCode::A) {
+        if is_key_down(KeyCode::A) || is_key_down(KeyCode::Left)  {
             movement += right;
         }
-        if is_key_down(KeyCode::D) {
+        if is_key_down(KeyCode::D) || is_key_down(KeyCode::Right) {
             movement -= right;
         }
 
