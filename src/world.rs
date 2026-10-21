@@ -56,10 +56,9 @@ impl World {
                     let center = coord.world_xz();
                     let dx = (point.x - center.x).abs();
                     let dz = (point.z - center.y).abs();
-                    let inside_hex = dx <= HEX_RADIUS * 0.866_025_4
-                        && dz + dx * 0.577_350_3 <= HEX_RADIUS;
-                    (inside_hex && point.y <= *height as f32 * HEX_HEIGHT)
-                        .then_some(*coord)
+                    let inside_hex =
+                        dx <= HEX_RADIUS * 0.866_025_4 && dz + dx * 0.577_350_3 <= HEX_RADIUS;
+                    (inside_hex && point.y <= *height as f32 * HEX_HEIGHT).then_some(*coord)
                 });
                 if candidate.is_some() {
                     return candidate;
@@ -85,52 +84,59 @@ impl World {
         let height = self.height(coord);
 
         if height == 0 {
-            return Mesh { vertices, indices, texture: None };
+            return Mesh {
+                vertices,
+                indices,
+                texture: None,
+            };
         }
 
         let center = coord.world_xz();
         for y in 0..height {
-                let corners = coord_corners(coord, (y as f32 + 1.0) * HEX_HEIGHT);
-                let color = terrain_color(coord, y);
+            let corners = coord_corners(coord, (y as f32 + 1.0) * HEX_HEIGHT);
+            let color = terrain_color(coord, y);
 
-                if y + 1 == height {
-                    let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
-                    for i in 0..6 {
-                        push_triangle(
-                            &mut vertices,
-                            &mut indices,
-                            [top_center, corners[(i + 1) % 6], corners[i]],
-                            color,
-                        );
-                    }
-                }
-
-                // Axial direction 0 is +X, matching edge 5 -> 0.
-                for direction in 0..6 {
-                    if self.height(coord.neighbor(direction)) > y {
-                        continue;
-                    }
-                    let edge = (5 + 6 - direction) % 6;
-                    let a = corners[edge];
-                    let b = corners[(edge + 1) % 6];
-                    push_quad(
+            if y + 1 == height {
+                let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
+                for i in 0..6 {
+                    push_triangle(
                         &mut vertices,
                         &mut indices,
-                        [
-                            Vec3::new(b.x, y as f32 * HEX_HEIGHT, b.z),
-                            Vec3::new(a.x, y as f32 * HEX_HEIGHT, a.z),
-                            a,
-                            b,
-                        ],
-                        shade(color, 0.78 + direction as f32 * 0.035),
+                        [top_center, corners[(i + 1) % 6], corners[i]],
+                        color,
                     );
                 }
+            }
+
+            // Axial direction 0 is +X, matching edge 5 -> 0.
+            for direction in 0..6 {
+                if self.height(coord.neighbor(direction)) > y {
+                    continue;
+                }
+                let edge = (5 + 6 - direction) % 6;
+                let a = corners[edge];
+                let b = corners[(edge + 1) % 6];
+                push_quad(
+                    &mut vertices,
+                    &mut indices,
+                    [
+                        Vec3::new(b.x, y as f32 * HEX_HEIGHT, b.z),
+                        Vec3::new(a.x, y as f32 * HEX_HEIGHT, a.z),
+                        a,
+                        b,
+                    ],
+                    shade(color, 0.78 + direction as f32 * 0.035),
+                );
+            }
         }
 
-        Mesh { vertices, indices, texture: None }
+        Mesh {
+            vertices,
+            indices,
+            texture: None,
+        }
     }
 }
-
 
 /// Compute corners from integer grid coordinates rather than adding trigonometric
 /// offsets to each column center. Adjacent columns therefore produce bit-identical
@@ -217,12 +223,21 @@ mod tests {
     fn all_six_neighbors_share_bit_identical_edges() {
         let origin = HexCoord::new(0, 0);
         let a = coord_corners(origin, 1.0);
-        let edge_pairs = [(5, 0, 3, 2), (4, 5, 2, 1), (3, 4, 1, 0),
-                          (2, 3, 0, 5), (1, 2, 5, 4), (0, 1, 4, 3)];
+        let edge_pairs = [
+            (5, 0, 3, 2),
+            (4, 5, 2, 1),
+            (3, 4, 1, 0),
+            (2, 3, 0, 5),
+            (1, 2, 5, 4),
+            (0, 1, 4, 3),
+        ];
         for (direction, (a0, a1, b0, b1)) in edge_pairs.into_iter().enumerate() {
             let b = coord_corners(origin.neighbor(direction), 1.0);
             assert_eq!(a[a0], b[b0], "first shared corner in direction {direction}");
-            assert_eq!(a[a1], b[b1], "second shared corner in direction {direction}");
+            assert_eq!(
+                a[a1], b[b1],
+                "second shared corner in direction {direction}"
+            );
         }
     }
 

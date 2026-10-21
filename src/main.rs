@@ -24,7 +24,7 @@ async fn main() {
     let mut world = World::demo();
     let mut position = vec3(0.0, 9.0, -16.0);
     let mut yaw = 0.0_f32;
-    let mut pitch = -0.62_f32;
+    let mut pitch = -0.35_f32;
     let mut captured = false;
     let mut previous_mouse = mouse_position();
 
@@ -114,8 +114,8 @@ async fn main() {
         let camera = Camera3D {
             position,
             target: position + forward,
-            up: Vec3::Y,
-            fovy: 65.0,
+            up: Vec3::new(0.0, -1.0, 0.0),
+            fovy: 50.0,
             ..Default::default()
         };
         set_camera(&camera);
