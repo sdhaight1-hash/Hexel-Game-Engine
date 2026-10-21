@@ -7,6 +7,7 @@ use world::World;
 
 const LOOK_SENSITIVITY: f32 = 0.003;
 const MOVE_SPEED: f32 = 8.0;
+const WHEEL_VERTICAL_SPEED: f32 = 1.0;
 
 fn window_conf() -> Conf {
     Conf {
@@ -50,6 +51,11 @@ async fn main() {
             previous_mouse = mouse;
         }
 
+        // The wheel moves the free-fly camera vertically. This is independent
+        // of frame time because mouse-wheel input is a per-frame scroll delta.
+        let wheel = mouse_wheel();
+        position.y += wheel.1 * WHEEL_VERTICAL_SPEED;
+
         let forward = vec3(
             yaw.sin() * pitch.cos(),
             pitch.sin(),
@@ -65,12 +71,16 @@ async fn main() {
         if is_key_down(KeyCode::S) {
             movement -= flat_forward;
         }
-        if is_key_down(KeyCode::D) {
+
+        // Keep the requested A/D mapping: A moves left, D moves right.
+        if is_key_down(KeyCode::A) {
             movement += right;
         }
-        if is_key_down(KeyCode::A) {
+        if is_key_down(KeyCode::D) {
             movement -= right;
         }
+
+        // Space and Left Shift remain as alternate vertical controls.
         if is_key_down(KeyCode::Space) {
             movement.y += 1.0;
         }
@@ -145,7 +155,7 @@ async fn main() {
             LIGHTGRAY,
         );
         draw_text(
-            "Space / Shift: vertical movement  |  Right click: capture mouse  |  Esc: release",
+            "Mouse wheel: vertical move  |  Space / Shift: vertical move  |  Right click: capture  |  Esc: release",
             20.0,
             80.0,
             16.0,
