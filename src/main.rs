@@ -103,19 +103,27 @@ async fn main() {
         if captured {
             target = world.raycast(position, forward);
 
-            if is_mouse_button_pressed(MouseButton::Left) {
-                if let Some((coord, side)) = target {
-                    let destination = match side {
-                        Some(direction) => coord.neighbor(direction),
-                        None => coord,
-                    };
-                    world.add_hexel(destination);
+                        if is_mouse_button_pressed(MouseButton::Left) {
+                if let Some((coord, layer, side)) = target {
+                     match side {
+                        Some(6) if layer > 0 => {
+                            world.add_hexel_at_layer(coord, layer - 1);
+                        }
+                        Some(direction) => {
+                            world.add_hexel_at_layer(
+                                coord.neighbor(direction),
+                                layer,
+                            );
+                        }
+                        None => {
+                            world.add_hexel_at_layer(coord, layer + 1);
+                        }
+                    }
                 }
             }
-
             if is_mouse_button_pressed(MouseButton::Right) {
-                if let Some((coord, _side)) = target {
-                    world.remove_hexel(coord);
+                if let Some((coord, layer, _side)) = target {
+                    world.remove_hexel_at_layer(coord, layer);
                 }
             }
         }
@@ -139,12 +147,12 @@ async fn main() {
         }
 
         // Outline the full targeted hex column.
-        if let Some((coord, _side)) = target {
+       if let Some((coord, layer, _side)) = target {
             let height = world.height(coord);
 
             if height > 0 {
-                let bottom = hexel::HEX_HEIGHT * 0.015;
-                let top = height as f32 * hexel::HEX_HEIGHT + 0.025;
+               let bottom = layer as f32 * hexel::HEX_HEIGHT + 0.015;
+               let top = (layer as f32 + 1.0) * hexel::HEX_HEIGHT + 0.025;
 
                 let bottom_corners = world::coord_corners(coord, bottom);
                 let top_corners = world::coord_corners(coord, top);
