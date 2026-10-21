@@ -96,19 +96,27 @@ async fn main() {
             world = World::demo();
         }
 
+        
         if captured {
             let target = world.raycast(position, forward);
+
             if is_mouse_button_pressed(MouseButton::Left) {
-                if let Some(coord) = target {
-                    world.add_hexel(coord);
+                if let Some((coord, side)) = target {
+                    let destination = match side {
+                        Some(direction) => coord.neighbor(direction),
+                        None => coord,
+                    };
+                    world.add_hexel(destination);
                 }
             }
+
             if is_mouse_button_pressed(MouseButton::Right) {
-                if let Some(coord) = target {
+                if let Some((coord, _side)) = target {
                     world.remove_hexel(coord);
                 }
             }
         }
+
 
         clear_background(Color::new(0.055, 0.075, 0.11, 1.0));
         let camera = Camera3D {

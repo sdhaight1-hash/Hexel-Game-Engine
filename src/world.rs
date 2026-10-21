@@ -47,27 +47,105 @@ impl World {
     }
 
     /// Step along the view ray and test against a pointy-top hex footprint.
-    pub fn raycast(&self, origin: Vec3, direction: Vec3) -> Option<HexCoord> {
-        let mut distance = 0.0;
-        while distance < 32.0 {
-            let point = origin + direction * distance;
-            if point.y >= 0.0 {
-                let candidate = self.heights.iter().find_map(|(coord, height)| {
-                    let center = coord.world_xz();
+    
+    /// Return the column hit by the view ray and the face hit:
+    /// `None` for the top, or `Some(direction)` for a side.
+    pub fn raycast(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+    ) -> Option<(HexCoord, Option<usize>)> {
+        let direction = direction.normalize_or_zero();
+        if direction.length_squared() == 0.0 {
+            return None;
+        }
+
+        let mut best: Option<(f32, HexCoord, Option<usize>)> = None;
+
+        for (coord, height) in &self.heights {
+            if *height == 0 {
+                continue;
+            }
+
+            let center = coord.world_xz();
+            let top_y = *height as f32 * HEX_HEIGHT;
+
+            // Intersect the top plane.
+            if direction.y.abs() > 1.0e-6 {
+                let t = (top_y - origin.y) / direction.y;
+                if t >= 0.0 {
+                    let point = origin + direction * t;
                     let dx = (point.x - center.x).abs();
                     let dz = (point.z - center.y).abs();
                     let inside_hex =
-                        dx <= HEX_RADIUS * 0.866_025_4 && dz + dx * 0.577_350_3 <= HEX_RADIUS;
-                    (inside_hex && point.y <= *height as f32 * HEX_HEIGHT).then_some(*coord)
-                });
-                if candidate.is_some() {
-                    return candidate;
+                        dx <= HEX_RADIUS * 0.866_025_4
+                        && dz + dx * 0.577_350_3 <= HEX_RADIUS;
+
+                    if inside_hex
+                        && best.as_ref().is_none_or(|(best_t, _, _)| t < *best_t)
+                    {
+                        best = Some((t, *coord, None));
+                    }
                 }
             }
-            distance += 0.04;
+
+            // Intersect the six vertical side planes.
+            let corners = coord_corners(*coord, 0.0);
+            for side in 0..6 {
+                let a = corners[side];
+                let b = corners[(side + 1) % 6];
+
+                let edge_x = b.x - a.x;
+                let edge_z = b.z - a.z;
+                let denom = direction.x * edge_z - direction.z * edge_x;
+
+                if denom.abs() < 1.0e-6 {
+                    continue;
+                }
+
+                let rel_x = a.x - origin.x;
+                let rel_z = a.z - origin.z;
+                let t = (rel_x * edge_z - rel_z * edge_x) / denom;
+                if t < 0.0 {
+                    continue;
+                }
+
+                let point = origin + direction * t;
+                if point.y < 0.0 || point.y > top_y {
+                    continue;
+                }
+
+                let along = if edge_x.abs() > edge_z.abs() {
+                    (point.x - a.x) / edge_x
+                } else if edge_z.abs() > 1.0e-6 {
+                    (point.z - a.z) / edge_z
+                } else {
+                    -1.0
+                };
+
+                if !(0.0..=1.0).contains(&along) {
+                    continue;
+                }
+
+                if best.as_ref().is_none_or(|(best_t, _, _)| t < *best_t) {
+                    // Side direction is determined by the edge's matching
+                    // axial neighbor direction.
+                    let neighbor_direction = match side {
+                        0 => 5,
+                        1 => 4,
+                        2 => 3,
+                        3 => 2,
+                        4 => 1,
+                        _ => 0,
+                    };
+                    best = Some((t, *coord, Some(neighbor_direction)));
+                }
+            }
         }
-        None
+
+        best.map(|(_, coord, side)| (coord, side))
     }
+
 
     /// Build one mesh per column so u16 indices can never overflow as the world grows.
     /// Internal faces between adjacent columns are omitted.

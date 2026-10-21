@@ -1,0 +1,344 @@
+use std::collections::HashMap;
+
+use macroquad::prelude::{Mesh, Vec3, Vertex};
+
+use crate::hexel::{push_quad, terrain_color, HexCoord, HEX_HEIGHT, HEX_RADIUS};
+
+#[derive(Debug)]
+pub struct World {
+    /// Number of stacked unit-height hexels at each axial coordinate.
+    heights: HashMap<HexCoord, u32>,
+}
+
+impl World {
+    pub fn demo() -> Self {
+        let mut world = Self {
+            heights: HashMap::new(),
+        };
+        let radius: i32 = 8;
+        for q in -radius..=radius {
+            for r in -radius..=radius {
+                if (q + r).abs() <= radius {
+                    // Keep the starting landscape low and connected; players can
+                    // build taller columns with left-click after capturing the mouse.
+                    world.heights.insert(HexCoord::new(q, r), 1);
+                }
+            }
+        }
+        world
+    }
+
+    pub fn height(&self, coord: HexCoord) -> u32 {
+        self.heights.get(&coord).copied().unwrap_or(0)
+    }
+
+    pub fn add_hexel(&mut self, coord: HexCoord) {
+        let next = self.height(coord).saturating_add(1).min(32);
+        self.heights.insert(coord, next);
+    }
+
+    pub fn remove_hexel(&mut self, coord: HexCoord) {
+        let height = self.height(coord);
+        if height <= 1 {
+            self.heights.remove(&coord);
+        } else {
+            self.heights.insert(coord, height - 1);
+        }
+    }
+
+    /// Step along the view ray and test against a pointy-top hex footprint.
+    
+    /// Return the column hit by the view ray and the face hit:
+    /// `None` for the top, or `Some(direction)` for a side.
+    pub fn raycast(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+    ) -> Option<(HexCoord, Option<usize>)> {
+        let direction = direction.normalize_or_zero();
+        if direction.length_squared() == 0.0 {
+            return None;
+        }
+
+        let mut best: Option<(f32, HexCoord, Option<usize>)> = None;
+
+        for (coord, height) in &self.heights {
+            if *height == 0 {
+                continue;
+            }
+
+            let center = coord.world_xz();
+            let top_y = *height as f32 * HEX_HEIGHT;
+
+            // Intersect the top plane.
+            if direction.y.abs() > 1.0e-6 {
+                let t = (top_y - origin.y) / direction.y;
+                if t >= 0.0 {
+                    let point = origin + direction * t;
+                    let dx = (point.x - center.x).abs();
+                    let dz = (point.z - center.y).abs();
+                    let inside_hex =
+                        dx <= HEX_RADIUS * 0.866_025_4
+                        && dz + dx * 0.577_350_3 <= HEX_RADIUS;
+
+                    if inside_hex
+                        && best.as_ref().is_none_or(|(best_t, _, _)| t < *best_t)
+                    {
+                        best = Some((t, *coord, None));
+                    }
+                }
+            }
+
+            // Intersect the six vertical side planes.
+            let corners = coord_corners(*coord, 0.0);
+            for side in 0..6 {
+                let a = corners[side];
+                let b = corners[(side + 1) % 6];
+
+                let edge_x = b.x - a.x;
+                let edge_z = b.z - a.z;
+                let denom = direction.x * edge_z - direction.z * edge_x;
+
+                if denom.abs() < 1.0e-6 {
+                    continue;
+                }
+
+                let rel_x = a.x - origin.x;
+                let rel_z = a.z - origin.z;
+                let t = (rel_x * edge_z - rel_z * edge_x) / denom;
+                if t < 0.0 {
+                    continue;
+                }
+
+                let point = origin + direction * t;
+                if point.y < 0.0 || point.y > top_y {
+                    continue;
+                }
+
+                let along = if edge_x.abs() > edge_z.abs() {
+                    (point.x - a.x) / edge_x
+                } else if edge_z.abs() > 1.0e-6 {
+                    (point.z - a.z) / edge_z
+                } else {
+                    -1.0
+                };
+
+                if !(0.0..=1.0).contains(&along) {
+                    continue;
+                }
+
+                if best.as_ref().is_none_or(|(best_t, _, _)| t < *best_t) {
+                    // Side direction is determined by the edge's matching
+                    // axial neighbor direction.
+                    let neighbor_direction = match side {
+                        0 => 5,
+                        1 => 4,
+                        2 => 3,
+                        3 => 2,
+                        4 => 1,
+                        _ => 0,
+                    };
+                    best = Some((t, *coord, Some(neighbor_direction)));
+                }
+            }
+        }
+
+        best.map(|(_, coord, side)| (coord, side))
+    }
+
+
+    /// Build one mesh per column so u16 indices can never overflow as the world grows.
+    /// Internal faces between adjacent columns are omitted.
+    pub fn meshes(&self) -> Vec<Mesh> {
+        self.heights
+            .keys()
+            .map(|coord| self.column_mesh(*coord))
+            .collect()
+    }
+
+    fn column_mesh(&self, coord: HexCoord) -> Mesh {
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let mut indices: Vec<u16> = Vec::new();
+        let height = self.height(coord);
+
+        if height == 0 {
+            return Mesh {
+                vertices,
+                indices,
+                texture: None,
+            };
+        }
+
+        let center = coord.world_xz();
+        for y in 0..height {
+            let corners = coord_corners(coord, (y as f32 + 1.0) * HEX_HEIGHT);
+            let color = terrain_color(coord, y);
+
+            if y + 1 == height {
+                let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
+                for i in 0..6 {
+                    push_triangle(
+                        &mut vertices,
+                        &mut indices,
+                        [top_center, corners[(i + 1) % 6], corners[i]],
+                        color,
+                    );
+                }
+            }
+
+            // Axial direction 0 is +X, matching edge 5 -> 0.
+            for direction in 0..6 {
+                if self.height(coord.neighbor(direction)) > y {
+                    continue;
+                }
+                let edge = (5 + 6 - direction) % 6;
+                let a = corners[edge];
+                let b = corners[(edge + 1) % 6];
+                push_quad(
+                    &mut vertices,
+                    &mut indices,
+                    [
+                        Vec3::new(b.x, y as f32 * HEX_HEIGHT, b.z),
+                        Vec3::new(a.x, y as f32 * HEX_HEIGHT, a.z),
+                        a,
+                        b,
+                    ],
+                    shade(color, 0.78 + direction as f32 * 0.035),
+                );
+            }
+        }
+
+        Mesh {
+            vertices,
+            indices,
+            texture: None,
+        }
+    }
+}
+
+/// Compute corners from integer grid coordinates rather than adding trigonometric
+/// offsets to each column center. Adjacent columns therefore produce bit-identical
+/// positions for shared vertices, avoiding tiny rasterization cracks at seams.
+fn coord_corners(coord: HexCoord, y: f32) -> [Vec3; 6] {
+    const X_OFFSETS: [i32; 6] = [1, 0, -1, -1, 0, 1];
+    const Z_OFFSETS: [i32; 6] = [1, 2, 1, -1, -2, -1];
+    std::array::from_fn(|i| {
+        let x_twice = 2 * coord.q + coord.r + X_OFFSETS[i];
+        let z_sixths = 3 * coord.r + Z_OFFSETS[i];
+        Vec3::new(
+            x_twice as f32 * 0.5,
+            y,
+            z_sixths as f32 * (3.0_f32.sqrt() / 6.0),
+        )
+    })
+}
+
+fn push_triangle(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u16>,
+    corners: [Vec3; 3],
+    color: macroquad::prelude::Color,
+) {
+    let base = vertices.len() as u16;
+    for (corner, uv) in corners.into_iter().zip([
+        macroquad::prelude::Vec2::new(0.0, 0.0),
+        macroquad::prelude::Vec2::new(1.0, 0.0),
+        macroquad::prelude::Vec2::new(0.5, 1.0),
+    ]) {
+        vertices.push(Vertex {
+            position: corner,
+            uv,
+            color: color.into(),
+            normal: macroquad::prelude::Vec4::ZERO,
+        });
+    }
+    indices.extend_from_slice(&[base, base + 1, base + 2]);
+}
+
+fn shade(color: macroquad::prelude::Color, factor: f32) -> macroquad::prelude::Color {
+    macroquad::prelude::Color::new(
+        (color.r * factor).min(1.0),
+        (color.g * factor).min(1.0),
+        (color.b * factor).min(1.0),
+        color.a,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_world_has_many_columns() {
+        let world = World::demo();
+        assert!(world.heights.len() > 150);
+        assert!(world.height(HexCoord::new(0, 0)) > 0);
+    }
+
+    #[test]
+    fn editing_changes_column_height() {
+        let mut world = World::demo();
+        let coord = HexCoord::new(0, 0);
+        let before = world.height(coord);
+        world.add_hexel(coord);
+        assert_eq!(world.height(coord), before + 1);
+        world.remove_hexel(coord);
+        assert_eq!(world.height(coord), before);
+    }
+
+    #[test]
+    fn empty_columns_can_be_added_and_removed() {
+        let mut world = World::demo();
+        let coord = HexCoord::new(30, -30);
+        assert_eq!(world.height(coord), 0);
+        world.add_hexel(coord);
+        assert_eq!(world.height(coord), 1);
+        world.remove_hexel(coord);
+        assert_eq!(world.height(coord), 0);
+    }
+
+    #[test]
+    fn all_six_neighbors_share_bit_identical_edges() {
+        let origin = HexCoord::new(0, 0);
+        let a = coord_corners(origin, 1.0);
+        let edge_pairs = [
+            (5, 0, 3, 2),
+            (4, 5, 2, 1),
+            (3, 4, 1, 0),
+            (2, 3, 0, 5),
+            (1, 2, 5, 4),
+            (0, 1, 4, 3),
+        ];
+        for (direction, (a0, a1, b0, b1)) in edge_pairs.into_iter().enumerate() {
+            let b = coord_corners(origin.neighbor(direction), 1.0);
+            assert_eq!(a[a0], b[b0], "first shared corner in direction {direction}");
+            assert_eq!(
+                a[a1], b[b1],
+                "second shared corner in direction {direction}"
+            );
+        }
+    }
+
+    #[test]
+    fn editing_a_column_preserves_neighbor_mesh_edges() {
+        let mut world = World::demo();
+        let coord = HexCoord::new(0, 0);
+        world.add_hexel(coord);
+        world.remove_hexel(coord);
+        let a = coord_corners(coord, 1.0);
+        for direction in 0..6 {
+            let neighbor = coord.neighbor(direction);
+            let b = coord_corners(neighbor, 1.0);
+            let (a0, a1, b0, b1) = match direction {
+                0 => (5, 0, 3, 2),
+                1 => (4, 5, 2, 1),
+                2 => (3, 4, 1, 0),
+                3 => (2, 3, 0, 5),
+                4 => (1, 2, 5, 4),
+                _ => (0, 1, 4, 3),
+            };
+            assert_eq!(a[a0], b[b0]);
+            assert_eq!(a[a1], b[b1]);
+        }
+    }
+}
