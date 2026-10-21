@@ -19,11 +19,10 @@ impl World {
         for q in -radius..=radius {
             for r in -radius..=radius {
                 if (q + r).abs() <= radius {
-                    let ripple = (q * 3 + r * 5 + q * r).rem_euclid(4) as u32;
-                    let edge = ((q.abs() + r.abs() + (q + r).abs()) / 5).min(2) as u32;
-                    world
-                        .heights
-                        .insert(HexCoord::new(q, r), 2 + ripple - edge.min(1));
+                    // Keep the starting landscape low and connected; players can
+                    // build taller columns with left-click after capturing the mouse.
+                    let ripple = (q * 3 + r * 5 + q * r).rem_euclid(2) as u32;
+                    world.heights.insert(HexCoord::new(q, r), 1 + ripple);
                 }
             }
         }
