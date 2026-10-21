@@ -97,8 +97,11 @@ async fn main() {
         }
 
         
+        
+        let mut target = None;
+
         if captured {
-            let target = world.raycast(position, forward);
+            target = world.raycast(position, forward);
 
             if is_mouse_button_pressed(MouseButton::Left) {
                 if let Some((coord, side)) = target {
@@ -118,6 +121,7 @@ async fn main() {
         }
 
 
+
         clear_background(Color::new(0.055, 0.075, 0.11, 1.0));
         let camera = Camera3D {
             position,
@@ -128,10 +132,47 @@ async fn main() {
         };
         set_camera(&camera);
         draw_grid(40, 1.0, GRAY, Color::new(0.12, 0.15, 0.19, 1.0));
+        
+        
         for world_mesh in world.meshes() {
             draw_mesh(&world_mesh);
         }
+
+        // Outline the full targeted hex column.
+        if let Some((coord, _side)) = target {
+            let height = world.height(coord);
+
+            if height > 0 {
+                let bottom = hexel::HEX_HEIGHT * 0.015;
+                let top = height as f32 * hexel::HEX_HEIGHT + 0.025;
+
+                let bottom_corners = world::coord_corners(coord, bottom);
+                let top_corners = world::coord_corners(coord, top);
+
+                for i in 0..6 {
+                    let next = (i + 1) % 6;
+
+                    draw_line_3d(
+                        bottom_corners[i],
+                        bottom_corners[next],
+                        YELLOW,
+                    );
+                    draw_line_3d(
+                        top_corners[i],
+                        top_corners[next],
+                        YELLOW,
+                    );
+                    draw_line_3d(
+                        bottom_corners[i],
+                        top_corners[i],
+                        YELLOW,
+                    );
+                }
+            }
+        }
+
         set_default_camera();
+
 
         let (screen_w, screen_h) = (screen_width(), screen_height());
         draw_line(

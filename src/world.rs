@@ -219,7 +219,7 @@ impl World {
 /// Compute corners from integer grid coordinates rather than adding trigonometric
 /// offsets to each column center. Adjacent columns therefore produce bit-identical
 /// positions for shared vertices, avoiding tiny rasterization cracks at seams.
-fn coord_corners(coord: HexCoord, y: f32) -> [Vec3; 6] {
+pub(crate) fn coord_corners(coord: HexCoord, y: f32) -> [Vec3; 6] {
     const X_OFFSETS: [i32; 6] = [1, 0, -1, -1, 0, 1];
     const Z_OFFSETS: [i32; 6] = [1, 2, 1, -1, -2, -1];
     std::array::from_fn(|i| {
