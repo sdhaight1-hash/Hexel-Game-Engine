@@ -71,16 +71,28 @@ impl World {
         None
     }
 
-    /// Build one combined mesh. Internal faces between adjacent columns are omitted.
-    pub fn mesh(&self) -> Mesh {
+    /// Build one mesh per column so u16 indices can never overflow as the world grows.
+    /// Internal faces between adjacent columns are omitted.
+    pub fn meshes(&self) -> Vec<Mesh> {
+        self.heights
+            .keys()
+            .map(|coord| self.column_mesh(*coord))
+            .collect()
+    }
+
+    fn column_mesh(&self, coord: HexCoord) -> Mesh {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u16> = Vec::new();
+        let height = self.height(coord);
 
-        for (coord, height) in &self.heights {
-            let center = coord.world_xz();
-            for y in 0..*height {
+        if height == 0 {
+            return Mesh { vertices, indices, texture: None };
+        }
+
+        let center = coord.world_xz();
+        for y in 0..height {
                 let corners = hex_corners(center.x, center.y, (y as f32 + 1.0) * HEX_HEIGHT);
-                let color = terrain_color(*coord, y);
+                let color = terrain_color(coord, y);
 
                 if y + 1 == *height {
                     let top_center = Vec3::new(center.x, (y as f32 + 1.0) * HEX_HEIGHT, center.y);
@@ -114,14 +126,9 @@ impl World {
                         shade(color, 0.78 + direction as f32 * 0.035),
                     );
                 }
-            }
         }
 
-        Mesh {
-            vertices,
-            indices,
-            texture: None,
-        }
+        Mesh { vertices, indices, texture: None }
     }
 }
 
