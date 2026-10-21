@@ -142,8 +142,10 @@ async fn main() {
         draw_grid(40, 1.0, GRAY, Color::new(0.12, 0.15, 0.19, 1.0));
         
         
+        world.rebuild_dirty_chunks();
+
         for world_mesh in world.meshes() {
-            draw_mesh(&world_mesh);
+            draw_mesh(world_mesh);
         }
 
         // Outline the full targeted hex column.

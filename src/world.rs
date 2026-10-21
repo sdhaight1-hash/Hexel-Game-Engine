@@ -1,20 +1,44 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use macroquad::prelude::{Mesh, Vec3, Vertex};
 
 use crate::hexel::{push_quad, terrain_color, HexCoord, HEX_HEIGHT, HEX_RADIUS};
 
-#[derive(Debug)]
+const CHUNK_SIZE: i32 = 16;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ChunkCoord {
+    q: i32,
+    r: i32,
+}
+
+impl ChunkCoord {
+    fn from_hex(coord: HexCoord) -> Self {
+        Self {
+            q: coord.q.div_euclid(CHUNK_SIZE),
+            r: coord.r.div_euclid(CHUNK_SIZE),
+        }
+    }
+}
+
 pub struct World {
     /// Each hexel exists independently at a coordinate and vertical layer.
-    hexels: std::collections::HashSet<(HexCoord, u32)>,
+    hexels: HashSet<(HexCoord, u32)>,
+
+    /// Chunks whose meshes need to be rebuilt.
+    dirty_chunks: HashSet<ChunkCoord>,
+
+    /// Cached terrain mesh for each chunk.
+    chunk_meshes: HashMap<ChunkCoord, Mesh>,
 }
 
 impl World {
     
 pub fn demo() -> Self {
     let mut world = Self {
-        hexels: std::collections::HashSet::new(),
+        hexels: HashSet::new(),
+        dirty_chunks: HashSet::new(),
+        chunk_meshes: HashMap::new(),
     };
 
     let radius: i32 = 8;
@@ -40,7 +64,20 @@ pub fn demo() -> Self {
 
         world
 }
+    fn mark_dirty(&mut self, coord: HexCoord) {
+    let chunk = ChunkCoord::from_hex(coord);
+    self.dirty_chunks.insert(chunk);
 
+    // Neighboring chunks may need new faces at a shared boundary.
+    for direction in 0..6 {
+        let neighbor = coord.neighbor(direction);
+        let neighbor_chunk = ChunkCoord::from_hex(neighbor);
+
+        if neighbor_chunk != chunk {
+            self.dirty_chunks.insert(neighbor_chunk);
+        }
+    }
+}
     pub fn contains(&self, coord: HexCoord, layer: u32) -> bool {
     self.hexels.contains(&(coord, layer))
 }
@@ -59,15 +96,22 @@ pub fn add_hexel(&mut self, coord: HexCoord) {
     while self.contains(coord, layer) {
         layer += 1;
     }
-    self.hexels.insert((coord, layer));
+
+    if self.hexels.insert((coord, layer)) {
+        self.mark_dirty(coord);
+    }
 }
 
 pub fn add_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
-    self.hexels.insert((coord, layer));
+    if self.hexels.insert((coord, layer)) {
+        self.mark_dirty(coord);
+    }
 }
 
 pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
-    self.hexels.remove(&(coord, layer));
+    if self.hexels.remove(&(coord, layer)) {
+        self.mark_dirty(coord);
+    }
 }
     
 
@@ -208,92 +252,129 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
 
     
     /// Build one mesh per occupied coordinate, keeping mesh sizes manageable.
-    pub fn meshes(&self) -> Vec<Mesh> {
-        let coords: std::collections::HashSet<HexCoord> =
-            self.hexels.iter().map(|(coord, _)| *coord).collect();
+    pub fn rebuild_dirty_chunks(&mut self) {
+    let occupied_chunks: HashSet<ChunkCoord> = self
+        .hexels
+        .iter()
+        .map(|(coord, _)| ChunkCoord::from_hex(*coord))
+        .collect();
 
-        coords
-            .into_iter()
-            .map(|coord| self.column_mesh(coord))
-            .collect()
+    self.chunk_meshes
+        .retain(|chunk, _| occupied_chunks.contains(chunk));
+
+    self.dirty_chunks.retain(|chunk| occupied_chunks.contains(chunk));
+
+    let dirty: Vec<ChunkCoord> = self.dirty_chunks.drain().collect();
+
+    for chunk in dirty {
+        self.chunk_meshes.insert(chunk, self.chunk_mesh(chunk));
     }
 
-    fn column_mesh(&self, coord: HexCoord) -> Mesh {
-        let mut vertices: Vec<Vertex> = Vec::new();
-        let mut indices: Vec<u16> = Vec::new();
-        let center = coord.world_xz();
+    for chunk in occupied_chunks {
+        if !self.chunk_meshes.contains_key(&chunk) {
+            self.chunk_meshes.insert(chunk, self.chunk_mesh(chunk));
+        }
+    }
+}
 
-        for &(_, layer) in self.hexels.iter().filter(|(c, _)| *c == coord) {
-            let bottom_y = layer as f32 * HEX_HEIGHT;
-            let top_y = bottom_y + HEX_HEIGHT;
-            let bottom_corners = coord_corners(coord, bottom_y);
-            let top_corners = coord_corners(coord, top_y);
-            let color = terrain_color(coord, layer);
+    pub fn meshes(&self) -> impl Iterator<Item = &Mesh> {
+    self.chunk_meshes.values()
+}
 
-            // Top face: draw only if there is no hexel above.
-            if !self.contains(coord, layer + 1) {
-                let top_center = Vec3::new(center.x, top_y, center.y);
+    fn chunk_mesh(&self, chunk: ChunkCoord) -> Mesh {
+    let mut vertices: Vec<Vertex> = Vec::new();
+    let mut indices: Vec<u16> = Vec::new();
 
-                for i in 0..6 {
-                    push_triangle(
-                        &mut vertices,
-                        &mut indices,
-                        [
-                            top_center,
-                            top_corners[(i + 1) % 6],
-                            top_corners[i],
-                        ],
-                        color,
-                    );
-                }
-            }
-
-            // Bottom face: draw only if there is no hexel below.
-            if layer == 0 || !self.contains(coord, layer - 1) {
-                let bottom_center = Vec3::new(center.x, bottom_y, center.y);
-
-                for i in 0..6 {
-                    push_triangle(
-                        &mut vertices,
-                        &mut indices,
-                        [
-                            bottom_center,
-                            bottom_corners[i],
-                            bottom_corners[(i + 1) % 6],
-                        ],
-                        shade(color, 0.65),
-                    );
-                }
-            }
-
-            // Draw a side only when the neighboring hexel at this layer is absent.
-            for direction in 0..6 {
-                if self.contains(coord.neighbor(direction), layer) {
-                    continue;
-                }
-
-                // Axial direction 0 matches edge 5 -> 0.
-                let edge = (5 + 6 - direction) % 6;
-                let a_bottom = bottom_corners[edge];
-                let b_bottom = bottom_corners[(edge + 1) % 6];
-                let a_top = top_corners[edge];
-                let b_top = top_corners[(edge + 1) % 6];
-
-                push_quad(
-                    &mut vertices,
-                    &mut indices,
-                    [b_bottom, a_bottom, a_top, b_top],
-                    shade(color, 0.78 + direction as f32 * 0.035),
-                );
-            }
+    for &(coord, layer) in &self.hexels {
+        if ChunkCoord::from_hex(coord) != chunk {
+            continue;
         }
 
-                Mesh {
+        self.append_hexel_faces(
+            coord,
+            layer,
+            &mut vertices,
+            &mut indices,
+        );
+    }
+
+    Mesh {
+        vertices,
+        indices,
+        texture: None,
+    }
+}
+    fn append_hexel_faces(
+    &self,
+    coord: HexCoord,
+    layer: u32,
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u16>,
+) {
+    let bottom_y = layer as f32 * HEX_HEIGHT;
+    let top_y = bottom_y + HEX_HEIGHT;
+    let center = coord.world_xz();
+    let bottom_corners = coord_corners(coord, bottom_y);
+    let top_corners = coord_corners(coord, top_y);
+    let color = terrain_color(coord, layer);
+
+    // Top face: draw only if there is no hexel above.
+    if !self.contains(coord, layer + 1) {
+        let top_center = Vec3::new(center.x, top_y, center.y);
+
+        for i in 0..6 {
+            push_triangle(
+                vertices,
+                indices,
+                [
+                    top_center,
+                    top_corners[(i + 1) % 6],
+                    top_corners[i],
+                ],
+                color,
+            );
+        }
+    }
+
+    // Bottom face: draw only if there is no hexel below.
+    if layer == 0 || !self.contains(coord, layer - 1) {
+        let bottom_center = Vec3::new(center.x, bottom_y, center.y);
+
+        for i in 0..6 {
+            push_triangle(
+                vertices,
+                indices,
+                [
+                    bottom_center,
+                    bottom_corners[i],
+                    bottom_corners[(i + 1) % 6],
+                ],
+                shade(color, 0.65),
+            );
+        }
+    }
+
+    // Draw a side only when the neighboring hexel at this layer is absent.
+    for direction in 0..6 {
+        if self.contains(coord.neighbor(direction), layer) {
+            continue;
+        }
+
+        let edge = (5 + 6 - direction) % 6;
+        let a_bottom = bottom_corners[edge];
+        let b_bottom = bottom_corners[(edge + 1) % 6];
+        let a_top = top_corners[edge];
+        let b_top = top_corners[(edge + 1) % 6];
+
+        push_quad(
             vertices,
             indices,
-            texture: None,
-        }
+            [b_bottom, a_bottom, a_top, b_top],
+            shade(color, 0.78 + direction as f32 * 0.035),
+        );
     }
+}
+   
 }
 
 /// Compute corners from integer grid coordinates
