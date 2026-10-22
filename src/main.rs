@@ -336,6 +336,135 @@ if show_chunk_bounds {
         
         set_default_camera();
 
+        
+        // Target information display — fixed in the top-left corner.
+        let (target_text, layer_text, height_text) =
+            if let Some((coord, layer, _side)) = target {
+                (
+                    format!("Target: ({}, {})", coord.q, coord.r),
+                    format!("Layer: {}", layer),
+                    format!("Column height: {}", world.height(coord)),
+                )
+            } else {
+                (
+                    "Target: None".to_owned(),
+                    "Layer: -".to_owned(),
+                    "Column height: -".to_owned(),
+                )
+            };
+
+        let info_padding = 12.0;
+        let info_text_size = 20.0;
+        let info_width = [
+            &target_text,
+            &layer_text,
+            &height_text,
+        ]
+        .iter()
+        .map(|text| measure_text(text, None, info_text_size as u16, 1.0).width)
+        .fold(0.0_f32, f32::max)
+            + info_padding * 2.0;
+
+        let info_height = 82.0;
+        let info_x = 12.0;
+        let info_y = screen_height() - info_height - 12.0;
+
+
+        draw_rectangle(
+            info_x,
+            info_y,
+            info_width,
+            info_height,
+            Color::new(0.035, 0.05, 0.08, 0.85),
+        );
+
+        draw_text(
+            &target_text,
+            info_x + info_padding,
+            info_y + 23.0,
+            info_text_size,
+            SKYBLUE,
+        );
+
+        draw_text(
+            &layer_text,
+            info_x + info_padding,
+            info_y + 47.0,
+            info_text_size,
+            WHITE,
+        );
+
+        draw_text(
+            &height_text,
+            info_x + info_padding,
+            info_y + 71.0,
+            info_text_size,
+            WHITE,
+        );
+
+        
+        // World statistics display — fixed below the top-left corner.
+        let total_hexels_text = format!("Total hexels: {}", world.total_hexels());
+        let occupied_chunks_text =
+            format!("Occupied chunks: {}", world.occupied_chunk_count());
+        let rebuilt_chunks_text = format!(
+            "Chunks rebuilt: {}",
+            world.chunks_rebuilt_this_frame()
+        );
+
+        let stats_padding = 12.0;
+        let stats_text_size = 20.0;
+        let stats_width = [
+            &total_hexels_text,
+            &occupied_chunks_text,
+            &rebuilt_chunks_text,
+        ]
+        .iter()
+        .map(|text| {
+            measure_text(text, None, stats_text_size as u16, 1.0).width
+        })
+        .fold(0.0_f32, f32::max)
+            + stats_padding * 2.0;
+
+        let stats_height = 82.0;
+        let stats_x = screen_width() - stats_width - 12.0;
+        let stats_y = screen_height() - stats_height - 12.0;
+
+
+
+        draw_rectangle(
+            stats_x,
+            stats_y,
+            stats_width,
+            stats_height,
+            Color::new(0.035, 0.05, 0.08, 0.85),
+        );
+
+        draw_text(
+            &total_hexels_text,
+            stats_x + stats_padding,
+            stats_y + 23.0,
+            stats_text_size,
+            SKYBLUE,
+        );
+
+        draw_text(
+            &occupied_chunks_text,
+            stats_x + stats_padding,
+            stats_y + 47.0,
+            stats_text_size,
+            WHITE,
+        );
+
+        draw_text(
+            &rebuilt_chunks_text,
+            stats_x + stats_padding,
+            stats_y + 71.0,
+            stats_text_size,
+            WHITE,
+        );
+
+
         // Performance display — fixed in the top-right corner.
         let fps_text = format!("FPS: {}", displayed_fps);
         let frame_text = format!("Frame: {:.1} ms", displayed_frame_ms);

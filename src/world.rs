@@ -27,10 +27,14 @@ pub struct World {
 
     /// Chunks whose meshes need to be rebuilt.
     dirty_chunks: HashSet<ChunkCoord>,
-
+        
     /// Cached terrain mesh for each chunk.
     chunk_meshes: HashMap<ChunkCoord, Mesh>,
+
+    /// Number of chunk meshes rebuilt during the latest frame.
+    chunks_rebuilt_this_frame: usize,
 }
+
 
 impl World {
     
@@ -39,6 +43,7 @@ pub fn demo() -> Self {
         hexels: HashSet::new(),
         dirty_chunks: HashSet::new(),
         chunk_meshes: HashMap::new(),
+        chunks_rebuilt_this_frame: 0,
     };
 
     let radius: i32 = 8;
@@ -89,6 +94,19 @@ pub fn height(&self, coord: HexCoord) -> u32 {
         .map(|(_, layer)| layer + 1)
         .max()
         .unwrap_or(0)
+}
+
+
+pub fn total_hexels(&self) -> usize {
+    self.hexels.len()
+}
+
+pub fn occupied_chunk_count(&self) -> usize {
+    self.chunk_meshes.len()
+}
+
+pub fn chunks_rebuilt_this_frame(&self) -> usize {
+    self.chunks_rebuilt_this_frame
 }
 
 pub fn add_hexel(&mut self, coord: HexCoord) {
@@ -252,7 +270,9 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
 
     
     /// Build one mesh per occupied coordinate, keeping mesh sizes manageable.
-    pub fn rebuild_dirty_chunks(&mut self) {
+        pub fn rebuild_dirty_chunks(&mut self) {
+    self.chunks_rebuilt_this_frame = 0;
+
     let occupied_chunks: HashSet<ChunkCoord> = self
         .hexels
         .iter()
@@ -266,13 +286,17 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
 
     let dirty: Vec<ChunkCoord> = self.dirty_chunks.drain().collect();
 
-    for chunk in dirty {
-        self.chunk_meshes.insert(chunk, self.chunk_mesh(chunk));
+        for chunk in dirty {
+        let mesh = self.chunk_mesh(chunk);
+        self.chunk_meshes.insert(chunk, mesh);
+        self.chunks_rebuilt_this_frame += 1;
     }
 
-    for chunk in occupied_chunks {
+        for chunk in occupied_chunks {
         if !self.chunk_meshes.contains_key(&chunk) {
-            self.chunk_meshes.insert(chunk, self.chunk_mesh(chunk));
+            let mesh = self.chunk_mesh(chunk);
+            self.chunk_meshes.insert(chunk, mesh);
+            self.chunks_rebuilt_this_frame += 1;
         }
     }
 }
