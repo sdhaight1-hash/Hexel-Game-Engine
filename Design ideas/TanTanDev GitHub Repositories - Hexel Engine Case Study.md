@@ -273,3 +273,49 @@ Before full planetary simulation, define stable cell identity and neighbour quer
 ## Final recommendation
 
 Treat TanTanDev's repositories as a collection of focused engineering references, not a single engine to copy. For Hexel's chosen Earth-sized spherical direction, prioritize **stable spherical topology and debug tooling first**, use the mesher demo to design fair performance experiments, then adapt Worley classification and vegetation around spherical surface frames and environmental fields. The long-term differentiator should be the integration of these systems into a coherent, editable, finite spherical world.
+
+
+---
+
+## Focused follow-up: PlanetSmith raycasting and rendering, then TanTanDev performance
+
+**Purpose:** A short, prioritized reading/watch list based on the next useful references for Hexel's current raycasting work and future rendering-performance decisions. These are external development logs and videos, not claims that Hexel should copy either game's architecture directly.
+
+### 1. PlanetSmith — start here
+
+PlanetSmith is especially relevant because it is built around spherical hex worlds. Its official Steam news archive includes development-log entries about raycasting, optimization for lower-spec PCs, and rendering without meshes.
+
+- **[PlanetSmith official Steam news/devlog archive](https://steamcommunity.com/app/2539340/allnews/)** — use this as the index for the entries below.
+- **PlanetSmith Devlog 10 — “Hexel Raycasting” (July 2, 2024)** — find the title in the archive. This is the first stop for thinking about how a ray selects a hexel on a curved, hex-based world. Compare the design problem to Hexel's current raycast and selection highlighting, while remembering the topology and implementation may differ.
+- **PlanetSmith Devlog 12 — “Optimizing Data and Open Playtest Weekend Announcement!” (September 25, 2024)** — find the title in the archive. The announcement says the episode discusses optimizing PlanetSmith for lower-spec PCs. Watch for what data or workload they optimize and whether the trade-offs would apply to Hexel.
+- **“PlanetSmith Devlog - Rendering Without Meshes” (listed September 22 on the Steam community page)** — find the title in the same archive/community feed. This is a research lead for alternative rendering representations. Do not assume “without meshes” means the same thing as point rendering, voxel ray tracing, or a particular LOD technique until the developer's explanation is reviewed.
+- **[PlanetSmith Steam community page](https://steamcommunity.com/app/2539340)** — useful as another entry point to official updates and discussions.
+
+**Questions to note while watching:** How is the ray mapped to a cell? What is the authoritative world representation? Which data is cached or rebuilt? What is rendered at close versus far distances? What measurements demonstrate the optimization helped?
+
+### 2. TanTanDev — rendering performance next
+
+These videos are useful follow-ups to the meshing and renderer references in the repository sections above.
+
+- **[Going All In on My Rust Voxel Engine](https://www.youtube.com/watch?v=m540dUb3SUY)** — published July 27, 2021. TanTanDev describes switching a voxel-game project from Unity to Rust and optimizing it over a month. Watch for the motivation, profiling/benchmarking references, and how he evaluates whether the new implementation is faster.
+- **[Pushing the Rendering Limits — Rust Voxel Engine](https://www.youtube.com/watch?v=23yc2oPEqlg)** — published March 2023. Covers six rendering techniques: physically based rendering (PBR), shadows, fog, level of detail (LOD), far-distance heightmap approximation, and skybox. The accompanying resource links include [Criterion benchmarking](https://github.com/bheisler/criterion.rs), [Bevy](https://bevyengine.org/), and [macroquad](https://github.com/not-fl3/macroquad).
+- **[TanTanDev video index](https://www.gamesinprogress.com/indie-game-developers/tantan)** — a searchable index of more of the developer's videos, including voxel rendering, procedural biomes, and meshing topics.
+- **[TanTanDev GitHub profile](https://github.com/TanTanDev)** — pair videos with the related source repositories where available; a video may describe code that is not open source.
+
+**Questions to note while watching:** What is the measured bottleneck? Is LOD changing geometry, representation, or both? How is far-distance terrain approximated? Are benchmarks reproducible? Which techniques require a different graphics backend or engine architecture?
+
+### 3. Practical sequence for Hexel
+
+1. Watch **PlanetSmith “Hexel Raycasting”** first and compare its selection problem with Hexel's current raycast/highlight behavior.
+2. Watch **PlanetSmith Devlog 12** for optimization priorities and lower-spec performance considerations.
+3. Investigate **PlanetSmith “Rendering Without Meshes”** as an architectural research lead; record the actual representation and trade-offs before drawing conclusions.
+4. Watch **TanTanDev “Going All In”** for profiling and optimization workflow.
+5. Watch **TanTanDev “Pushing the Rendering Limits”** for LOD and far-distance rendering ideas.
+
+### Adaptation cautions
+
+- Hexel's current prototype uses macroquad; TanTanDev's cited rendering project uses Bevy. Transfer concepts and measurement practices, not framework-specific code by default.
+- Hexel is pursuing a finite Earth-sized spherical world. A technique designed for a flat or conventional voxel grid may need changes for curved cells, patch seams, local surface orientation, and stable cell identity.
+- Do not replace the current exposed-face mesher or raycast simply because another project uses a different method. Establish correctness tests and benchmark representative Hexel worlds first.
+- Treat devlogs as primary-source explanations of the developers' own work, but verify details in source code or experiments before adopting them.
+
