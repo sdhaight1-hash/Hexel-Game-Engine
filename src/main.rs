@@ -160,10 +160,8 @@ async fn main() {
             set_cursor_grab(false);
         }
 
+        
         if is_key_pressed(KeyCode::F1) {
-            debug_menu_open = !debug_menu_open;
-
-                if is_key_pressed(KeyCode::F1) {
             debug_menu_open = !debug_menu_open;
 
             if debug_menu_open {
@@ -172,11 +170,15 @@ async fn main() {
                 set_cursor_grab(false);
             }
         }
+
+            
+        if is_key_pressed(KeyCode::C) && !debug_menu_open {
             captured = !captured;
             show_mouse(!captured);
             set_cursor_grab(captured);
             previous_mouse = mouse_position();
         }
+
 
         if captured {
             let mouse = mouse_position();
