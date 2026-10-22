@@ -9,6 +9,9 @@ const DEFAULT_LOOK_SENSITIVITY: f32 = 0.00015;
 const DEFAULT_MOVE_SPEED: f32 = 8.0;
 const DEFAULT_CAMERA_FOV: f32 = 50.0;
 const DEFAULT_WHEEL_VERTICAL_SPEED: f32 = 0.15;
+const DEFAULT_CAMERA_SPEED_MULTIPLIER: f32 = 1.0;
+const DEFAULT_CROSSHAIR_SIZE: f32 = 7.0;
+const DEFAULT_CROSSHAIR_COLOR: Color = WHITE;
 
 
 fn window_conf() -> Conf {
@@ -87,21 +90,39 @@ fn debug_slider(
 async fn main() {
     let mut world = World::demo();
     let mut look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
+    let mut camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
+    let mut crosshair_size = DEFAULT_CROSSHAIR_SIZE;
+    let mut crosshair_color = DEFAULT_CROSSHAIR_COLOR;
     let mut move_speed = DEFAULT_MOVE_SPEED;
     let mut camera_fov = DEFAULT_CAMERA_FOV;
     let mut wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
     let mut debug_menu_open = false;
     let mut show_grid = true;
     let mut show_target_outline = true;
+    let mut show_chunk_bounds = false;
     let mut show_crosshair = true;
     let mut position = vec3(0.0, 9.0, -16.0);
     let mut yaw = 0.0_f32;
     let mut pitch = -0.35_f32;
     let mut captured = false;
     let mut previous_mouse = mouse_position();
+    let mut fps_timer = 0.0_f32;
+    let mut fps_frames = 0_u32;
+    let mut displayed_fps = 0_u32;
+    let mut displayed_frame_ms = 0.0_f32;
 
     loop {
         let dt = get_frame_time().min(0.05);
+        fps_timer += get_frame_time();
+        fps_frames += 1;
+
+        if fps_timer >= 0.5 {
+            displayed_fps = (fps_frames as f32 / fps_timer) as u32;
+            displayed_frame_ms = 1000.0 / displayed_fps.max(1) as f32;
+
+            fps_timer = 0.0;
+            fps_frames = 0;
+        }
 
         if is_key_pressed(KeyCode::Escape) {
             captured = false;
@@ -172,7 +193,7 @@ async fn main() {
             movement.y -= 1.0;
         }
         if movement.length_squared() > 0.0 {
-            position += movement.normalize() * move_speed * dt;
+            position += movement.normalize() * move_speed * camera_speed_multiplier * dt;
         }
 
         if is_key_pressed(KeyCode::R) {
@@ -235,6 +256,48 @@ async fn main() {
             draw_mesh(world_mesh);
         }
 
+        // Draw cyan outlines around chunk boundaries.
+if show_chunk_bounds {
+    let chunk_coords = world.occupied_chunk_coords();
+
+    for (chunk_q, chunk_r) in chunk_coords {
+        let start_q = chunk_q * 16;
+        let start_r = chunk_r * 16;
+
+        for q in start_q..start_q + 16 {
+            for r in start_r..start_r + 16 {
+                let coord = hexel::HexCoord::new(q, r);
+                if world.height(coord) == 0 {
+                continue;
+                }
+
+                // Only draw edges that face a different chunk.
+                let height = world.height(coord) as f32 * hexel::HEX_HEIGHT + 0.04;
+                let corners = world::coord_corners(coord, height);
+
+                for direction in 0..6 {
+                    let neighbor = coord.neighbor(direction);
+
+                    let neighbor_chunk_q = neighbor.q.div_euclid(16);
+                    let neighbor_chunk_r = neighbor.r.div_euclid(16);
+
+                    if neighbor_chunk_q != chunk_q
+                        || neighbor_chunk_r != chunk_r
+                    {
+                        let edge = (5 + 6 - direction) % 6;
+
+                        draw_line_3d(
+                            corners[edge],
+                            corners[(edge + 1) % 6],
+                            SKYBLUE,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
        // Outline the full targeted hex column.
         if show_target_outline {
             if let Some((coord, layer, _side)) = target {
@@ -270,15 +333,53 @@ async fn main() {
             }
         }
 
+        
         set_default_camera();
 
+        // Performance display — fixed in the top-right corner.
+        let fps_text = format!("FPS: {}", displayed_fps);
+        let frame_text = format!("Frame: {:.1} ms", displayed_frame_ms);
+
+        let padding = 12.0;
+        let text_size = 20.0;
+        let fps_width = measure_text(&fps_text, None, text_size as u16, 1.0).width;
+        let frame_width = measure_text(&frame_text, None, text_size as u16, 1.0).width;
+        let box_width = fps_width.max(frame_width) + padding * 2.0;
+        let box_height = 58.0;
+        let box_x = screen_width() - box_width - 12.0;
+        let box_y = 12.0;
+
+        draw_rectangle(
+            box_x,
+            box_y,
+            box_width,
+            box_height,
+            Color::new(0.035, 0.05, 0.08, 0.85),
+        );
+
+        draw_text(
+            &fps_text,
+            box_x + padding,
+            box_y + 23.0,
+            text_size,
+            LIME,
+        );
+
+        draw_text(
+            &frame_text,
+            box_x + padding,
+            box_y + 47.0,
+            text_size,
+            WHITE,
+        );
 
         let (screen_w, screen_h) = (screen_width(), screen_height());
         if debug_menu_open {
+
     let panel_x = screen_w * 0.5 - 230.0;
     let panel_y = 90.0;
     let panel_w = 460.0;
-    let panel_h = 500.0;
+    let panel_h = 650.0;
 
     draw_rectangle(
         panel_x,
@@ -355,17 +456,34 @@ async fn main() {
         0.02,
         1.0,
     );
-
+        debug_slider(
+        "Camera speed multiplier",
+        slider_x,
+        panel_y + 350.0,
+        slider_w,
+        &mut camera_speed_multiplier,
+        0.25,
+        3.0,
+    );
+        debug_slider(
+        "Crosshair size",
+        slider_x,
+        panel_y + 405.0,
+        slider_w,
+        &mut crosshair_size,
+        2.0,
+        20.0,
+    );
         draw_text(
         "Rendering",
         panel_x + 20.0,
-        panel_y + 350.0,
+        panel_y + 460.0,
         20.0,
         SKYBLUE,
     );
 
     let toggle_x = panel_x + 20.0;
-    let toggle_y = panel_y + 365.0;
+    let toggle_y = panel_y + 475.0;
     let toggle_w = 130.0;
     let toggle_h = 28.0;
     let toggle_gap = 145.0;
@@ -422,35 +540,116 @@ async fn main() {
         show_target_outline = !show_target_outline;
     }
 
-    // Crosshair toggle
-    let crosshair_x = toggle_x;
-    let crosshair_y = toggle_y + 35.0;
-    let crosshair_hovered =
-        mouse.0 >= crosshair_x
-        && mouse.0 <= crosshair_x + toggle_w
-        && mouse.1 >= crosshair_y
-        && mouse.1 <= crosshair_y + toggle_h;
+   // Chunk boundaries toggle
+    let chunk_x = toggle_x + toggle_gap;
+    let chunk_y = toggle_y + 35.0;
+
+    let chunk_hovered =
+        mouse.0 >= chunk_x
+        && mouse.0 <= chunk_x + toggle_w
+        && mouse.1 >= chunk_y
+        && mouse.1 <= chunk_y + toggle_h;
 
     draw_rectangle(
-        crosshair_x,
-        crosshair_y,
+        chunk_x,
+        chunk_y,
         toggle_w,
         toggle_h,
-        if crosshair_hovered { BLUE } else { DARKGRAY },
-    );
+    if chunk_hovered { BLUE } else { DARKGRAY },
+);
+
     draw_text(
-        if show_crosshair { "Crosshair: ON" } else { "Crosshair: OFF" },
-        crosshair_x + 8.0,
-        crosshair_y + 20.0,
-        16.0,
-        WHITE,
+    if show_chunk_bounds {
+        "Chunks: ON"
+    } else {
+        "Chunks: OFF"
+    },
+    chunk_x + 8.0,
+    chunk_y + 20.0,
+    17.0,
+    WHITE,
+);
+
+    if chunk_hovered && is_mouse_button_pressed(MouseButton::Left) {
+    show_chunk_bounds = !show_chunk_bounds;
+}
+        // Crosshair color buttons
+    let color_y = toggle_y + 70.0;
+    let color_w = 95.0;
+    let color_h = 28.0;
+    let color_gap = 10.0;
+
+    let white_x = toggle_x;
+    let red_x = white_x + color_w + color_gap;
+    let green_x = red_x + color_w + color_gap;
+    let yellow_x = green_x + color_w + color_gap;
+
+    let white_hovered =
+        mouse.0 >= white_x
+        && mouse.0 <= white_x + color_w
+        && mouse.1 >= color_y
+        && mouse.1 <= color_y + color_h;
+
+    draw_rectangle(
+        white_x, color_y, color_w, color_h,
+        if white_hovered { BLUE } else { DARKGRAY },
     );
-    if crosshair_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        show_crosshair = !show_crosshair;
+    draw_text("White", white_x + 20.0, color_y + 20.0, 16.0, WHITE);
+
+    if white_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        crosshair_color = WHITE;
+    }
+
+    let red_hovered =
+        mouse.0 >= red_x
+        && mouse.0 <= red_x + color_w
+        && mouse.1 >= color_y
+        && mouse.1 <= color_y + color_h;
+
+    draw_rectangle(
+        red_x, color_y, color_w, color_h,
+        if red_hovered { BLUE } else { DARKGRAY },
+    );
+    draw_text("Red", red_x + 30.0, color_y + 20.0, 16.0, WHITE);
+
+    if red_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        crosshair_color = RED;
+    }
+
+    let green_hovered =
+        mouse.0 >= green_x
+        && mouse.0 <= green_x + color_w
+        && mouse.1 >= color_y
+        && mouse.1 <= color_y + color_h;
+
+    draw_rectangle(
+        green_x, color_y, color_w, color_h,
+        if green_hovered { BLUE } else { DARKGRAY },
+    );
+    draw_text("Green", green_x + 25.0, color_y + 20.0, 16.0, WHITE);
+
+    if green_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        crosshair_color = GREEN;
+    }
+
+    let yellow_hovered =
+        mouse.0 >= yellow_x
+        && mouse.0 <= yellow_x + color_w
+        && mouse.1 >= color_y
+        && mouse.1 <= color_y + color_h;
+
+    draw_rectangle(
+        yellow_x, color_y, color_w, color_h,
+        if yellow_hovered { BLUE } else { DARKGRAY },
+    );
+    draw_text("Yellow", yellow_x + 22.0, color_y + 20.0, 16.0, WHITE);
+
+    if yellow_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        crosshair_color = YELLOW;
     }
 
     let reset_x = panel_x + 20.0;
-    let reset_y = panel_y + 435.0;
+    let reset_y = panel_y + 600.0;
     let reset_w = 180.0;
     let reset_h = 38.0;
     let mouse = mouse_position();
@@ -480,6 +679,9 @@ async fn main() {
     if reset_hovered && is_mouse_button_pressed(MouseButton::Left) {
         look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
         move_speed = DEFAULT_MOVE_SPEED;
+        camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
+        crosshair_size = DEFAULT_CROSSHAIR_SIZE;
+        crosshair_color = DEFAULT_CROSSHAIR_COLOR;
         camera_fov = DEFAULT_CAMERA_FOV;
         wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
     }
@@ -493,22 +695,22 @@ async fn main() {
     );
     }
 
-       if show_crosshair {
-        draw_line(
-            screen_w * 0.5 - 7.0,
-            screen_h * 0.5,
-            screen_w * 0.5 + 7.0,
-            screen_h * 0.5,
-            2.0,
-            WHITE,
+    if show_crosshair {
+       draw_line(
+        screen_w * 0.5 - crosshair_size,
+        screen_h * 0.5,
+        screen_w * 0.5 + crosshair_size,
+        screen_h * 0.5,
+        2.0,
+        crosshair_color,
         );
         draw_line(
-            screen_w * 0.5,
-            screen_h * 0.5 - 7.0,
-            screen_w * 0.5,
-            screen_h * 0.5 + 7.0,
-            2.0,
-            WHITE,
+        screen_w * 0.5,
+        screen_h * 0.5 - crosshair_size,
+        screen_w * 0.5,
+        screen_h * 0.5 + crosshair_size,
+        2.0,
+        crosshair_color,
         );
     }
 

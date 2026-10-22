@@ -277,33 +277,45 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
     }
 }
 
+    
     pub fn meshes(&self) -> impl Iterator<Item = &Mesh> {
-    self.chunk_meshes.values()
-}
+        self.chunk_meshes.values()
+    }
 
-    fn chunk_mesh(&self, chunk: ChunkCoord) -> Mesh {
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut indices: Vec<u16> = Vec::new();
+    /// Return the coordinates of chunks containing hexels.
+    pub fn occupied_chunk_coords(&self) -> Vec<(i32, i32)> {
+        self.hexels
+            .iter()
+            .map(|(coord, _)| ChunkCoord::from_hex(*coord))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|chunk| (chunk.q, chunk.r))
+            .collect()
+    }
 
-    for &(coord, layer) in &self.hexels {
-        if ChunkCoord::from_hex(coord) != chunk {
-            continue;
+
+        fn chunk_mesh(&self, chunk: ChunkCoord) -> Mesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        for (coord, layer) in &self.hexels {
+            if ChunkCoord::from_hex(*coord) == chunk {
+                self.append_hexel_faces(
+                    *coord,
+                    *layer,
+                    &mut vertices,
+                    &mut indices,
+                );
+            }
         }
 
-        self.append_hexel_faces(
-            coord,
-            layer,
-            &mut vertices,
-            &mut indices,
-        );
+        Mesh {
+            vertices,
+            indices,
+            texture: None,
+        }
     }
 
-    Mesh {
-        vertices,
-        indices,
-        texture: None,
-    }
-}
     fn append_hexel_faces(
     &self,
     coord: HexCoord,
@@ -372,12 +384,11 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
             [b_bottom, a_bottom, a_top, b_top],
             shade(color, 0.78 + direction as f32 * 0.035),
         );
-    }
-}
-   
+        }
 }
 
-/// Compute corners from integer grid coordinates
+// Close impl World before defining the standalone helper.
+}
 
 /// Compute corners from integer grid coordinates rather than adding trigonometric
 /// offsets to each column center. Adjacent columns therefore produce bit-identical
