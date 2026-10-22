@@ -111,9 +111,21 @@ async fn main() {
     let mut displayed_fps = 0_u32;
     let mut displayed_frame_ms = 0.0_f32;
 
+    // 10-second performance benchmark.
+    let mut benchmark_timer = 0.0_f32;
+    let mut benchmark_frames = 0_u32;
+    let mut benchmark_total_ms = 0.0_f64;
+    let mut benchmark_min_fps = f32::MAX;
+    let mut benchmark_avg_fps = 0.0_f32;
+    let mut benchmark_avg_ms = 0.0_f32;
+    let mut benchmark_low_fps = 0.0_f32;
+
     loop {
-        let dt = get_frame_time().min(0.05);
-        fps_timer += get_frame_time();
+        let frame_seconds = get_frame_time().max(0.000_001);
+        let dt = frame_seconds.min(0.05);
+
+        // Live FPS display, updated every half second.
+        fps_timer += frame_seconds;
         fps_frames += 1;
 
         if fps_timer >= 0.5 {
@@ -122,6 +134,24 @@ async fn main() {
 
             fps_timer = 0.0;
             fps_frames = 0;
+        }
+
+        // Collect benchmark data over a 10-second window.
+        benchmark_timer += frame_seconds;
+        benchmark_frames += 1;
+        benchmark_total_ms += frame_seconds as f64 * 1000.0;
+        benchmark_min_fps = benchmark_min_fps.min(1.0 / frame_seconds);
+
+        if benchmark_timer >= 10.0 {
+            benchmark_avg_fps = benchmark_frames as f32 / benchmark_timer;
+            benchmark_avg_ms =
+                (benchmark_total_ms / benchmark_frames as f64) as f32;
+            benchmark_low_fps = benchmark_min_fps;
+
+            benchmark_timer = 0.0;
+            benchmark_frames = 0;
+            benchmark_total_ms = 0.0;
+            benchmark_min_fps = f32::MAX;
         }
 
         if is_key_pressed(KeyCode::Escape) {
@@ -133,15 +163,15 @@ async fn main() {
         if is_key_pressed(KeyCode::F1) {
             debug_menu_open = !debug_menu_open;
 
-        if debug_menu_open {
-            captured = false;
-            show_mouse(true);
-            set_cursor_grab(false);
-        }
-        }
+                if is_key_pressed(KeyCode::F1) {
+            debug_menu_open = !debug_menu_open;
 
-        // C toggles mouse capture so both mouse buttons remain available for editing.
-        if is_key_pressed(KeyCode::C) && !debug_menu_open {
+            if debug_menu_open {
+                captured = false;
+                show_mouse(true);
+                set_cursor_grab(false);
+            }
+        }
             captured = !captured;
             show_mouse(!captured);
             set_cursor_grab(captured);
@@ -252,9 +282,67 @@ async fn main() {
         
         world.rebuild_dirty_chunks();
 
-        for world_mesh in world.meshes() {
-            draw_mesh(world_mesh);
-        }
+        
+fn chunk_is_visible(
+    chunk_q: i32,
+    chunk_r: i32,
+    camera_position: Vec3,
+    forward: Vec3,
+    camera_fov: f32,
+) -> bool {
+    const CHUNK_SIZE: f32 = 16.0;
+    const CHUNK_RADIUS: f32 = 15.0;
+
+    // Find the chunk center using the engine's axial-to-world mapping.
+    let q = chunk_q as f32 * CHUNK_SIZE + (CHUNK_SIZE - 1.0) * 0.5;
+    let r = chunk_r as f32 * CHUNK_SIZE + (CHUNK_SIZE - 1.0) * 0.5;
+
+    let center_x = hexel::HEX_RADIUS * 1.732_050_8 * (q + r * 0.5);
+    let center_z = hexel::HEX_RADIUS * 1.5 * r;
+
+    let dx = center_x - camera_position.x;
+    let dz = center_z - camera_position.z;
+
+    // Test horizontally, keeping the result conservative when looking up/down.
+    let horizontal_forward =
+        vec3(forward.x, 0.0, forward.z).normalize_or_zero();
+
+    if horizontal_forward.length_squared() < 0.001 {
+        return true;
+    }
+
+    let right = vec3(horizontal_forward.z, 0.0, -horizontal_forward.x);
+
+    let depth = dx * horizontal_forward.x + dz * horizontal_forward.z;
+    let side = dx * right.x + dz * right.z;
+
+    // The entire chunk is behind the camera.
+    if depth + CHUNK_RADIUS < 0.0 {
+        return false;
+    }
+
+    let aspect = screen_width() / screen_height().max(1.0);
+    let half_fov = (camera_fov.to_radians() * 0.5).tan();
+    let horizontal_limit = half_fov * aspect;
+
+    // Keep chunks that intersect the view, including a safety margin.
+    side.abs() <= depth.max(0.0) * horizontal_limit + CHUNK_RADIUS
+}
+
+
+        
+    for ((chunk_q, chunk_r), world_mesh) in world.meshes_with_coords() {
+    if chunk_is_visible(
+        chunk_q,
+        chunk_r,
+        position,
+        forward,
+        camera_fov,
+    ) {
+        draw_mesh(world_mesh);
+    }
+}
+
 
         // Draw cyan outlines around chunk boundaries.
 if show_chunk_bounds {
@@ -403,10 +491,26 @@ if show_chunk_bounds {
         );
 
         
-        // World statistics display — fixed below the top-left corner.
+        
+        // World statistics display — fixed in the bottom-right corner.
         let total_hexels_text = format!("Total hexels: {}", world.total_hexels());
         let occupied_chunks_text =
             format!("Occupied chunks: {}", world.occupied_chunk_count());
+
+        let visible_chunks = world
+            .meshes_with_coords()
+            .filter(|((chunk_q, chunk_r), _)| {
+                chunk_is_visible(
+                    *chunk_q,
+                    *chunk_r,
+                    position,
+                    forward,
+                    camera_fov,
+                )
+            })
+            .count();
+
+        let visible_chunks_text = format!("Visible chunks: {}", visible_chunks);
         let rebuilt_chunks_text = format!(
             "Chunks rebuilt: {}",
             world.chunks_rebuilt_this_frame()
@@ -417,6 +521,7 @@ if show_chunk_bounds {
         let stats_width = [
             &total_hexels_text,
             &occupied_chunks_text,
+            &visible_chunks_text,
             &rebuilt_chunks_text,
         ]
         .iter()
@@ -426,11 +531,9 @@ if show_chunk_bounds {
         .fold(0.0_f32, f32::max)
             + stats_padding * 2.0;
 
-        let stats_height = 82.0;
+        let stats_height = 106.0;
         let stats_x = screen_width() - stats_width - 12.0;
         let stats_y = screen_height() - stats_height - 12.0;
-
-
 
         draw_rectangle(
             stats_x,
@@ -457,24 +560,51 @@ if show_chunk_bounds {
         );
 
         draw_text(
-            &rebuilt_chunks_text,
+            &visible_chunks_text,
             stats_x + stats_padding,
             stats_y + 71.0,
+            stats_text_size,
+            LIME,
+        );
+
+        draw_text(
+            &rebuilt_chunks_text,
+            stats_x + stats_padding,
+            stats_y + 95.0,
             stats_text_size,
             WHITE,
         );
 
 
+
+       
         // Performance display — fixed in the top-right corner.
         let fps_text = format!("FPS: {}", displayed_fps);
         let frame_text = format!("Frame: {:.1} ms", displayed_frame_ms);
+        let avg_fps_text = format!("10s Avg FPS: {:.1}", benchmark_avg_fps);
+        let avg_ms_text = format!("10s Avg Frame: {:.2} ms", benchmark_avg_ms);
+        let low_fps_text = format!("10s Lowest FPS: {:.1}", benchmark_low_fps);
 
         let padding = 12.0;
-        let text_size = 20.0;
+        let text_size = 18.0;
+
         let fps_width = measure_text(&fps_text, None, text_size as u16, 1.0).width;
         let frame_width = measure_text(&frame_text, None, text_size as u16, 1.0).width;
-        let box_width = fps_width.max(frame_width) + padding * 2.0;
-        let box_height = 58.0;
+        let avg_fps_width =
+            measure_text(&avg_fps_text, None, text_size as u16, 1.0).width;
+        let avg_ms_width =
+            measure_text(&avg_ms_text, None, text_size as u16, 1.0).width;
+        let low_fps_width =
+            measure_text(&low_fps_text, None, text_size as u16, 1.0).width;
+
+        let widest_text = fps_width
+            .max(frame_width)
+            .max(avg_fps_width)
+            .max(avg_ms_width)
+            .max(low_fps_width);
+
+        let box_width = widest_text + padding * 2.0;
+        let box_height = 130.0;
         let box_x = screen_width() - box_width - 12.0;
         let box_y = 12.0;
 
@@ -497,10 +627,35 @@ if show_chunk_bounds {
         draw_text(
             &frame_text,
             box_x + padding,
-            box_y + 47.0,
+            box_y + 45.0,
             text_size,
             WHITE,
         );
+
+        draw_text(
+            &avg_fps_text,
+            box_x + padding,
+            box_y + 67.0,
+            text_size,
+            SKYBLUE,
+        );
+
+        draw_text(
+            &avg_ms_text,
+            box_x + padding,
+            box_y + 89.0,
+            text_size,
+            SKYBLUE,
+        );
+
+        draw_text(
+            &low_fps_text,
+            box_x + padding,
+            box_y + 111.0,
+            text_size,
+            YELLOW,
+        );
+
 
         let (screen_w, screen_h) = (screen_width(), screen_height());
         if debug_menu_open {
@@ -669,7 +824,8 @@ if show_chunk_bounds {
         show_target_outline = !show_target_outline;
     }
 
-   // Chunk boundaries toggle
+  
+    // Chunk boundaries toggle
     let chunk_x = toggle_x + toggle_gap;
     let chunk_y = toggle_y + 35.0;
 
@@ -684,25 +840,26 @@ if show_chunk_bounds {
         chunk_y,
         toggle_w,
         toggle_h,
-    if chunk_hovered { BLUE } else { DARKGRAY },
-);
+        if chunk_hovered { BLUE } else { DARKGRAY },
+    );
 
     draw_text(
-    if show_chunk_bounds {
-        "Chunks: ON"
-    } else {
-        "Chunks: OFF"
-    },
-    chunk_x + 8.0,
-    chunk_y + 20.0,
-    17.0,
-    WHITE,
-);
+        if show_chunk_bounds {
+            "Chunks: ON"
+        } else {
+            "Chunks: OFF"
+        },
+        chunk_x + 8.0,
+        chunk_y + 20.0,
+        17.0,
+        WHITE,
+    );
 
     if chunk_hovered && is_mouse_button_pressed(MouseButton::Left) {
-    show_chunk_bounds = !show_chunk_bounds;
-}
-        // Crosshair color buttons
+        show_chunk_bounds = !show_chunk_bounds;
+    }
+
+    // Crosshair color buttons
     let color_y = toggle_y + 70.0;
     let color_w = 95.0;
     let color_h = 28.0;
