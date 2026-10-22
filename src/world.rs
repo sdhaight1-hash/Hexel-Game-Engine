@@ -4,19 +4,23 @@ use macroquad::prelude::{Mesh, Vec3, Vertex};
 
 use crate::hexel::{push_quad, terrain_color, HexCoord, HEX_HEIGHT, HEX_RADIUS};
 
-const CHUNK_SIZE: i32 = 8;
+const CHUNK_SIZE: i32 = 16;
+const CHUNK_HEIGHT: u32 = 16;
+
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ChunkCoord {
     q: i32,
     r: i32,
+    y: u32,
 }
 
 impl ChunkCoord {
-    fn from_hex(coord: HexCoord) -> Self {
+    fn from_hex(coord: HexCoord, layer: u32) -> Self {
         Self {
             q: coord.q.div_euclid(CHUNK_SIZE),
             r: coord.r.div_euclid(CHUNK_SIZE),
+            y: layer / CHUNK_HEIGHT,
         }
     }
 }
@@ -99,20 +103,21 @@ pub fn demo() -> Self {
         world
     }
 
-    fn mark_dirty(&mut self, coord: HexCoord) {
-    let chunk = ChunkCoord::from_hex(coord);
-    self.dirty_chunks.insert(chunk);
+        fn mark_dirty(&mut self, coord: HexCoord, layer: u32) {
+        let chunk = ChunkCoord::from_hex(coord, layer);
+        self.dirty_chunks.insert(chunk);
 
-    // Neighboring chunks may need new faces at a shared boundary.
-    for direction in 0..6 {
-        let neighbor = coord.neighbor(direction);
-        let neighbor_chunk = ChunkCoord::from_hex(neighbor);
+        // Neighboring chunks may need new faces at a shared boundary.
+        for direction in 0..6 {
+            let neighbor = coord.neighbor(direction);
+            let neighbor_chunk = ChunkCoord::from_hex(neighbor, layer);
 
-        if neighbor_chunk != chunk {
-            self.dirty_chunks.insert(neighbor_chunk);
+            if neighbor_chunk != chunk {
+                self.dirty_chunks.insert(neighbor_chunk);
+            }
         }
     }
-}
+
     pub fn contains(&self, coord: HexCoord, layer: u32) -> bool {
     self.hexels.contains(&(coord, layer))
 }
@@ -146,19 +151,19 @@ pub fn add_hexel(&mut self, coord: HexCoord) {
     }
 
     if self.hexels.insert((coord, layer)) {
-        self.mark_dirty(coord);
+        self.mark_dirty(coord, layer);
     }
 }
 
 pub fn add_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
     if self.hexels.insert((coord, layer)) {
-        self.mark_dirty(coord);
+        self.mark_dirty(coord, layer);
     }
 }
 
 pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
     if self.hexels.remove(&(coord, layer)) {
-        self.mark_dirty(coord);
+        self.mark_dirty(coord, layer);
     }
 }
     
@@ -300,54 +305,62 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
 
     
     /// Build one mesh per occupied coordinate, keeping mesh sizes manageable.
-        pub fn rebuild_dirty_chunks(&mut self) {
-    self.chunks_rebuilt_this_frame = 0;
+        
+    /// Build one mesh per occupied chunk, keeping mesh sizes manageable.
+    pub fn rebuild_dirty_chunks(&mut self) {
+        self.chunks_rebuilt_this_frame = 0;
 
-    let occupied_chunks: HashSet<ChunkCoord> = self
-        .hexels
-        .iter()
-        .map(|(coord, _)| ChunkCoord::from_hex(*coord))
-        .collect();
+        let occupied_chunks: HashSet<ChunkCoord> = self
+            .hexels
+            .iter()
+            .map(|(coord, layer)| ChunkCoord::from_hex(*coord, *layer))
+            .collect();
 
-    self.chunk_meshes
-        .retain(|chunk, _| occupied_chunks.contains(chunk));
+        self.chunk_meshes
+            .retain(|chunk, _| occupied_chunks.contains(chunk));
 
-    self.dirty_chunks.retain(|chunk| occupied_chunks.contains(chunk));
+        self.dirty_chunks
+            .retain(|chunk| occupied_chunks.contains(chunk));
 
-    let dirty: Vec<ChunkCoord> = self.dirty_chunks.drain().collect();
+        let dirty: Vec<ChunkCoord> = self.dirty_chunks.drain().collect();
 
         for chunk in dirty {
-        let mesh = self.chunk_mesh(chunk);
-        self.chunk_meshes.insert(chunk, mesh);
-        self.chunks_rebuilt_this_frame += 1;
-    }
-
-        for chunk in occupied_chunks {
-        if !self.chunk_meshes.contains_key(&chunk) {
             let mesh = self.chunk_mesh(chunk);
             self.chunk_meshes.insert(chunk, mesh);
             self.chunks_rebuilt_this_frame += 1;
         }
+
+        for chunk in occupied_chunks {
+            if !self.chunk_meshes.contains_key(&chunk) {
+                let mesh = self.chunk_mesh(chunk);
+                self.chunk_meshes.insert(chunk, mesh);
+                self.chunks_rebuilt_this_frame += 1;
+            }
+        }
     }
-}
+
 
     
-    pub fn meshes_with_coords(&self) -> impl Iterator<Item = ((i32, i32), &Mesh)> {
-    self.chunk_meshes
-        .iter()
-        .map(|(chunk, mesh)| ((chunk.q, chunk.r), mesh))
+    
+    pub fn meshes_with_coords(&self) -> impl Iterator<Item = ((i32, i32, u32), &Mesh)> {
+        self.chunk_meshes
+            .iter()
+            .map(|(chunk, mesh)| ((chunk.q, chunk.r, chunk.y), mesh))
     }
 
+
     /// Return the coordinates of chunks containing hexels.
-    pub fn occupied_chunk_coords(&self) -> Vec<(i32, i32)> {
+    
+    pub fn occupied_chunk_coords(&self) -> Vec<(i32, i32, u32)> {
         self.hexels
             .iter()
-            .map(|(coord, _)| ChunkCoord::from_hex(*coord))
+            .map(|(coord, layer)| ChunkCoord::from_hex(*coord, *layer))
             .collect::<HashSet<_>>()
             .into_iter()
-            .map(|chunk| (chunk.q, chunk.r))
+            .map(|chunk| (chunk.q, chunk.r, chunk.y))
             .collect()
-    }
+}
+
 
 
         fn chunk_mesh(&self, chunk: ChunkCoord) -> Mesh {
@@ -355,7 +368,7 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
         let mut indices = Vec::new();
 
         for (coord, layer) in &self.hexels {
-            if ChunkCoord::from_hex(*coord) == chunk {
+            if ChunkCoord::from_hex(*coord, *layer) == chunk {
                 self.append_hexel_faces(
                     *coord,
                     *layer,
@@ -497,6 +510,18 @@ fn shade(color: macroquad::prelude::Color, factor: f32) -> macroquad::prelude::C
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    
+    
+    #[test]
+    fn chunk_coordinates_use_16_hexel_boundaries() {
+        assert_eq!(ChunkCoord::from_hex(HexCoord::new(0, 0), 0).q, 0);
+        assert_eq!(ChunkCoord::from_hex(HexCoord::new(15, 15), 0).q, 0);
+        assert_eq!(ChunkCoord::from_hex(HexCoord::new(16, 16), 0).q, 1);
+        assert_eq!(ChunkCoord::from_hex(HexCoord::new(-1, -1), 0).q, -1);
+        assert_eq!(ChunkCoord::from_hex(HexCoord::new(-16, -16), 0).q, -1);
+        assert_eq!(ChunkCoord::from_hex(HexCoord::new(-17, -17), 0).q, -2);
+    }
 
     #[test]
     fn demo_world_has_many_columns() {

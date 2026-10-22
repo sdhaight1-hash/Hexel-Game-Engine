@@ -1,13 +1,17 @@
 mod hexel;
+mod spherical;
 mod world;
 
 use macroquad::prelude::*;
 
 use world::World;
+use spherical::{Icosphere, SphericalWorld};
 
 const DEFAULT_LOOK_SENSITIVITY: f32 = 0.00015;
 const DEFAULT_MOVE_SPEED: f32 = 8.0;
 const DEFAULT_CAMERA_FOV: f32 = 50.0;
+const SPHERE_CAMERA_FOV: f32 = 65.0;
+const SPHERE_CAMERA_DISTANCE: f32 = 28.0;
 const DEFAULT_WHEEL_VERTICAL_SPEED: f32 = 0.15;
 const DEFAULT_CAMERA_SPEED_MULTIPLIER: f32 = 1.0;
 const DEFAULT_CROSSHAIR_SIZE: f32 = 7.0;
@@ -90,6 +94,10 @@ fn debug_slider(
 
 async fn main() {
     let mut world = World::demo();
+    let sphere = Icosphere::new(2);
+    let spherical_world = SphericalWorld::from_icosphere(&sphere, 10.0);
+    let spherical_mesh = spherical_world.build_surface_mesh(&sphere);
+    let mut show_sphere = false;
     let mut stress_test_level = 0;
     let mut look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
     let mut camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
@@ -171,6 +179,24 @@ async fn main() {
                 show_mouse(true);
                 set_cursor_grab(false);
             }
+        }
+
+        if is_key_pressed(KeyCode::F3) {
+        show_sphere = !show_sphere;
+
+            if show_sphere {
+                position = vec3(0.0, 0.0, -SPHERE_CAMERA_DISTANCE);
+                yaw = 0.0;
+                pitch = 0.0;
+                camera_fov = SPHERE_CAMERA_FOV;
+            } else {
+                position = vec3(0.0, 9.0, -16.0);
+                yaw = 0.0;
+                pitch = -0.35;
+                camera_fov = DEFAULT_CAMERA_FOV;
+            }
+
+            previous_mouse = mouse_position();
         }
 
             
@@ -351,24 +377,32 @@ fn chunk_is_visible(
 
 
         
-    for ((chunk_q, chunk_r), world_mesh) in world.meshes_with_coords() {
-    if chunk_is_visible(
-        chunk_q,
-        chunk_r,
-        position,
-        forward,
-        camera_fov,
-    ) {
-        draw_mesh(world_mesh);
+    
+    
+    if show_sphere {
+        draw_mesh(&spherical_mesh);
+    } else {
+        for ((chunk_q, chunk_r, _chunk_y), world_mesh) in world.meshes_with_coords() {
+            if chunk_is_visible(
+                chunk_q,
+                chunk_r,
+                position,
+                forward,
+                camera_fov,
+            ) {
+                draw_mesh(world_mesh);
+            }
+        }
     }
-}
+
+
 
 
         // Draw cyan outlines around chunk boundaries.
-if show_chunk_bounds {
-    let chunk_coords = world.occupied_chunk_coords();
+    if show_chunk_bounds {
+        let chunk_coords = world.occupied_chunk_coords();
 
-    for (chunk_q, chunk_r) in chunk_coords {
+    for (chunk_q, chunk_r, _chunk_y) in chunk_coords {
         let start_q = chunk_q * 16;
         let start_r = chunk_r * 16;
 
@@ -519,7 +553,7 @@ if show_chunk_bounds {
 
         let visible_chunks = world
             .meshes_with_coords()
-            .filter(|((chunk_q, chunk_r), _)| {
+            .filter(|((chunk_q, chunk_r, _chunk_y), _)| {
                 chunk_is_visible(
                     *chunk_q,
                     *chunk_r,
