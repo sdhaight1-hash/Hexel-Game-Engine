@@ -4,7 +4,7 @@ use macroquad::prelude::{Mesh, Vec3, Vertex};
 
 use crate::hexel::{push_quad, terrain_color, HexCoord, HEX_HEIGHT, HEX_RADIUS};
 
-const CHUNK_SIZE: i32 = 16;
+const CHUNK_SIZE: i32 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ChunkCoord {
@@ -69,6 +69,36 @@ pub fn demo() -> Self {
 
         world
 }
+
+    /// Generate a large, deterministic hexel island for performance testing.
+    pub fn stress_test(radius: i32) -> Self {
+        let mut world = Self {
+            hexels: HashSet::new(),
+            dirty_chunks: HashSet::new(),
+            chunk_meshes: HashMap::new(),
+            chunks_rebuilt_this_frame: 0,
+        };
+
+        for q in -radius..=radius {
+            for r in -radius..=radius {
+                if (q + r).abs() > radius {
+                    continue;
+                }
+
+                let broad = (q * 3 + r * 2 + 24).rem_euclid(11) as u32;
+                let detail = (q * 7 - r * 5 + 40).rem_euclid(3) as u32;
+                let extra = if detail == 0 { 1 } else { 0 };
+                let height = 1 + broad / 4 + extra;
+
+                for layer in 0..height {
+                    world.hexels.insert((HexCoord::new(q, r), layer));
+                }
+            }
+        }
+
+        world
+    }
+
     fn mark_dirty(&mut self, coord: HexCoord) {
     let chunk = ChunkCoord::from_hex(coord);
     self.dirty_chunks.insert(chunk);
@@ -302,8 +332,10 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
 }
 
     
-    pub fn meshes(&self) -> impl Iterator<Item = &Mesh> {
-        self.chunk_meshes.values()
+    pub fn meshes_with_coords(&self) -> impl Iterator<Item = ((i32, i32), &Mesh)> {
+    self.chunk_meshes
+        .iter()
+        .map(|(chunk, mesh)| ((chunk.q, chunk.r), mesh))
     }
 
     /// Return the coordinates of chunks containing hexels.
@@ -476,6 +508,7 @@ mod tests {
     #[test]
     fn editing_changes_column_height() {
         let mut world = World::demo();
+        let mut stress_test_level = 0;
         let coord = HexCoord::new(0, 0);
         let before = world.height(coord);
         world.add_hexel(coord);

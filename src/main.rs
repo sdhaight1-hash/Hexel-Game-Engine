@@ -87,8 +87,10 @@ fn debug_slider(
 }
 
 #[macroquad::main(window_conf)]
+
 async fn main() {
     let mut world = World::demo();
+    let mut stress_test_level = 0;
     let mut look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
     let mut camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
     let mut crosshair_size = DEFAULT_CROSSHAIR_SIZE;
@@ -228,9 +230,25 @@ async fn main() {
             position += movement.normalize() * move_speed * camera_speed_multiplier * dt;
         }
 
+       
         if is_key_pressed(KeyCode::R) {
+            stress_test_level = 0;
             world = World::demo();
         }
+
+        if is_key_pressed(KeyCode::F2) {
+            stress_test_level = (stress_test_level + 1) % 4;
+
+            let radius = match stress_test_level {
+                0 => 8,
+                1 => 16,
+                2 => 32,
+                _ => 64,
+            };
+
+            world = World::stress_test(radius);
+        }
+
 
         
         
@@ -293,7 +311,7 @@ fn chunk_is_visible(
     camera_fov: f32,
 ) -> bool {
     const CHUNK_SIZE: f32 = 16.0;
-    const CHUNK_RADIUS: f32 = 15.0;
+    const CHUNK_RADIUS: f32 = 20.0;
 
     // Find the chunk center using the engine's axial-to-world mapping.
     let q = chunk_q as f32 * CHUNK_SIZE + (CHUNK_SIZE - 1.0) * 0.5;
