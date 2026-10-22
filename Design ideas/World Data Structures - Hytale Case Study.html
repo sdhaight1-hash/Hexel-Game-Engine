@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Source-grounded case study of Hytale's documented chunk sections, adaptive palette APIs, terrain generation, and implications for Hexel Engine.">
+<title>Hexel Engine Case Study — Hytale World Data Structures</title>
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#20242a;--muted:#626b76;--panel:#f3f5f7;--line:#d8dde3;--link:#1769aa;--code:#f2f3f5}
+@media(prefers-color-scheme:dark){:root{--bg:#15171a;--fg:#e8eaed;--muted:#a8b0ba;--panel:#20242a;--line:#3b424b;--link:#8cc8ff;--code:#22262c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}main{max-width:1100px;margin:auto;padding:clamp(1rem,4vw,3rem)}h1,h2,h3{line-height:1.2}h1{font-size:clamp(2rem,5vw,3rem);margin-bottom:.4rem}h2{margin-top:2.5rem;padding-bottom:.45rem;border-bottom:1px solid var(--line)}h3{margin-top:1.7rem}p,li{max-width:92ch}a{color:var(--link);overflow-wrap:anywhere}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{background:var(--code);padding:.12rem .3rem;border-radius:4px}pre{background:var(--panel);padding:1rem;overflow:auto;border:1px solid var(--line);border-radius:8px;line-height:1.5;font-size:.9rem}table{border-collapse:collapse;width:100%;margin:1rem 0;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:.65rem;text-align:left;vertical-align:top}th{background:var(--panel)}.muted{color:var(--muted)}.callout{padding:1rem 1.2rem;border-left:4px solid var(--link);background:var(--panel);margin:1rem 0}.small{font-size:.9rem}.toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.3rem}.toc ol{margin-bottom:0}.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:.15rem .6rem;font-size:.8rem;margin:.15rem}.diagram{padding:1rem;background:var(--panel);border:1px solid var(--line);border-radius:10px;white-space:pre-wrap;font-family:ui-monospace,monospace}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted)}
+</style>
+</head>
+<body><main>
+<header>
+<p class="muted">HEXEL ENGINE · DESIGN IDEAS · CASE STUDY 02</p>
+<h1>World Data Structures in Hytale</h1>
+<p><strong>Primary reference:</strong> <a href="https://docs.hytale.com/">Hytale Documentation</a> — official server API and content/world-generation guides.</p>
+<p class="muted">Research note · Prepared 22 October 2026 · Focus: chunk sections, palettes, auxiliary terrain data, saving/replication, and generation concepts.</p>
+<p><span class="pill">Section storage</span><span class="pill">Adaptive palettes</span><span class="pill">Lighting</span><span class="pill">Density fields</span><span class="pill">JSON examples</span><span class="pill">Hexel implications</span></p>
+</header>
+
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol>
+<li><a href="#summary">Executive summary</a></li><li><a href="#scope">Sources and evidence boundaries</a></li><li><a href="#hierarchy">Chunk and section hierarchy</a></li><li><a href="#palettes">Palette variants and indexed cells</a></li><li><a href="#aux">Auxiliary data and invalidation</a></li><li><a href="#generation">Density-field terrain generation</a></li><li><a href="#json">JSON examples for Hexel</a></li><li><a href="#architecture">Architecture implications</a></li><li><a href="#tradeoffs">Storage trade-offs</a></li><li><a href="#experiments">Recommended experiments</a></li><li><a href="#references">References</a></li>
+</ol></nav>
+
+<section id="summary">
+<h2>1. Executive summary</h2>
+<p>Hytale's official server API documents a world chunk containing a <code>BlockChunk</code>, and a separate <code>BlockSection</code> component that exposes palette-backed block access, filler and rotation values, lighting data, changed-position access, and ticking-block operations. The palette API documents several representations: <code>EmptySectionPalette</code>, <code>HalfByteSectionPalette</code>, <code>ByteSectionPalette</code>, and <code>ShortSectionPalette</code>. This is strong evidence that Hytale's public API models section block storage using multiple palette forms; it does not by itself establish every runtime selection rule or the exact memory cost of a particular section.</p>
+<p>Hytale's world-generation guide describes density fields as coordinate-based decimal values used to define terrain shape. Positive values are typically interpreted as solid and negative values as empty space, and material-provider nodes choose block assets for terrain regions. This is a generation model, not a claim that the runtime world stores a live density value for every block.</p>
+<div class="callout"><strong>Recommendation for Hexel:</strong> keep the authoritative terrain representation independent from generation functions and derived systems. Evaluate section-local palettes as a candidate for dense regions, but compare them against Hexel's sparse occupied-cell baseline. Model density or field-based generation as a way to produce cell occupancy/materials, not as a replacement for saved edits.</div>
+<p><strong>Evidence rule:</strong> documented API facts are distinguished from design interpretations. JSON below is illustrative Hexel data modeling, not Hytale's internal chunk file format or a claim about its actual serialized schema.</p>
+</section>
+
+<section id="scope">
+<h2>2. Sources and evidence boundaries</h2>
+<ul>
+<li><a href="https://docs.hytale.com/">Hytale Documentation home</a> — official documentation landing page.</li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/WorldChunk">WorldChunk API</a> — describes the world-chunk component and its relationship to <code>BlockChunk</code>.</li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/BlockChunk">BlockChunk API</a> — chunk-column component, save flags, tint, and heightmap-related methods.</li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/section/BlockSection">BlockSection API</a> — palette-backed block access, filler and rotation values, lighting, occupancy and ticking methods.</li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/section/palette/package-summary">Section palette package</a> and <a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/section/palette/AbstractSectionPalette">AbstractSectionPalette API</a> — palette types and operations.</li>
+<li><a href="https://docs.hytale.com/creating-content/world-generation/density-generation-concepts/">Density Generation Concepts</a> — official terrain generation guide.</li>
+<li><a href="https://docs.hytale.com/creating-content/world-generation/materials-generation-concepts/">Materials Generation Concepts</a> — material providers and solidity-based selection.</li>
+<li><a href="https://docs.hytale.com/creating-content/">Creating Content in Hytale</a> — overview of asset-driven content.</li>
+</ul>
+<p>The official site exposes Java API documentation and world-generation/content guides. API pages are useful for public class contracts and method semantics, but should not be treated as a complete explanation of all private implementation details or on-disk formats. This study does not claim access to Hytale's private source code.</p>
+<p>Documentation versions can change. The density guide displayed release version 0.7.x when reviewed, and API documentation may be updated independently. Re-check current pages before relying on version-specific behavior.</p>
+</section>
+
+<section id="hierarchy">
+<h2>3. Chunk and section hierarchy</h2>
+<p>The <code>WorldChunk</code> API describes a world chunk as a component containing a <code>BlockChunk</code> and tracking whether it should be unloaded. The <code>BlockChunk</code> API identifies a chunk coordinate pair via its X and Z accessors, exposes saving-state methods, and references a <code>HeightmapColumn</code>. The section package documents <code>ChunkSection</code> as a component representing one chunk section, with section coordinates, a reference to the owning chunk column, and keep-alive/active timers that drive section-level unloading.</p>
+<p>The documented model therefore distinguishes a chunk-column-level object from vertically located sections. The section API is the more relevant unit when investigating local block storage and updates. This differs from treating the entire world as one global flat collection.</p>
+<div class="diagram">World / chunk store
+   |
+   +-- WorldChunk component (lifetime / chunk flags)
+   |
+   +-- BlockChunk component (column-level data and save state)
+   |
+   +-- ChunkSection components at section coordinates
+          |
+          +-- BlockSection (block palette + auxiliary values)
+          +-- FluidSection (separate fluid-related component)
+          +-- EnvironmentSection (vertical runs per column)
+          +-- EntitySection / block-component sections (other data)</div>
+<p>This diagram is a conceptual synthesis of documented class/package relationships, not a complete UML diagram or a claim that every component is always present. The section package explicitly lists separate block, fluid, environment, entity, lighting, and block-component-related types.</p>
+<h3>Useful section-level operations</h3>
+<p><code>BlockSection</code> exposes <code>get(index)</code> and <code>get(x,y,z)</code>, corresponding setters, <code>count()</code>, <code>count(id)</code>, <code>contains(id)</code>, and <code>find(...)</code> methods for locating requested block IDs. It also exposes <code>getAndClearChangedPositions()</code>, cached chunk-packet methods, serialization/deserialization methods, and ticking-block operations. These are signs of an API built around local section operations rather than requiring all callers to scan an entire world.</p>
+<p>The API documents the index overload and the coordinate overload, but this study does not assume a specific index formula unless verified in the linked coordinate utility documentation. For Hexel, we must define and test our own axial <code>(q,r,y)</code> mapping.</p>
+</section>
+
+<section id="palettes">
+<h2>4. Palette variants and indexed cells</h2>
+<p>The official palette package lists four implementations under <code>AbstractSectionPalette</code>: <code>EmptySectionPalette</code>, <code>HalfByteSectionPalette</code>, <code>ByteSectionPalette</code>, and <code>ShortSectionPalette</code>. The abstract API documents operations including <code>get(index)</code>, <code>set(index,id)</code>, <code>contains(id)</code>, <code>count(id)</code>, <code>find(ids,...)</code>, <code>values()</code>, <code>valueCounts()</code>, <code>promote()</code>, <code>demote()</code>, and <code>shouldDemote()</code>.</p>
+<p>The existence of promotion/demotion methods and multiple palette types suggests the representation can vary according to the stored values or storage needs. That is a reasonable inference from the API surface, but exact thresholds, bit layout, selection policy, and memory footprint should not be asserted without inspecting the concrete class contracts or measuring the implementation.</p>
+<table><thead><tr><th>Documented feature</th><th>What it establishes</th><th>Hexel design lesson</th></tr></thead><tbody>
+<tr><td><code>EmptySectionPalette</code></td><td>A dedicated empty palette implementation exists.</td><td>Empty sections may merit a cheap representation or no allocated cell payload.</td></tr>
+<tr><td><code>HalfByteSectionPalette</code>, <code>ByteSectionPalette</code>, <code>ShortSectionPalette</code></td><td>Several palette implementations with different names are public API types.</td><td>Investigate adaptive encoding when material diversity varies between sections.</td></tr>
+<tr><td><code>promote()</code> / <code>demote()</code></td><td>Palette API exposes representation transitions.</td><td>Adaptive storage can trade runtime complexity for better storage fit; transition behavior needs tests.</td></tr>
+<tr><td><code>contains(id)</code>, <code>count(id)</code>, <code>find(ids,...)</code></td><td>Presence, frequency, and location queries are available.</td><td>Auxiliary queries can avoid repeated general-purpose scans for common tasks.</td></tr>
+<tr><td><code>columnOccupancy(...)</code></td><td>Produces two 32-bit occupancy masks per column, using section-local Y bits and a classifier.</td><td>Compact occupancy summaries can accelerate column/visibility queries independently of material storage.</td></tr>
+</tbody></table>
+<p>The <code>BlockSection</code> constructor accepts separate palettes for its chunk block values, filler values, and rotation values. This documents a separation of these value categories. It does not mean the values should be duplicated into one full object per cell in Hexel.</p>
+<h3>Conceptual example</h3>
+<pre><code>palette = [air, stone, soil, water]
+cell indices = [0, 1, 1, 2, 0, 3]</code></pre>
+<p>This illustrates palette-indexed cells: palette entries map compact per-cell indices to semantic material IDs. It is not Hytale's actual encoding and is not evidence that every palette implementation uses this exact arrangement.</p>
+</section>
+
+<section id="aux">
+<h2>5. Auxiliary data, lighting, changed positions, and saving</h2>
+<p>The <code>BlockSection</code> API documents separate getter/setter paths for local and global light data, methods to invalidate each light layer, change counters, a sky-lit stamp, filler values, rotation values, and a loaded flag. The documentation says <code>loaded</code> controls whether changes are tracked for replication; changes made before the chunk is loaded can be ignored because the full chunk will be sent anyway.</p>
+<p>The same class exposes <code>getAndClearChangedPositions()</code>, a set operation accepting block ID, rotation, and filler, plus methods to serialize for packets or general serialization. These provide documented hooks for distinguishing changed block locations, light invalidation, and network replication state.</p>
+<p>The <code>BlockChunk</code> API separately documents <code>markNeedsSaving()</code>, <code>getNeedsSaving()</code>, and <code>consumeNeedsSaving()</code>. It also documents <code>invalidateColumnPacket()</code>, which drops a cached column packet for rebuilding and must be called when column heightmap data changes, otherwise clients may receive stale heightmap information.</p>
+<p>These are distinct responsibilities: persisted-state dirtiness, changed cell positions, lighting invalidation, and cached-packet invalidation. Avoid collapsing them into a single generic dirty flag in Hexel.</p>
+<h3>Separate component types</h3>
+<ul>
+<li><strong>Block values:</strong> core cell material/state.</li>
+<li><strong>Filler and rotation:</strong> separately accessed values associated with a block location.</li>
+<li><strong>Lighting:</strong> local/global light data with explicit invalidation APIs.</li>
+<li><strong>Fluids:</strong> a separate <code>FluidSection</code> appears in the official section package; the <code>BlockSection</code> version notes also say fluids are no longer blocks.</li>
+<li><strong>Environment:</strong> <code>EnvironmentSection</code> stores environment data as vertical runs per column, and its builder consumes runs from bottom to top.</li>
+<li><strong>Block-associated components:</strong> <code>BlockComponentSection</code> documents per-section storage keyed by a section-local block index.</li>
+<li><strong>Save/replication/cache state:</strong> saving flags, changed positions, loaded state, and packet invalidation are exposed separately.</li>
+</ul>
+<p>This separation is relevant to Hexel's planned terrain fields and reactive invalidation system: only systems affected by a change should be scheduled, and derived caches should have explicit invalidation rules.</p>
+</section>
+
+<section id="generation">
+<h2>6. Density-field terrain generation</h2>
+<p>Hytale's official <a href="https://docs.hytale.com/creating-content/world-generation/density-generation-concepts/">Density Generation Concepts</a> guide says terrain shape is founded on density fields—maps of decimal values built from procedural noise such as Simplex and Cellular, contextual data, and processing nodes. It describes values typically ranging from 1 to -1, with positive values usually representing solid terrain and negative values representing empty space. The guide also describes combining heights with a noise field to produce 3D terrain.</p>
+<p>The official <a href="https://docs.hytale.com/creating-content/world-generation/materials-generation-concepts/">Materials Generation Concepts</a> guide describes material-provider nodes that select block assets at locations. It describes splitting positive density values into a solid provider and negative values into an empty provider, and priority queues for material selection. Providers may also run on negative portions to place content such as water levels.</p>
+<h3>Generation is not the same as runtime storage</h3>
+<p>A density field can be thought of as a function that classifies locations based on a scalar value. It can generate cave-like voids and complex shapes when the field varies in three dimensions. However, the documentation does not establish that the runtime stores density floats for every cell after generation. A likely conceptual pipeline is: evaluate generation fields, decide solid/empty and material, then write results into the runtime world representation.</p>
+<div class="diagram">Noise + contextual fields + curves
+                |
+                v
+         Density evaluation
+                |
+        +-------+-------+
+        |               |
+   positive value   negative value
+        |               |
+  solid/material     empty or fluid/material rules
+        |
+        v
+  generated cell state
+        |
+        v
+  runtime section storage</div>
+<p>This pipeline is a conceptual interpretation of the documented generator concepts, not a statement of Hytale's exact internal execution order.</p>
+<h3>Implications for Hexel</h3>
+<p>Density-based generation could complement Hexel's axial-prism world. A 3D scalar field evaluated at cell centers could determine whether a hexel exists, while a separate material function chooses its material. This is especially promising for caves, tunnels, arches, and overhangs that a heightmap-only generator cannot represent. Hexel would still need explicit coordinate sampling rules, stable seed behavior, boundary handling, and a way to preserve player edits when regenerating or loading cells.</p>
+</section>
+
+<section id="json">
+<h2>7. JSON examples for Hexel</h2>
+<p>The examples below are illustrative Hexel schemas, not Hytale file formats. The official Hytale docs state that the asset reference describes JSON formats for assets loaded by the server, and that content definitions can be edited as assets. That does not mean world chunk cell data itself is stored in these JSON structures.</p>
+<h3>Example A — a section with a palette</h3>
+<pre><code>{
+  "section": {
+    "coord": { "q": 2, "r": -1, "y": 0 },
+    "dimensions": [16, 16, 16],
+    "storage": "palette",
+    "palette": ["air", "stone", "soil", "water"],
+    "cell_indices_example": [0, 1, 1, 2, 0, 3],
+    "version": 1
+  }
+}</code></pre>
+<p>The cell array is abbreviated and only illustrates the mapping from cell index to palette entry. A production format must define exact ordering, encoding, palette transitions, versioning, and behavior when material IDs change.</p>
+<h3>Example B — sparse occupied-cell storage</h3>
+<pre><code>{
+  "section": {
+    "coord": { "q": 2, "r": -1, "y": 0 },
+    "storage": "sparse",
+    "occupied_cells": [
+      { "local": [0, 0, 0], "material": "stone" },
+      { "local": [1, 0, 0], "material": "stone" },
+      { "local": [1, 1, 0], "material": "soil" },
+      { "local": [8, 4, 12], "material": "stone" }
+    ]
+  }
+}</code></pre>
+<p>This is readable and represents only occupied cells. It may be attractive for very sparse sections, but a JSON object per cell has substantial overhead for high-volume runtime storage. A Rust implementation could use a sparse map/set or a packed representation instead.</p>
+<h3>Example C — generation configuration, not stored cell data</h3>
+<pre><code>{
+  "terrain_generation": {
+    "seed": 987654321,
+    "density": {
+      "type": "combined_field",
+      "height_field": "continental_height",
+      "noise_field": "cave_noise",
+      "solid_when": "density > 0"
+    },
+    "materials": [
+      { "when": "near_surface", "material": "grass" },
+      { "when": "density > 0", "material": "stone" },
+      { "when": "density <= 0", "material": "air" }
+    ]
+  }
+}</code></pre>
+<p>This is a conceptual sketch, not valid Hytale generator JSON and not a complete procedural-generation schema. It shows the distinction between rules that generate terrain and the cell state that results from those rules.</p>
+<h3>Example D — independent invalidation domains</h3>
+<pre><code>{
+  "runtime_section_state": {
+    "coord": { "q": 2, "r": -1, "y": 0 },
+    "persistence_dirty": true,
+    "changed_cells": [[3, 4, 5]],
+    "mesh_dirty": true,
+    "lighting_dirty": false,
+    "surface_summary_dirty": true
+  }
+}</code></pre>
+<p>All fields here are proposed Hexel runtime concepts, not Hytale API field names. They illustrate that one edit can require a save and mesh update without necessarily invalidating lighting.</p>
+<h3>Example E — column occupancy summary</h3>
+<pre><code>{
+  "column_summary": {
+    "local_q": 4,
+    "local_r": 7,
+    "occupancy_y_bits_low": "00000000000000000000000000000001",
+    "occupancy_y_bits_high": "00000000000000000000000000000100"
+  }
+}</code></pre>
+<p>This sketch is inspired by the documented <code>columnOccupancy</code> API, which produces two 32-bit occupancy masks per column and encodes classification bits over section-local Y positions. The sample bit strings are purely illustrative; they do not describe an actual Hytale column or Hexel's final bit layout.</p>
+</section>
+
+<section id="architecture">
+<h2>8. Architecture implications for Hexel Engine</h2>
+<div class="diagram">Authoritative axial-prism cells (q, r, y)
+                  |
+          edits / generation / load
+                  |
+                  v
+          Change tracking layer
+        /       |       |       \
+       v        v       v        v
+     Mesh    Lighting  Surface  Persistence
+     cache   system    summary  / save
+                  ^
+                  |
+       Density/material generator
+       (produces initial cell state)</div>
+<p>Recommended conceptual responsibilities:</p>
+<ul>
+<li><strong>Authoritative cell state:</strong> independent 3D occupancy and material state, including empty cells, tunnels, and overhangs.</li>
+<li><strong>Section-local storage:</strong> compare sparse, dense, and palette-indexed candidates; do not assume Hytale's implementation is optimal for Hexel's hexagonal coordinate geometry.</li>
+<li><strong>Material/state separation:</strong> consider whether rotation, shape variants, fluids, or other per-cell properties should be stored independently from base material IDs.</li>
+<li><strong>Derived occupancy masks:</strong> test small bitset summaries for surface queries and neighbor/visibility acceleration, while retaining full cell state.</li>
+<li><strong>Lighting and mesh invalidation:</strong> separate flags and update queues; track neighboring chunk effects for exposed faces.</li>
+<li><strong>Generation fields:</strong> allow procedural density/material functions to initialize terrain, but ensure player edits and persisted state are authoritative after generation.</li>
+<li><strong>Persistence and streaming:</strong> define section lifetime, save dirtiness, and unload/reload rules separately from mesh cache lifetime.</li>
+</ul>
+<p>For Hexel's pub/sub or dependency system, use notifications to identify affected systems and regions, batch changes, deduplicate work, and query authoritative state when recomputing. Do not make every cell subscribe to every field or rebuild every derived product after every edit.</p>
+</section>
+
+<section id="tradeoffs">
+<h2>9. Storage trade-offs</h2>
+<table><thead><tr><th>Candidate</th><th>Likely strengths</th><th>Costs and risks</th><th>What to measure</th></tr></thead><tbody>
+<tr><td>Sparse occupied cells</td><td>Empty locations need no full material slot; natural for very empty sections and incremental edits.</td><td>Hash/allocation overhead; slower whole-section traversal; neighbor queries may be costly.</td><td>Memory per section, lookup/edit latency, mesh iteration.</td></tr>
+<tr><td>Dense indexed cells</td><td>Simple address calculation, predictable iteration, good spatial locality in suitable implementations.</td><td>Reserves slots for empty cells; cost grows with full section volume.</td><td>Memory, scan speed, cell lookup, generation throughput.</td></tr>
+<tr><td>Palette-indexed cells</td><td>May reduce material representation cost where the number of unique values is small; enables palette-based presence/count/find queries.</td><td>Palette updates and representation transitions add complexity; high material diversity may reduce benefits.</td><td>Memory across varying palette cardinalities, mutation latency, serialization cost.</td></tr>
+<tr><td>Adaptive palette</td><td>Potentially matches empty, low-cardinality, and high-cardinality sections to different encodings.</td><td>Promotion/demotion, conversion correctness, synchronization, and versioning require careful tests.</td><td>Transition frequency, worst-case edit latency, memory after edits, correctness.</td></tr>
+<tr><td>Hybrid sparse/dense/palette</td><td>Can adapt to both occupancy and material diversity.</td><td>Most complex implementation and testing burden; may not repay complexity at Hexel's current scale.</td><td>Benchmark gains against added complexity and bug surface.</td></tr>
+</tbody></table>
+<p>These are general expectations, not performance measurements of Hytale or Hexel. Hytale's documented API provides candidates to investigate; it does not prove a storage winner for a different engine.</p>
+</section>
+
+<section id="experiments">
+<h2>10. Recommended experiments</h2>
+<ol>
+<li><strong>Preserve the baseline.</strong> Benchmark Hexel's current sparse occupied-cell structure before changing it.</li>
+<li><strong>Generate controlled fixtures.</strong> Include empty sections, solid terrain, mixed materials, cave systems, tunnels, overhangs, and high-diversity structures.</li>
+<li><strong>Compare storage candidates.</strong> Sparse cells, dense indexed cells, fixed-width palette indices, and adaptive palette variants should share the same fixtures and workload.</li>
+<li><strong>Measure palette transitions.</strong> Repeatedly add/remove material types in a section and record conversion cost, memory and correctness.</li>
+<li><strong>Test auxiliary summaries.</strong> Compare full scans with occupancy bit masks for surface detection, exposed-face meshing, and local queries.</li>
+<li><strong>Prototype density generation separately.</strong> Evaluate a deterministic scalar field over Hexel cell centers, map its sign to occupancy, and select material with a separate function. Test seeds, negative axial coordinates, caves and chunk-boundary continuity.</li>
+<li><strong>Keep dirty domains independent.</strong> Measure persistence, mesh rebuild, lighting and summary work separately after edits, including edits across chunk boundaries.</li>
+<li><strong>Test round trips.</strong> Verify coordinate/index mapping, serialization versioning, empty-section handling, palette promotion/demotion, and unload/reload behavior.</li>
+<li><strong>Decide from results.</strong> Adopt adaptive palettes only if measured gains justify the additional implementation complexity.</li>
+</ol>
+<table><thead><tr><th>Metric</th><th>Sparse</th><th>Dense</th><th>Palette/adaptive</th></tr></thead><tbody>
+<tr><td>Resident memory per section</td><td>Measure</td><td>Measure</td><td>Measure</td></tr>
+<tr><td>Cell lookup and mutation</td><td>Measure</td><td>Measure</td><td>Measure</td></tr>
+<tr><td>Whole-section scan</td><td>Measure</td><td>Measure</td><td>Measure</td></tr>
+<tr><td>Exposed-face mesh build</td><td>Measure</td><td>Measure</td><td>Measure</td></tr>
+<tr><td>Save/load and serialization</td><td>Measure</td><td>Measure</td><td>Measure</td></tr>
+<tr><td>Palette transition cost</td><td>N/A</td><td>N/A</td><td>Measure</td></tr>
+<tr><td>Complexity and maintenance</td><td>Review</td><td>Review</td><td>Review</td></tr>
+</tbody></table>
+</section>
+
+<section id="references">
+<h2>11. References</h2>
+<ol>
+<li><a href="https://docs.hytale.com/">Hytale Documentation</a></li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/WorldChunk">Server API — WorldChunk</a></li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/BlockChunk">Server API — BlockChunk</a></li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/section/BlockSection">Server API — BlockSection</a></li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/section/package-summary">Server API — chunk section package</a></li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/section/palette/package-summary">Server API — section palette package</a></li>
+<li><a href="https://docs.hytale.com/api/com/hypixel/hytale/server/core/universe/world/chunk/section/palette/AbstractSectionPalette">Server API — AbstractSectionPalette</a></li>
+<li><a href="https://docs.hytale.com/creating-content/world-generation/density-generation-concepts/">Guide — Density Generation Concepts</a></li>
+<li><a href="https://docs.hytale.com/creating-content/world-generation/materials-generation-concepts/">Guide — Materials Generation Concepts</a></li>
+<li><a href="https://docs.hytale.com/creating-content/">Guide — Creating Content in Hytale</a></li>
+</ol>
+<p class="small muted">This is a design case study, not an implementation specification. It relies on publicly accessible Hytale documentation, not private source code or independently measured performance. API contracts and guides may evolve; verify current documentation before making version-sensitive decisions.</p>
+</section>
+<footer><p>Hexel Engine · Design Ideas · Hytale world data structures case study</p><p>Purpose: preserve documented API findings, evidence boundaries, JSON sketches, architecture implications, and a repeatable benchmark plan.</p></footer>
+</main></body></html>
