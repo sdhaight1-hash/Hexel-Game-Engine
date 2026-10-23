@@ -1,6 +1,5 @@
-
-use std::collections::HashMap;
 use macroquad::prelude::{Mesh, Vertex};
+use std::collections::HashMap;
 
 const SPHERICAL_HEXEL_HEIGHT: f32 = 1.0;
 
@@ -148,151 +147,8 @@ fn normalize(p: [f32; 3]) -> [f32; 3] {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn base_icosphere_has_expected_counts() {
-        let sphere = Icosphere::new(0);
-        assert_eq!(sphere.vertices.len(), 12);
-        assert_eq!(sphere.triangles.len(), 20);
-    }
-
-    #[test]
-    fn subdivision_preserves_spherical_mesh_counts() {
-        let sphere = Icosphere::new(2);
-
-        assert_eq!(sphere.vertices.len(), 162);
-        assert_eq!(sphere.triangles.len(), 320);
-    }
-
-    #[test]
-    fn vertices_are_on_the_unit_sphere() {
-        let sphere = Icosphere::new(2);
-
-        for vertex in &sphere.vertices {
-            let [x, y, z] = vertex.position;
-            let length = (x * x + y * y + z * z).sqrt();
-            assert!((length - 1.0).abs() < 0.0001);
-        }
-    }
-    
-    #[test]
-    fn dual_of_base_icosphere_has_twelve_pentagons() {
-        let sphere = Icosphere::new(0);
-        let world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        assert_eq!(world.cells.len(), 12);
-        assert_eq!(world.pentagon_count(), 12);
-        assert_eq!(world.hexagon_count(), 0);
-    }
-
-    #[test]
-    fn subdivided_dual_has_twelve_pentagons_and_hexagons() {
-        let sphere = Icosphere::new(2);
-        let world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        assert_eq!(world.cells.len(), 162);
-        assert_eq!(world.pentagon_count(), 12);
-        assert_eq!(world.hexagon_count(), 150);
-    }
-
-    #[test]
-    fn every_cell_has_five_or_six_corners() {
-        let sphere = Icosphere::new(2);
-        let world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        assert!(world.cells.iter().all(|cell| {
-            cell.corners.len() == 5 || cell.corners.len() == 6
-        }));
-    }
-    
-    #[test]
-    fn every_cell_has_five_or_six_neighbors() {
-        let sphere = Icosphere::new(2);
-        let world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        assert!(world.cells.iter().all(|cell| {
-            cell.neighbors.len() == 5 || cell.neighbors.len() == 6
-        }));
-    }
-
-    #[test]
-    fn cell_adjacency_is_reciprocal() {
-        let sphere = Icosphere::new(2);
-        let world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        for (cell_index, cell) in world.cells.iter().enumerate() {
-            for &neighbor_index in &cell.neighbors {
-                assert!(
-                    world.cells[neighbor_index]
-                        .neighbors
-                        .contains(&cell_index),
-                    "Cell {cell_index} lists {neighbor_index} as a neighbor, \
-                     but the reverse connection is missing"
-                );
-            }
-        }
-    }
-
-        #[test]
-    fn spherical_cells_start_at_zero_height() {
-        let sphere = Icosphere::new(2);
-        let world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        assert!(!world.cells.is_empty());
-
-        for index in 0..world.cells.len() {
-            assert_eq!(world.cell_height(index), Some(0));
-        }
-    }
-
-    #[test]
-    fn spherical_cell_height_can_be_raised_and_lowered() {
-        let sphere = Icosphere::new(2);
-        let mut world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        assert!(world.raise_cell(0));
-        assert_eq!(world.cell_height(0), Some(1));
-
-        assert!(world.raise_cell(0));
-        assert_eq!(world.cell_height(0), Some(2));
-
-        assert!(world.lower_cell(0));
-        assert_eq!(world.cell_height(0), Some(1));
-
-        assert!(world.lower_cell(0));
-        assert_eq!(world.cell_height(0), Some(0));
-
-        assert!(!world.lower_cell(0));
-        assert_eq!(world.cell_height(0), Some(0));
-    }
-
-    #[test]
-    fn spherical_cell_height_handles_invalid_indices() {
-        let sphere = Icosphere::new(2);
-        let mut world = SphericalWorld::from_icosphere(&sphere, 10.0);
-        let invalid_index = world.cells.len();
-
-        assert_eq!(world.cell_height(invalid_index), None);
-        assert!(!world.set_cell_height(invalid_index, 3));
-        assert!(!world.raise_cell(invalid_index));
-        assert!(!world.lower_cell(invalid_index));
-    }
-
-    #[test]
-    fn spherical_cell_height_can_be_set_directly() {
-        let sphere = Icosphere::new(2);
-        let mut world = SphericalWorld::from_icosphere(&sphere, 10.0);
-
-        assert!(world.set_cell_height(0, 5));
-        assert_eq!(world.cell_height(0), Some(5));
-    }
-
-}
-
-
-
+#[path = "tests/spherical_tests.rs"]
+mod tests;
 
 /// A polygonal cell on the spherical surface.
 #[derive(Clone, Debug)]
@@ -420,11 +276,11 @@ impl SphericalWorld {
         }
     }
 
-        /// Return the outward direction at the center of a cell.
+    /// Return the outward direction at the center of a cell.
     pub fn cell_normal(&self, cell_index: usize, sphere: &Icosphere) -> [f32; 3] {
         sphere.outward_normal(self.cells[cell_index].center_vertex)
     }
-    
+
     /// Return the 3D outline points for a cell, slightly above its surface.
     pub fn cell_outline(
         &self,
@@ -439,11 +295,8 @@ impl SphericalWorld {
                 .iter()
                 .map(|&corner_index| {
                     let point = self.corners[corner_index];
-                    let length = (
-                        point[0] * point[0]
-                            + point[1] * point[1]
-                            + point[2] * point[2]
-                    ).sqrt();
+                    let length =
+                        (point[0] * point[0] + point[1] * point[1] + point[2] * point[2]).sqrt();
 
                     if length <= f32::EPSILON {
                         return macroquad::prelude::Vec3::ZERO;
@@ -461,16 +314,11 @@ impl SphericalWorld {
 
     /// Find the cell whose center direction is closest to a point.
     /// The direction does not need to be normalized.
-    pub fn cell_at_direction(
-        &self,
-        direction: [f32; 3],
-        sphere: &Icosphere,
-    ) -> Option<usize> {
-        let length = (
-            direction[0] * direction[0]
-                + direction[1] * direction[1]
-                + direction[2] * direction[2]
-        ).sqrt();
+    pub fn cell_at_direction(&self, direction: [f32; 3], sphere: &Icosphere) -> Option<usize> {
+        let length = (direction[0] * direction[0]
+            + direction[1] * direction[1]
+            + direction[2] * direction[2])
+            .sqrt();
 
         if length <= f32::EPSILON {
             return None;
@@ -488,9 +336,7 @@ impl SphericalWorld {
             .max_by(|(_, a), (_, b)| {
                 let dot = |cell: &SphericalCell| {
                     let normal = sphere.outward_normal(cell.center_vertex);
-                    normal[0] * direction[0]
-                        + normal[1] * direction[1]
-                        + normal[2] * direction[2]
+                    normal[0] * direction[0] + normal[1] * direction[1] + normal[2] * direction[2]
                 };
 
                 dot(a).total_cmp(&dot(b))
@@ -499,14 +345,20 @@ impl SphericalWorld {
     }
 
     pub fn pentagon_count(&self) -> usize {
-        self.cells.iter().filter(|cell| cell.corners.len() == 5).count()
+        self.cells
+            .iter()
+            .filter(|cell| cell.corners.len() == 5)
+            .count()
     }
 
     pub fn hexagon_count(&self) -> usize {
-        self.cells.iter().filter(|cell| cell.corners.len() == 6).count()
+        self.cells
+            .iter()
+            .filter(|cell| cell.corners.len() == 6)
+            .count()
     }
 
-        /// Return the height of a spherical cell, if the index exists.
+    /// Return the height of a spherical cell, if the index exists.
     pub fn cell_height(&self, cell_index: usize) -> Option<u32> {
         self.cells.get(cell_index).map(|cell| cell.height)
     }
@@ -548,12 +400,11 @@ impl SphericalWorld {
         false
     }
 
-    
     /// Build a triangle-fan mesh for the spherical polygon cells.
     ///
     /// Each cell is triangulated from its center to consecutive corners.
     /// The mesh is intended for debugging the spherical surface.
-    
+
     /// Build the spherical terrain mesh, including raised cell tops and walls.
     pub fn build_surface_mesh(&self, sphere: &Icosphere) -> Mesh {
         use macroquad::prelude::{Vec2, Vec3, Vec4};
@@ -562,7 +413,7 @@ impl SphericalWorld {
         let mut indices: Vec<u16> = Vec::new();
 
         // Add one vertex and return its mesh index.
-       
+
         fn add_vertex(
             vertices: &mut Vec<Vertex>,
             position: [f32; 3],
@@ -577,24 +428,16 @@ impl SphericalWorld {
             vertices.push(Vertex {
                 position: Vec3::new(position[0], position[1], position[2]),
                 uv: Vec2::ZERO,
-                color: macroquad::prelude::Color::new(
-                    color[0],
-                    color[1],
-                    color[2],
-                    color[3],
-                ).into(),
+                color: macroquad::prelude::Color::new(color[0], color[1], color[2], color[3])
+                    .into(),
                 normal: Vec4::new(normal[0], normal[1], normal[2], 1.0),
             });
             Some(index)
         }
 
-
         // Scale a point radially to the requested distance from the origin.
         fn at_radius(point: [f32; 3], radius: f32) -> [f32; 3] {
-            let length = (point[0] * point[0]
-                + point[1] * point[1]
-                + point[2] * point[2])
-                .sqrt();
+            let length = (point[0] * point[0] + point[1] * point[1] + point[2] * point[2]).sqrt();
 
             if length <= f32::EPSILON {
                 return point;
@@ -620,16 +463,11 @@ impl SphericalWorld {
                 continue;
             }
 
-            let outer_radius =
-                self.radius + cell.height as f32 * SPHERICAL_HEXEL_HEIGHT;
+            let outer_radius = self.radius + cell.height as f32 * SPHERICAL_HEXEL_HEIGHT;
 
-            let center = at_radius(
-                sphere.vertices[cell.center_vertex].position,
-                outer_radius,
-            );
+            let center = at_radius(sphere.vertices[cell.center_vertex].position, outer_radius);
 
-            let Some(center_index) =
-                add_vertex(&mut vertices, center, normalize(center), color)
+            let Some(center_index) = add_vertex(&mut vertices, center, normalize(center), color)
             else {
                 break;
             };
@@ -639,9 +477,7 @@ impl SphericalWorld {
             for &corner_id in &cell.corners {
                 let point = at_radius(self.corners[corner_id], outer_radius);
 
-                let Some(index) =
-                    add_vertex(&mut vertices, point, normalize(point), color)
-                else {
+                let Some(index) = add_vertex(&mut vertices, point, normalize(point), color) else {
                     break;
                 };
 
@@ -663,8 +499,7 @@ impl SphericalWorld {
 
         // Add walls along shared cell edges wherever heights differ.
         for (cell_index, cell) in self.cells.iter().enumerate() {
-            let cell_radius =
-                self.radius + cell.height as f32 * SPHERICAL_HEXEL_HEIGHT;
+            let cell_radius = self.radius + cell.height as f32 * SPHERICAL_HEXEL_HEIGHT;
 
             for &neighbor_index in &cell.neighbors {
                 // Each shared edge is handled once.
@@ -678,8 +513,7 @@ impl SphericalWorld {
                     continue;
                 }
 
-                let neighbor_radius =
-                    self.radius + neighbor.height as f32 * SPHERICAL_HEXEL_HEIGHT;
+                let neighbor_radius = self.radius + neighbor.height as f32 * SPHERICAL_HEXEL_HEIGHT;
 
                 let lower_radius = cell_radius.min(neighbor_radius);
                 let upper_radius = cell_radius.max(neighbor_radius);
@@ -711,16 +545,32 @@ impl SphericalWorld {
                 let wall_color = [0.18, 0.18, 0.18, 1.0];
 
                 let Some(a) = add_vertex(&mut vertices, p0, normal, wall_color) else {
-                    return Mesh { vertices, indices, texture: None };
+                    return Mesh {
+                        vertices,
+                        indices,
+                        texture: None,
+                    };
                 };
                 let Some(b) = add_vertex(&mut vertices, p1, normal, wall_color) else {
-                    return Mesh { vertices, indices, texture: None };
+                    return Mesh {
+                        vertices,
+                        indices,
+                        texture: None,
+                    };
                 };
                 let Some(c) = add_vertex(&mut vertices, p2, normal, wall_color) else {
-                    return Mesh { vertices, indices, texture: None };
+                    return Mesh {
+                        vertices,
+                        indices,
+                        texture: None,
+                    };
                 };
                 let Some(d) = add_vertex(&mut vertices, p3, normal, wall_color) else {
-                    return Mesh { vertices, indices, texture: None };
+                    return Mesh {
+                        vertices,
+                        indices,
+                        texture: None,
+                    };
                 };
 
                 indices.extend_from_slice(&[a, b, c, a, c, d]);
@@ -733,8 +583,6 @@ impl SphericalWorld {
             texture: None,
         }
     }
-
-
 }
 
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {

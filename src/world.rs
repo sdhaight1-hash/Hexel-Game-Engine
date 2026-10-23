@@ -7,7 +7,6 @@ use crate::hexel::{push_quad, terrain_color, HexCoord, HEX_HEIGHT, HEX_RADIUS};
 const CHUNK_SIZE: i32 = 16;
 const CHUNK_HEIGHT: u32 = 16;
 
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ChunkCoord {
     q: i32,
@@ -31,7 +30,7 @@ pub struct World {
 
     /// Chunks whose meshes need to be rebuilt.
     dirty_chunks: HashSet<ChunkCoord>,
-        
+
     /// Cached terrain mesh for each chunk.
     chunk_meshes: HashMap<ChunkCoord, Mesh>,
 
@@ -39,40 +38,38 @@ pub struct World {
     chunks_rebuilt_this_frame: usize,
 }
 
-
 impl World {
-    
-pub fn demo() -> Self {
-    let mut world = Self {
-        hexels: HashSet::new(),
-        dirty_chunks: HashSet::new(),
-        chunk_meshes: HashMap::new(),
-        chunks_rebuilt_this_frame: 0,
-    };
+    pub fn demo() -> Self {
+        let mut world = Self {
+            hexels: HashSet::new(),
+            dirty_chunks: HashSet::new(),
+            chunk_meshes: HashMap::new(),
+            chunks_rebuilt_this_frame: 0,
+        };
 
-    let radius: i32 = 8;
+        let radius: i32 = 8;
 
-    for q in -radius..=radius {
-        for r in -radius..=radius {
-            if (q + r).abs() > radius {
-                continue;
+        for q in -radius..=radius {
+            for r in -radius..=radius {
+                if (q + r).abs() > radius {
+                    continue;
+                }
+
+                // Deterministic height variation across the island.
+                let broad = (q * 3 + r * 2 + 24).rem_euclid(11) as u32;
+                let detail = (q * 7 - r * 5 + 40).rem_euclid(3) as u32;
+
+                let extra = if detail == 0 { 1 } else { 0 };
+                let height = 1 + broad / 4 + extra;
+
+                for layer in 0..height {
+                    world.hexels.insert((HexCoord::new(q, r), layer));
+                }
             }
-
-            // Deterministic height variation across the island.
-            let broad = (q * 3 + r * 2 + 24).rem_euclid(11) as u32;
-            let detail = (q * 7 - r * 5 + 40).rem_euclid(3) as u32;
-
-            let extra = if detail == 0 { 1 } else { 0 };
-            let height = 1 + broad / 4 + extra;
-
-            for layer in 0..height {
-   	    world.hexels.insert((HexCoord::new(q, r), layer));
-	    }
         }
-    }
 
         world
-}
+    }
 
     /// Generate a large, deterministic hexel island for performance testing.
     pub fn stress_test(radius: i32) -> Self {
@@ -103,7 +100,7 @@ pub fn demo() -> Self {
         world
     }
 
-        fn mark_dirty(&mut self, coord: HexCoord, layer: u32) {
+    fn mark_dirty(&mut self, coord: HexCoord, layer: u32) {
         let chunk = ChunkCoord::from_hex(coord, layer);
         self.dirty_chunks.insert(chunk);
 
@@ -119,66 +116,60 @@ pub fn demo() -> Self {
     }
 
     pub fn contains(&self, coord: HexCoord, layer: u32) -> bool {
-    self.hexels.contains(&(coord, layer))
-}
-
-pub fn height(&self, coord: HexCoord) -> u32 {
-    self.hexels
-        .iter()
-        .filter(|(hex_coord, _)| *hex_coord == coord)
-        .map(|(_, layer)| layer + 1)
-        .max()
-        .unwrap_or(0)
-}
-
-
-pub fn total_hexels(&self) -> usize {
-    self.hexels.len()
-}
-
-pub fn occupied_chunk_count(&self) -> usize {
-    self.chunk_meshes.len()
-}
-
-pub fn chunks_rebuilt_this_frame(&self) -> usize {
-    self.chunks_rebuilt_this_frame
-}
-
-pub fn add_hexel(&mut self, coord: HexCoord) {
-    let mut layer = 0;
-    while self.contains(coord, layer) {
-        layer += 1;
+        self.hexels.contains(&(coord, layer))
     }
 
-    if self.hexels.insert((coord, layer)) {
-        self.mark_dirty(coord, layer);
+    pub fn height(&self, coord: HexCoord) -> u32 {
+        self.hexels
+            .iter()
+            .filter(|(hex_coord, _)| *hex_coord == coord)
+            .map(|(_, layer)| layer + 1)
+            .max()
+            .unwrap_or(0)
     }
-}
 
-pub fn add_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
-    if self.hexels.insert((coord, layer)) {
-        self.mark_dirty(coord, layer);
+    pub fn total_hexels(&self) -> usize {
+        self.hexels.len()
     }
-}
 
-pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
-    if self.hexels.remove(&(coord, layer)) {
-        self.mark_dirty(coord, layer);
+    pub fn occupied_chunk_count(&self) -> usize {
+        self.chunk_meshes.len()
     }
-}
-    
+
+    pub fn chunks_rebuilt_this_frame(&self) -> usize {
+        self.chunks_rebuilt_this_frame
+    }
+
+    pub fn add_hexel(&mut self, coord: HexCoord) {
+        let mut layer = 0;
+        while self.contains(coord, layer) {
+            layer += 1;
+        }
+
+        if self.hexels.insert((coord, layer)) {
+            self.mark_dirty(coord, layer);
+        }
+    }
+
+    pub fn add_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
+        if self.hexels.insert((coord, layer)) {
+            self.mark_dirty(coord, layer);
+        }
+    }
+
+    pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
+        if self.hexels.remove(&(coord, layer)) {
+            self.mark_dirty(coord, layer);
+        }
+    }
 
     /// Step along the view ray and test against a pointy-top hex footprint.
-    
+
     /// Return the column hit by the view ray and the face hit:
     /// `None` for the top, or `Some(direction)` for a side.
-        /// Find the nearest exposed hexel face hit by the view ray.
+    /// Find the nearest exposed hexel face hit by the view ray.
     /// Returns the coordinate, vertical layer, and side direction.
-    pub fn raycast(
-        &self,
-        origin: Vec3,
-        direction: Vec3,
-    ) -> Option<(HexCoord, u32, Option<usize>)> {
+    pub fn raycast(&self, origin: Vec3, direction: Vec3) -> Option<(HexCoord, u32, Option<usize>)> {
         let direction = direction.normalize_or_zero();
         if direction.length_squared() == 0.0 {
             return None;
@@ -201,21 +192,15 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
                     let dz = (point.z - center.y).abs();
 
                     let inside_hex =
-                        dx <= HEX_RADIUS * 0.866_025_4
-                        && dz + dx * 0.577_350_3 <= HEX_RADIUS;
+                        dx <= HEX_RADIUS * 0.866_025_4 && dz + dx * 0.577_350_3 <= HEX_RADIUS;
 
-                    if inside_hex
-                        && best.as_ref().is_none_or(|(best_t, _, _, _)| t < *best_t)
-                    {
+                    if inside_hex && best.as_ref().is_none_or(|(best_t, _, _, _)| t < *best_t) {
                         best = Some((t, coord, layer, None));
                     }
                 }
             }
             // Test the exposed bottom face when there is space below.
-            if layer > 0
-                && !self.contains(coord, layer - 1)
-                && direction.y.abs() > 1.0e-6
-            {
+            if layer > 0 && !self.contains(coord, layer - 1) && direction.y.abs() > 1.0e-6 {
                 let t = (bottom_y - origin.y) / direction.y;
 
                 if t >= 0.0 {
@@ -224,12 +209,9 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
                     let dz = (point.z - center.y).abs();
 
                     let inside_hex =
-                        dx <= HEX_RADIUS * 0.866_025_4
-                        && dz + dx * 0.577_350_3 <= HEX_RADIUS;
+                        dx <= HEX_RADIUS * 0.866_025_4 && dz + dx * 0.577_350_3 <= HEX_RADIUS;
 
-                    if inside_hex
-                        && best.as_ref().is_none_or(|(best_t, _, _, _)| t < *best_t)
-                    {
+                    if inside_hex && best.as_ref().is_none_or(|(best_t, _, _, _)| t < *best_t) {
                         best = Some((t, coord, layer, Some(6)));
                     }
                 }
@@ -289,12 +271,7 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
                 }
 
                 if best.as_ref().is_none_or(|(best_t, _, _, _)| t < *best_t) {
-                    best = Some((
-                        t,
-                        coord,
-                        layer,
-                        Some(neighbor_direction),
-                    ));
+                    best = Some((t, coord, layer, Some(neighbor_direction)));
                 }
             }
         }
@@ -302,10 +279,8 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
         best.map(|(_, coord, layer, side)| (coord, layer, side))
     }
 
-
-    
     /// Build one mesh per occupied coordinate, keeping mesh sizes manageable.
-        
+
     /// Build one mesh per occupied chunk, keeping mesh sizes manageable.
     pub fn rebuild_dirty_chunks(&mut self) {
         self.chunks_rebuilt_this_frame = 0;
@@ -339,18 +314,14 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
         }
     }
 
-
-    
-    
     pub fn meshes_with_coords(&self) -> impl Iterator<Item = ((i32, i32, u32), &Mesh)> {
         self.chunk_meshes
             .iter()
             .map(|(chunk, mesh)| ((chunk.q, chunk.r, chunk.y), mesh))
     }
 
-
     /// Return the coordinates of chunks containing hexels.
-    
+
     pub fn occupied_chunk_coords(&self) -> Vec<(i32, i32, u32)> {
         self.hexels
             .iter()
@@ -359,22 +330,15 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
             .into_iter()
             .map(|chunk| (chunk.q, chunk.r, chunk.y))
             .collect()
-}
+    }
 
-
-
-        fn chunk_mesh(&self, chunk: ChunkCoord) -> Mesh {
+    fn chunk_mesh(&self, chunk: ChunkCoord) -> Mesh {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
         for (coord, layer) in &self.hexels {
             if ChunkCoord::from_hex(*coord, *layer) == chunk {
-                self.append_hexel_faces(
-                    *coord,
-                    *layer,
-                    &mut vertices,
-                    &mut indices,
-                );
+                self.append_hexel_faces(*coord, *layer, &mut vertices, &mut indices);
             }
         }
 
@@ -386,77 +350,73 @@ pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
     }
 
     fn append_hexel_faces(
-    &self,
-    coord: HexCoord,
-    layer: u32,
-    vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u16>,
-) {
-    let bottom_y = layer as f32 * HEX_HEIGHT;
-    let top_y = bottom_y + HEX_HEIGHT;
-    let center = coord.world_xz();
-    let bottom_corners = coord_corners(coord, bottom_y);
-    let top_corners = coord_corners(coord, top_y);
-    let color = terrain_color(coord, layer);
+        &self,
+        coord: HexCoord,
+        layer: u32,
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u16>,
+    ) {
+        let bottom_y = layer as f32 * HEX_HEIGHT;
+        let top_y = bottom_y + HEX_HEIGHT;
+        let center = coord.world_xz();
+        let bottom_corners = coord_corners(coord, bottom_y);
+        let top_corners = coord_corners(coord, top_y);
+        let color = terrain_color(coord, layer);
 
-    // Top face: draw only if there is no hexel above.
-    if !self.contains(coord, layer + 1) {
-        let top_center = Vec3::new(center.x, top_y, center.y);
+        // Top face: draw only if there is no hexel above.
+        if !self.contains(coord, layer + 1) {
+            let top_center = Vec3::new(center.x, top_y, center.y);
 
-        for i in 0..6 {
-            push_triangle(
+            for i in 0..6 {
+                push_triangle(
+                    vertices,
+                    indices,
+                    [top_center, top_corners[(i + 1) % 6], top_corners[i]],
+                    color,
+                );
+            }
+        }
+
+        // Bottom face: draw only if there is no hexel below.
+        if layer == 0 || !self.contains(coord, layer - 1) {
+            let bottom_center = Vec3::new(center.x, bottom_y, center.y);
+
+            for i in 0..6 {
+                push_triangle(
+                    vertices,
+                    indices,
+                    [
+                        bottom_center,
+                        bottom_corners[i],
+                        bottom_corners[(i + 1) % 6],
+                    ],
+                    shade(color, 0.65),
+                );
+            }
+        }
+
+        // Draw a side only when the neighboring hexel at this layer is absent.
+        for direction in 0..6 {
+            if self.contains(coord.neighbor(direction), layer) {
+                continue;
+            }
+
+            let edge = (5 + 6 - direction) % 6;
+            let a_bottom = bottom_corners[edge];
+            let b_bottom = bottom_corners[(edge + 1) % 6];
+            let a_top = top_corners[edge];
+            let b_top = top_corners[(edge + 1) % 6];
+
+            push_quad(
                 vertices,
                 indices,
-                [
-                    top_center,
-                    top_corners[(i + 1) % 6],
-                    top_corners[i],
-                ],
-                color,
+                [b_bottom, a_bottom, a_top, b_top],
+                shade(color, 0.78 + direction as f32 * 0.035),
             );
         }
     }
 
-    // Bottom face: draw only if there is no hexel below.
-    if layer == 0 || !self.contains(coord, layer - 1) {
-        let bottom_center = Vec3::new(center.x, bottom_y, center.y);
-
-        for i in 0..6 {
-            push_triangle(
-                vertices,
-                indices,
-                [
-                    bottom_center,
-                    bottom_corners[i],
-                    bottom_corners[(i + 1) % 6],
-                ],
-                shade(color, 0.65),
-            );
-        }
-    }
-
-    // Draw a side only when the neighboring hexel at this layer is absent.
-    for direction in 0..6 {
-        if self.contains(coord.neighbor(direction), layer) {
-            continue;
-        }
-
-        let edge = (5 + 6 - direction) % 6;
-        let a_bottom = bottom_corners[edge];
-        let b_bottom = bottom_corners[(edge + 1) % 6];
-        let a_top = top_corners[edge];
-        let b_top = top_corners[(edge + 1) % 6];
-
-        push_quad(
-            vertices,
-            indices,
-            [b_bottom, a_bottom, a_top, b_top],
-            shade(color, 0.78 + direction as f32 * 0.035),
-        );
-        }
-}
-
-// Close impl World before defining the standalone helper.
+    // Close impl World before defining the standalone helper.
 }
 
 /// Compute corners from integer grid coordinates rather than adding trigonometric
@@ -508,93 +468,5 @@ fn shade(color: macroquad::prelude::Color, factor: f32) -> macroquad::prelude::C
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    
-    
-    #[test]
-    fn chunk_coordinates_use_16_hexel_boundaries() {
-        assert_eq!(ChunkCoord::from_hex(HexCoord::new(0, 0), 0).q, 0);
-        assert_eq!(ChunkCoord::from_hex(HexCoord::new(15, 15), 0).q, 0);
-        assert_eq!(ChunkCoord::from_hex(HexCoord::new(16, 16), 0).q, 1);
-        assert_eq!(ChunkCoord::from_hex(HexCoord::new(-1, -1), 0).q, -1);
-        assert_eq!(ChunkCoord::from_hex(HexCoord::new(-16, -16), 0).q, -1);
-        assert_eq!(ChunkCoord::from_hex(HexCoord::new(-17, -17), 0).q, -2);
-    }
-
-    #[test]
-    fn demo_world_has_many_columns() {
-        let world = World::demo();
-        assert!(world.hexels.len() > 150);
-        assert!(world.height(HexCoord::new(0, 0)) > 0);
-    }
-
-    #[test]
-    fn editing_changes_column_height() {
-        let mut world = World::demo();
-        let mut stress_test_level = 0;
-        let coord = HexCoord::new(0, 0);
-        let before = world.height(coord);
-        world.add_hexel(coord);
-        assert_eq!(world.height(coord), before + 1);
-        world.remove_hexel_at_layer(coord, before);
-        assert_eq!(world.height(coord), before);
-    }
-
-    #[test]
-    fn empty_columns_can_be_added_and_removed() {
-        let mut world = World::demo();
-        let coord = HexCoord::new(30, -30);
-        assert_eq!(world.height(coord), 0);
-        world.add_hexel(coord);
-        assert_eq!(world.height(coord), 1);
-        world.remove_hexel_at_layer(coord, 0);
-        assert_eq!(world.height(coord), 0);
-    }
-
-    #[test]
-    fn all_six_neighbors_share_bit_identical_edges() {
-        let origin = HexCoord::new(0, 0);
-        let a = coord_corners(origin, 1.0);
-        let edge_pairs = [
-            (5, 0, 3, 2),
-            (4, 5, 2, 1),
-            (3, 4, 1, 0),
-            (2, 3, 0, 5),
-            (1, 2, 5, 4),
-            (0, 1, 4, 3),
-        ];
-        for (direction, (a0, a1, b0, b1)) in edge_pairs.into_iter().enumerate() {
-            let b = coord_corners(origin.neighbor(direction), 1.0);
-            assert_eq!(a[a0], b[b0], "first shared corner in direction {direction}");
-            assert_eq!(
-                a[a1], b[b1],
-                "second shared corner in direction {direction}"
-            );
-        }
-    }
-
-    #[test]
-    fn editing_a_column_preserves_neighbor_mesh_edges() {
-        let mut world = World::demo();
-        let coord = HexCoord::new(0, 0);
-        world.add_hexel(coord);
-        world.remove_hexel_at_layer(coord, world.height(coord) - 1);
-        let a = coord_corners(coord, 1.0);
-        for direction in 0..6 {
-            let neighbor = coord.neighbor(direction);
-            let b = coord_corners(neighbor, 1.0);
-            let (a0, a1, b0, b1) = match direction {
-                0 => (5, 0, 3, 2),
-                1 => (4, 5, 2, 1),
-                2 => (3, 4, 1, 0),
-                3 => (2, 3, 0, 5),
-                4 => (1, 2, 5, 4),
-                _ => (0, 1, 4, 3),
-            };
-            assert_eq!(a[a0], b[b0]);
-            assert_eq!(a[a1], b[b1]);
-        }
-    }
-}
+#[path = "tests/world_tests.rs"]
+mod tests;

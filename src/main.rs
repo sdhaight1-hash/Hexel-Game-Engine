@@ -4,8 +4,8 @@ mod world;
 
 use macroquad::prelude::*;
 
-use world::World;
 use spherical::{Icosphere, SphericalWorld};
+use world::World;
 
 const DEFAULT_LOOK_SENSITIVITY: f32 = 0.00015;
 const DEFAULT_MOVE_SPEED: f32 = 8.0;
@@ -17,7 +17,6 @@ const DEFAULT_CAMERA_SPEED_MULTIPLIER: f32 = 1.0;
 const DEFAULT_CROSSHAIR_SIZE: f32 = 7.0;
 const DEFAULT_CROSSHAIR_COLOR: Color = WHITE;
 
-
 fn window_conf() -> Conf {
     Conf {
         window_title: "Hexel Engine — Prototype".to_owned(),
@@ -28,11 +27,7 @@ fn window_conf() -> Conf {
     }
 }
 
-fn ray_sphere_hit(
-    origin: Vec3,
-    direction: Vec3,
-    radius: f32,
-) -> Option<Vec3> {
+fn ray_sphere_hit(origin: Vec3, direction: Vec3, radius: f32) -> Option<Vec3> {
     let direction = direction.normalize();
     let b = origin.dot(direction);
     let c = origin.length_squared() - radius * radius;
@@ -57,16 +52,7 @@ fn ray_sphere_hit(
     Some(origin + direction * distance)
 }
 
-
-fn debug_slider(
-    label: &str,
-    x: f32,
-    y: f32,
-    width: f32,
-    value: &mut f32,
-    min: f32,
-    max: f32,
-) {
+fn debug_slider(label: &str, x: f32, y: f32, width: f32, value: &mut f32, min: f32, max: f32) {
     draw_text(label, x, y, 20.0, WHITE);
     draw_text(
         &format!("{:.5}", *value),
@@ -81,20 +67,13 @@ fn debug_slider(
     let track_width = width;
     let track_height = 8.0;
 
-    draw_rectangle(
-        track_x,
-        track_y,
-        track_width,
-        track_height,
-        DARKGRAY,
-    );
+    draw_rectangle(track_x, track_y, track_width, track_height, DARKGRAY);
 
     let mut fraction = (*value - min) / (max - min);
     fraction = fraction.clamp(0.0, 1.0);
 
     let mouse = mouse_position();
-    let inside_track =
-        mouse.0 >= track_x
+    let inside_track = mouse.0 >= track_x
         && mouse.0 <= track_x + track_width
         && mouse.1 >= track_y - 8.0
         && mouse.1 <= track_y + track_height + 8.0;
@@ -184,8 +163,7 @@ async fn main() {
 
         if benchmark_timer >= 10.0 {
             benchmark_avg_fps = benchmark_frames as f32 / benchmark_timer;
-            benchmark_avg_ms =
-                (benchmark_total_ms / benchmark_frames as f64) as f32;
+            benchmark_avg_ms = (benchmark_total_ms / benchmark_frames as f64) as f32;
             benchmark_low_fps = benchmark_min_fps;
 
             benchmark_timer = 0.0;
@@ -200,7 +178,6 @@ async fn main() {
             set_cursor_grab(false);
         }
 
-        
         if is_key_pressed(KeyCode::F1) {
             debug_menu_open = !debug_menu_open;
 
@@ -212,7 +189,7 @@ async fn main() {
         }
 
         if is_key_pressed(KeyCode::F3) {
-        show_sphere = !show_sphere;
+            show_sphere = !show_sphere;
 
             if show_sphere {
                 position = vec3(0.0, 0.0, -SPHERE_CAMERA_DISTANCE);
@@ -229,14 +206,12 @@ async fn main() {
             previous_mouse = mouse_position();
         }
 
-            
         if is_key_pressed(KeyCode::C) && !debug_menu_open {
             captured = !captured;
             show_mouse(!captured);
             set_cursor_grab(captured);
             previous_mouse = mouse_position();
         }
-
 
         if captured {
             let mouse = mouse_position();
@@ -268,7 +243,7 @@ async fn main() {
         }
 
         // Keep the requested A/D mapping: A moves left, D moves right.
-        if is_key_down(KeyCode::A) || is_key_down(KeyCode::Left)  {
+        if is_key_down(KeyCode::A) || is_key_down(KeyCode::Left) {
             movement += right;
         }
         if is_key_down(KeyCode::D) || is_key_down(KeyCode::Right) {
@@ -286,7 +261,6 @@ async fn main() {
             position += movement.normalize() * move_speed * camera_speed_multiplier * dt;
         }
 
-       
         if is_key_pressed(KeyCode::R) {
             stress_test_level = 0;
             world = World::demo();
@@ -305,9 +279,6 @@ async fn main() {
             world = World::stress_test(radius);
         }
 
-
-        
-        
         let mut target = None;
 
         if captured {
@@ -320,10 +291,7 @@ async fn main() {
                             world.add_hexel_at_layer(coord, layer - 1);
                         }
                         Some(direction) => {
-                            world.add_hexel_at_layer(
-                                coord.neighbor(direction),
-                                layer,
-                            );
+                            world.add_hexel_at_layer(coord.neighbor(direction), layer);
                         }
                         None => {
                             world.add_hexel_at_layer(coord, layer + 1);
@@ -337,29 +305,22 @@ async fn main() {
                     world.remove_hexel_at_layer(coord, layer);
                 }
             }
-       
         } // This closes if captured.
 
         let mut spherical_target = None;
 
         if show_sphere {
-            if let Some(hit) = ray_sphere_hit(
-                position,
-                forward,
-                spherical_world.radius,
-            ) {
+            if let Some(hit) = ray_sphere_hit(position, forward, spherical_world.radius) {
                 let direction = [hit.x, hit.y, hit.z];
 
-                spherical_target =
-                    spherical_world.cell_at_direction(direction, &sphere);
+                spherical_target = spherical_world.cell_at_direction(direction, &sphere);
             }
 
             if captured {
                 if is_mouse_button_pressed(MouseButton::Left) {
                     if let Some(cell_index) = spherical_target {
                         if spherical_world.raise_cell(cell_index) {
-                            spherical_mesh =
-                                spherical_world.build_surface_mesh(&sphere);
+                            spherical_mesh = spherical_world.build_surface_mesh(&sphere);
                         }
                     }
                 }
@@ -367,25 +328,18 @@ async fn main() {
                 if is_mouse_button_pressed(MouseButton::Right) {
                     if let Some(cell_index) = spherical_target {
                         if spherical_world.lower_cell(cell_index) {
-                            spherical_mesh =
-                                spherical_world.build_surface_mesh(&sphere);
+                            spherical_mesh = spherical_world.build_surface_mesh(&sphere);
                         }
                     }
                 }
             }
         }
 
-
         if show_sphere {
-            if let Some(hit) = ray_sphere_hit(
-                position,
-                forward,
-                spherical_world.radius,
-            ) {
+            if let Some(hit) = ray_sphere_hit(position, forward, spherical_world.radius) {
                 let direction = [hit.x, hit.y, hit.z];
 
-                spherical_target =
-                    spherical_world.cell_at_direction(direction, &sphere);
+                spherical_target = spherical_world.cell_at_direction(direction, &sphere);
             }
         }
 
@@ -397,141 +351,115 @@ async fn main() {
             fovy: camera_fov,
             ..Default::default()
         };
-        
+
         set_camera(&camera);
         if show_grid {
             draw_grid(40, 1.0, GRAY, Color::new(0.12, 0.15, 0.19, 1.0));
         }
-       
-        
-        
+
         world.rebuild_dirty_chunks();
 
-        
-fn chunk_is_visible(
-    chunk_q: i32,
-    chunk_r: i32,
-    camera_position: Vec3,
-    forward: Vec3,
-    camera_fov: f32,
-) -> bool {
-    const CHUNK_SIZE: f32 = 16.0;
-    const CHUNK_RADIUS: f32 = 20.0;
+        fn chunk_is_visible(
+            chunk_q: i32,
+            chunk_r: i32,
+            camera_position: Vec3,
+            forward: Vec3,
+            camera_fov: f32,
+        ) -> bool {
+            const CHUNK_SIZE: f32 = 16.0;
+            const CHUNK_RADIUS: f32 = 20.0;
 
-    // Find the chunk center using the engine's axial-to-world mapping.
-    let q = chunk_q as f32 * CHUNK_SIZE + (CHUNK_SIZE - 1.0) * 0.5;
-    let r = chunk_r as f32 * CHUNK_SIZE + (CHUNK_SIZE - 1.0) * 0.5;
+            // Find the chunk center using the engine's axial-to-world mapping.
+            let q = chunk_q as f32 * CHUNK_SIZE + (CHUNK_SIZE - 1.0) * 0.5;
+            let r = chunk_r as f32 * CHUNK_SIZE + (CHUNK_SIZE - 1.0) * 0.5;
 
-    let center_x = hexel::HEX_RADIUS * 1.732_050_8 * (q + r * 0.5);
-    let center_z = hexel::HEX_RADIUS * 1.5 * r;
+            let center_x = hexel::HEX_RADIUS * 1.732_050_8 * (q + r * 0.5);
+            let center_z = hexel::HEX_RADIUS * 1.5 * r;
 
-    let dx = center_x - camera_position.x;
-    let dz = center_z - camera_position.z;
+            let dx = center_x - camera_position.x;
+            let dz = center_z - camera_position.z;
 
-    // Test horizontally, keeping the result conservative when looking up/down.
-    let horizontal_forward =
-        vec3(forward.x, 0.0, forward.z).normalize_or_zero();
+            // Test horizontally, keeping the result conservative when looking up/down.
+            let horizontal_forward = vec3(forward.x, 0.0, forward.z).normalize_or_zero();
 
-    if horizontal_forward.length_squared() < 0.001 {
-        return true;
-    }
+            if horizontal_forward.length_squared() < 0.001 {
+                return true;
+            }
 
-    let right = vec3(horizontal_forward.z, 0.0, -horizontal_forward.x);
+            let right = vec3(horizontal_forward.z, 0.0, -horizontal_forward.x);
 
-    let depth = dx * horizontal_forward.x + dz * horizontal_forward.z;
-    let side = dx * right.x + dz * right.z;
+            let depth = dx * horizontal_forward.x + dz * horizontal_forward.z;
+            let side = dx * right.x + dz * right.z;
 
-    // The entire chunk is behind the camera.
-    if depth + CHUNK_RADIUS < 0.0 {
-        return false;
-    }
+            // The entire chunk is behind the camera.
+            if depth + CHUNK_RADIUS < 0.0 {
+                return false;
+            }
 
-    let aspect = screen_width() / screen_height().max(1.0);
-    let half_fov = (camera_fov.to_radians() * 0.5).tan();
-    let horizontal_limit = half_fov * aspect;
+            let aspect = screen_width() / screen_height().max(1.0);
+            let half_fov = (camera_fov.to_radians() * 0.5).tan();
+            let horizontal_limit = half_fov * aspect;
 
-    // Keep chunks that intersect the view, including a safety margin.
-    side.abs() <= depth.max(0.0) * horizontal_limit + CHUNK_RADIUS
-}
+            // Keep chunks that intersect the view, including a safety margin.
+            side.abs() <= depth.max(0.0) * horizontal_limit + CHUNK_RADIUS
+        }
         if show_sphere {
             draw_mesh(&spherical_mesh);
 
             if let Some(cell_index) = spherical_target {
-                if let Some(points) =
-                    spherical_world.cell_outline(cell_index, 0.04)
-                {
+                if let Some(points) = spherical_world.cell_outline(cell_index, 0.04) {
                     for i in 0..points.len() {
                         let next = (i + 1) % points.len();
 
-                        draw_line_3d(
-                            points[i],
-                            points[next],
-                            YELLOW,
-                        );
+                        draw_line_3d(points[i], points[next], YELLOW);
                     }
                 }
             }
         } else {
-            for ((chunk_q, chunk_r, _chunk_y), world_mesh)
-                in world.meshes_with_coords()
-            {
-                if chunk_is_visible(
-                    chunk_q,
-                    chunk_r,
-                    position,
-                    forward,
-                    camera_fov,
-                ) {
+            for ((chunk_q, chunk_r, _chunk_y), world_mesh) in world.meshes_with_coords() {
+                if chunk_is_visible(chunk_q, chunk_r, position, forward, camera_fov) {
                     draw_mesh(world_mesh);
                 }
             }
         }
 
-
-
         // Draw cyan outlines around chunk boundaries.
-    if show_chunk_bounds {
-        let chunk_coords = world.occupied_chunk_coords();
+        if show_chunk_bounds {
+            let chunk_coords = world.occupied_chunk_coords();
 
-    for (chunk_q, chunk_r, _chunk_y) in chunk_coords {
-        let start_q = chunk_q * 16;
-        let start_r = chunk_r * 16;
+            for (chunk_q, chunk_r, _chunk_y) in chunk_coords {
+                let start_q = chunk_q * 16;
+                let start_r = chunk_r * 16;
 
-        for q in start_q..start_q + 16 {
-            for r in start_r..start_r + 16 {
-                let coord = hexel::HexCoord::new(q, r);
-                if world.height(coord) == 0 {
-                continue;
-                }
+                for q in start_q..start_q + 16 {
+                    for r in start_r..start_r + 16 {
+                        let coord = hexel::HexCoord::new(q, r);
+                        if world.height(coord) == 0 {
+                            continue;
+                        }
 
-                // Only draw edges that face a different chunk.
-                let height = world.height(coord) as f32 * hexel::HEX_HEIGHT + 0.04;
-                let corners = world::coord_corners(coord, height);
+                        // Only draw edges that face a different chunk.
+                        let height = world.height(coord) as f32 * hexel::HEX_HEIGHT + 0.04;
+                        let corners = world::coord_corners(coord, height);
 
-                for direction in 0..6 {
-                    let neighbor = coord.neighbor(direction);
+                        for direction in 0..6 {
+                            let neighbor = coord.neighbor(direction);
 
-                    let neighbor_chunk_q = neighbor.q.div_euclid(16);
-                    let neighbor_chunk_r = neighbor.r.div_euclid(16);
+                            let neighbor_chunk_q = neighbor.q.div_euclid(16);
+                            let neighbor_chunk_r = neighbor.r.div_euclid(16);
 
-                    if neighbor_chunk_q != chunk_q
-                        || neighbor_chunk_r != chunk_r
-                    {
-                        let edge = (5 + 6 - direction) % 6;
+                            if neighbor_chunk_q != chunk_q || neighbor_chunk_r != chunk_r {
+                                let edge = (5 + 6 - direction) % 6;
 
-                        draw_line_3d(
-                            corners[edge],
-                            corners[(edge + 1) % 6],
-                            SKYBLUE,
-                        );
+                                draw_line_3d(corners[edge], corners[(edge + 1) % 6], SKYBLUE);
+                            }
+                        }
                     }
                 }
             }
         }
-    }
-}
 
-       // Outline the full targeted hex column.
+        // Outline the full targeted hex column.
         if show_target_outline {
             if let Some((coord, layer, _side)) = target {
                 let height = world.height(coord);
@@ -546,62 +474,60 @@ fn chunk_is_visible(
                     for i in 0..6 {
                         let next = (i + 1) % 6;
 
-                        draw_line_3d(
-                            bottom_corners[i],
-                            bottom_corners[next],
-                            YELLOW,
-                        );
-                        draw_line_3d(
-                            top_corners[i],
-                            top_corners[next],
-                            YELLOW,
-                        );
-                        draw_line_3d(
-                            bottom_corners[i],
-                            top_corners[i],
-                            YELLOW,
-                        );
+                        draw_line_3d(bottom_corners[i], bottom_corners[next], YELLOW);
+                        draw_line_3d(top_corners[i], top_corners[next], YELLOW);
+                        draw_line_3d(bottom_corners[i], top_corners[i], YELLOW);
                     }
                 }
             }
         }
 
-        
         set_default_camera();
 
-        
         // Target information display — fixed in the top-left corner.
-        let (target_text, layer_text, height_text) =
-            if let Some((coord, layer, _side)) = target {
+
+        let (target_text, layer_text, height_text) = if show_sphere {
+            if let Some(cell_index) = spherical_target {
                 (
-                    format!("Target: ({}, {})", coord.q, coord.r),
-                    format!("Layer: {}", layer),
-                    format!("Column height: {}", world.height(coord)),
+                    format!("Target: Sphere cell {}", cell_index),
+                    "Layer: -".to_owned(),
+                    format!(
+                        "Cell height: {}",
+                        spherical_world.cell_height(cell_index).unwrap_or(0)
+                    ),
                 )
             } else {
                 (
                     "Target: None".to_owned(),
                     "Layer: -".to_owned(),
-                    "Column height: -".to_owned(),
+                    "Cell height: -".to_owned(),
                 )
-            };
+            }
+        } else if let Some((coord, layer, _side)) = target {
+            (
+                format!("Target: ({}, {})", coord.q, coord.r),
+                format!("Layer: {}", layer),
+                format!("Column height: {}", world.height(coord)),
+            )
+        } else {
+            (
+                "Target: None".to_owned(),
+                "Layer: -".to_owned(),
+                "Column height: -".to_owned(),
+            )
+        };
 
         let info_padding = 12.0;
         let info_text_size = 20.0;
-        let info_width = [
-            &target_text,
-            &layer_text,
-            &height_text,
-        ]
-        .iter()
-        .map(|text| measure_text(text, None, info_text_size as u16, 1.0).width)
-        .fold(0.0_f32, f32::max)
+        let info_width = [&target_text, &layer_text, &height_text]
+            .iter()
+            .map(|text| measure_text(text, None, info_text_size as u16, 1.0).width)
+            .fold(0.0_f32, f32::max)
             + info_padding * 2.0;
 
         let info_height = 82.0;
         let info_x = 12.0;
         let info_y = screen_height() - info_height - 12.0;
-
 
         draw_rectangle(
             info_x,
@@ -635,31 +561,19 @@ fn chunk_is_visible(
             WHITE,
         );
 
-        
-        
         // World statistics display — fixed in the bottom-right corner.
         let total_hexels_text = format!("Total hexels: {}", world.total_hexels());
-        let occupied_chunks_text =
-            format!("Occupied chunks: {}", world.occupied_chunk_count());
+        let occupied_chunks_text = format!("Occupied chunks: {}", world.occupied_chunk_count());
 
         let visible_chunks = world
             .meshes_with_coords()
             .filter(|((chunk_q, chunk_r, _chunk_y), _)| {
-                chunk_is_visible(
-                    *chunk_q,
-                    *chunk_r,
-                    position,
-                    forward,
-                    camera_fov,
-                )
+                chunk_is_visible(*chunk_q, *chunk_r, position, forward, camera_fov)
             })
             .count();
 
         let visible_chunks_text = format!("Visible chunks: {}", visible_chunks);
-        let rebuilt_chunks_text = format!(
-            "Chunks rebuilt: {}",
-            world.chunks_rebuilt_this_frame()
-        );
+        let rebuilt_chunks_text = format!("Chunks rebuilt: {}", world.chunks_rebuilt_this_frame());
 
         let stats_padding = 12.0;
         let stats_text_size = 20.0;
@@ -670,9 +584,7 @@ fn chunk_is_visible(
             &rebuilt_chunks_text,
         ]
         .iter()
-        .map(|text| {
-            measure_text(text, None, stats_text_size as u16, 1.0).width
-        })
+        .map(|text| measure_text(text, None, stats_text_size as u16, 1.0).width)
         .fold(0.0_f32, f32::max)
             + stats_padding * 2.0;
 
@@ -720,9 +632,6 @@ fn chunk_is_visible(
             WHITE,
         );
 
-
-
-       
         // Performance display — fixed in the top-right corner.
         let fps_text = format!("FPS: {}", displayed_fps);
         let frame_text = format!("Frame: {:.1} ms", displayed_frame_ms);
@@ -735,12 +644,9 @@ fn chunk_is_visible(
 
         let fps_width = measure_text(&fps_text, None, text_size as u16, 1.0).width;
         let frame_width = measure_text(&frame_text, None, text_size as u16, 1.0).width;
-        let avg_fps_width =
-            measure_text(&avg_fps_text, None, text_size as u16, 1.0).width;
-        let avg_ms_width =
-            measure_text(&avg_ms_text, None, text_size as u16, 1.0).width;
-        let low_fps_width =
-            measure_text(&low_fps_text, None, text_size as u16, 1.0).width;
+        let avg_fps_width = measure_text(&avg_fps_text, None, text_size as u16, 1.0).width;
+        let avg_ms_width = measure_text(&avg_ms_text, None, text_size as u16, 1.0).width;
+        let low_fps_width = measure_text(&low_fps_text, None, text_size as u16, 1.0).width;
 
         let widest_text = fps_width
             .max(frame_width)
@@ -761,21 +667,9 @@ fn chunk_is_visible(
             Color::new(0.035, 0.05, 0.08, 0.85),
         );
 
-        draw_text(
-            &fps_text,
-            box_x + padding,
-            box_y + 23.0,
-            text_size,
-            LIME,
-        );
+        draw_text(&fps_text, box_x + padding, box_y + 23.0, text_size, LIME);
 
-        draw_text(
-            &frame_text,
-            box_x + padding,
-            box_y + 45.0,
-            text_size,
-            WHITE,
-        );
+        draw_text(&frame_text, box_x + padding, box_y + 45.0, text_size, WHITE);
 
         draw_text(
             &avg_fps_text,
@@ -801,380 +695,372 @@ fn chunk_is_visible(
             YELLOW,
         );
 
-
         let (screen_w, screen_h) = (screen_width(), screen_height());
         if debug_menu_open {
+            let panel_x = screen_w * 0.5 - 230.0;
+            let panel_y = 90.0;
+            let panel_w = 460.0;
+            let panel_h = 650.0;
 
-    let panel_x = screen_w * 0.5 - 230.0;
-    let panel_y = 90.0;
-    let panel_w = 460.0;
-    let panel_h = 650.0;
+            draw_rectangle(
+                panel_x,
+                panel_y,
+                panel_w,
+                panel_h,
+                Color::new(0.035, 0.05, 0.08, 0.97),
+            );
 
-    draw_rectangle(
-        panel_x,
-        panel_y,
-        panel_w,
-        panel_h,
-        Color::new(0.035, 0.05, 0.08, 0.97),
-    );
+            draw_rectangle_lines(panel_x, panel_y, panel_w, panel_h, 2.0, SKYBLUE);
 
-    draw_rectangle_lines(
-        panel_x,
-        panel_y,
-        panel_w,
-        panel_h,
-        2.0,
-        SKYBLUE,
-    );
+            draw_text(
+                "DEBUG OPTIONS",
+                panel_x + 20.0,
+                panel_y + 35.0,
+                28.0,
+                SKYBLUE,
+            );
 
-    draw_text(
-        "DEBUG OPTIONS",
-        panel_x + 20.0,
-        panel_y + 35.0,
-        28.0,
-        SKYBLUE,
-    );
+            draw_text(
+                "Camera and movement settings",
+                panel_x + 20.0,
+                panel_y + 60.0,
+                18.0,
+                LIGHTGRAY,
+            );
 
-    draw_text(
-        "Camera and movement settings",
-        panel_x + 20.0,
-        panel_y + 60.0,
-        18.0,
-        LIGHTGRAY,
-    );
+            let slider_x = panel_x + 20.0;
+            let slider_w = panel_w - 40.0;
 
-    let slider_x = panel_x + 20.0;
-    let slider_w = panel_w - 40.0;
+            debug_slider(
+                "Mouse sensitivity",
+                slider_x,
+                panel_y + 100.0,
+                slider_w,
+                &mut look_sensitivity,
+                0.00002,
+                0.001,
+            );
 
-    debug_slider(
-        "Mouse sensitivity",
-        slider_x,
-        panel_y + 100.0,
-        slider_w,
-        &mut look_sensitivity,
-        0.00002,
-        0.001,
-    );
+            debug_slider(
+                "Camera field of view",
+                slider_x,
+                panel_y + 165.0,
+                slider_w,
+                &mut camera_fov,
+                25.0,
+                85.0,
+            );
 
-    debug_slider(
-        "Camera field of view",
-        slider_x,
-        panel_y + 165.0,
-        slider_w,
-        &mut camera_fov,
-        25.0,
-        85.0,
-    );
+            debug_slider(
+                "Movement speed",
+                slider_x,
+                panel_y + 230.0,
+                slider_w,
+                &mut move_speed,
+                1.0,
+                20.0,
+            );
 
-    debug_slider(
-        "Movement speed",
-        slider_x,
-        panel_y + 230.0,
-        slider_w,
-        &mut move_speed,
-        1.0,
-        20.0,
-    );
+            debug_slider(
+                "Wheel vertical speed",
+                slider_x,
+                panel_y + 295.0,
+                slider_w,
+                &mut wheel_vertical_speed,
+                0.02,
+                1.0,
+            );
+            debug_slider(
+                "Camera speed multiplier",
+                slider_x,
+                panel_y + 350.0,
+                slider_w,
+                &mut camera_speed_multiplier,
+                0.25,
+                3.0,
+            );
+            debug_slider(
+                "Crosshair size",
+                slider_x,
+                panel_y + 405.0,
+                slider_w,
+                &mut crosshair_size,
+                2.0,
+                20.0,
+            );
+            draw_text("Rendering", panel_x + 20.0, panel_y + 460.0, 20.0, SKYBLUE);
 
-    debug_slider(
-        "Wheel vertical speed",
-        slider_x,
-        panel_y + 295.0,
-        slider_w,
-        &mut wheel_vertical_speed,
-        0.02,
-        1.0,
-    );
-        debug_slider(
-        "Camera speed multiplier",
-        slider_x,
-        panel_y + 350.0,
-        slider_w,
-        &mut camera_speed_multiplier,
-        0.25,
-        3.0,
-    );
-        debug_slider(
-        "Crosshair size",
-        slider_x,
-        panel_y + 405.0,
-        slider_w,
-        &mut crosshair_size,
-        2.0,
-        20.0,
-    );
+            let toggle_x = panel_x + 20.0;
+            let toggle_y = panel_y + 475.0;
+            let toggle_w = 130.0;
+            let toggle_h = 28.0;
+            let toggle_gap = 145.0;
+            let mouse = mouse_position();
+
+            // Grid toggle
+            let grid_hovered = mouse.0 >= toggle_x
+                && mouse.0 <= toggle_x + toggle_w
+                && mouse.1 >= toggle_y
+                && mouse.1 <= toggle_y + toggle_h;
+
+            draw_rectangle(
+                toggle_x,
+                toggle_y,
+                toggle_w,
+                toggle_h,
+                if grid_hovered { BLUE } else { DARKGRAY },
+            );
+            draw_text(
+                if show_grid { "Grid: ON" } else { "Grid: OFF" },
+                toggle_x + 10.0,
+                toggle_y + 20.0,
+                18.0,
+                WHITE,
+            );
+            if grid_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                show_grid = !show_grid;
+            }
+
+            // Target outline toggle
+            let outline_x = toggle_x + toggle_gap;
+            let outline_hovered = mouse.0 >= outline_x
+                && mouse.0 <= outline_x + toggle_w
+                && mouse.1 >= toggle_y
+                && mouse.1 <= toggle_y + toggle_h;
+
+            draw_rectangle(
+                outline_x,
+                toggle_y,
+                toggle_w,
+                toggle_h,
+                if outline_hovered { BLUE } else { DARKGRAY },
+            );
+            draw_text(
+                if show_target_outline {
+                    "Outline: ON"
+                } else {
+                    "Outline: OFF"
+                },
+                outline_x + 8.0,
+                toggle_y + 20.0,
+                17.0,
+                WHITE,
+            );
+            if outline_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                show_target_outline = !show_target_outline;
+            }
+
+            // Chunk boundaries toggle
+            let chunk_x = toggle_x + toggle_gap;
+            let chunk_y = toggle_y + 35.0;
+
+            let chunk_hovered = mouse.0 >= chunk_x
+                && mouse.0 <= chunk_x + toggle_w
+                && mouse.1 >= chunk_y
+                && mouse.1 <= chunk_y + toggle_h;
+
+            draw_rectangle(
+                chunk_x,
+                chunk_y,
+                toggle_w,
+                toggle_h,
+                if chunk_hovered { BLUE } else { DARKGRAY },
+            );
+
+            draw_text(
+                if show_chunk_bounds {
+                    "Chunks: ON"
+                } else {
+                    "Chunks: OFF"
+                },
+                chunk_x + 8.0,
+                chunk_y + 20.0,
+                17.0,
+                WHITE,
+            );
+
+            if chunk_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                show_chunk_bounds = !show_chunk_bounds;
+            }
+
+            // Crosshair color buttons
+            let color_y = toggle_y + 70.0;
+            let color_w = 95.0;
+            let color_h = 28.0;
+            let color_gap = 10.0;
+
+            let white_x = toggle_x;
+            let red_x = white_x + color_w + color_gap;
+            let green_x = red_x + color_w + color_gap;
+            let yellow_x = green_x + color_w + color_gap;
+
+            let white_hovered = mouse.0 >= white_x
+                && mouse.0 <= white_x + color_w
+                && mouse.1 >= color_y
+                && mouse.1 <= color_y + color_h;
+
+            draw_rectangle(
+                white_x,
+                color_y,
+                color_w,
+                color_h,
+                if white_hovered { BLUE } else { DARKGRAY },
+            );
+            draw_text("White", white_x + 20.0, color_y + 20.0, 16.0, WHITE);
+
+            if white_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                crosshair_color = WHITE;
+            }
+
+            let red_hovered = mouse.0 >= red_x
+                && mouse.0 <= red_x + color_w
+                && mouse.1 >= color_y
+                && mouse.1 <= color_y + color_h;
+
+            draw_rectangle(
+                red_x,
+                color_y,
+                color_w,
+                color_h,
+                if red_hovered { BLUE } else { DARKGRAY },
+            );
+            draw_text("Red", red_x + 30.0, color_y + 20.0, 16.0, WHITE);
+
+            if red_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                crosshair_color = RED;
+            }
+
+            let green_hovered = mouse.0 >= green_x
+                && mouse.0 <= green_x + color_w
+                && mouse.1 >= color_y
+                && mouse.1 <= color_y + color_h;
+
+            draw_rectangle(
+                green_x,
+                color_y,
+                color_w,
+                color_h,
+                if green_hovered { BLUE } else { DARKGRAY },
+            );
+            draw_text("Green", green_x + 25.0, color_y + 20.0, 16.0, WHITE);
+
+            if green_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                crosshair_color = GREEN;
+            }
+
+            let yellow_hovered = mouse.0 >= yellow_x
+                && mouse.0 <= yellow_x + color_w
+                && mouse.1 >= color_y
+                && mouse.1 <= color_y + color_h;
+
+            draw_rectangle(
+                yellow_x,
+                color_y,
+                color_w,
+                color_h,
+                if yellow_hovered { BLUE } else { DARKGRAY },
+            );
+            draw_text("Yellow", yellow_x + 22.0, color_y + 20.0, 16.0, WHITE);
+
+            if yellow_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                crosshair_color = YELLOW;
+            }
+
+            let reset_x = panel_x + 20.0;
+            let reset_y = panel_y + 600.0;
+            let reset_w = 180.0;
+            let reset_h = 38.0;
+            let mouse = mouse_position();
+
+            let reset_hovered = mouse.0 >= reset_x
+                && mouse.0 <= reset_x + reset_w
+                && mouse.1 >= reset_y
+                && mouse.1 <= reset_y + reset_h;
+
+            draw_rectangle(
+                reset_x,
+                reset_y,
+                reset_w,
+                reset_h,
+                if reset_hovered { BLUE } else { DARKGRAY },
+            );
+
+            draw_text(
+                "Reset defaults",
+                reset_x + 15.0,
+                reset_y + 25.0,
+                20.0,
+                WHITE,
+            );
+
+            if reset_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
+                move_speed = DEFAULT_MOVE_SPEED;
+                camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
+                crosshair_size = DEFAULT_CROSSHAIR_SIZE;
+                crosshair_color = DEFAULT_CROSSHAIR_COLOR;
+                camera_fov = DEFAULT_CAMERA_FOV;
+                wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
+            }
+
+            draw_text(
+                "F1: close menu",
+                panel_x + 245.0,
+                reset_y + 25.0,
+                18.0,
+                LIGHTGRAY,
+            );
+        }
+
+        if show_crosshair {
+            draw_line(
+                screen_w * 0.5 - crosshair_size,
+                screen_h * 0.5,
+                screen_w * 0.5 + crosshair_size,
+                screen_h * 0.5,
+                2.0,
+                crosshair_color,
+            );
+            draw_line(
+                screen_w * 0.5,
+                screen_h * 0.5 - crosshair_size,
+                screen_w * 0.5,
+                screen_h * 0.5 + crosshair_size,
+                2.0,
+                crosshair_color,
+            );
+        }
+
         draw_text(
-        "Rendering",
-        panel_x + 20.0,
-        panel_y + 460.0,
-        20.0,
-        SKYBLUE,
-    );
-
-    let toggle_x = panel_x + 20.0;
-    let toggle_y = panel_y + 475.0;
-    let toggle_w = 130.0;
-    let toggle_h = 28.0;
-    let toggle_gap = 145.0;
-    let mouse = mouse_position();
-
-    // Grid toggle
-    let grid_hovered =
-        mouse.0 >= toggle_x
-        && mouse.0 <= toggle_x + toggle_w
-        && mouse.1 >= toggle_y
-        && mouse.1 <= toggle_y + toggle_h;
-
-    draw_rectangle(
-        toggle_x,
-        toggle_y,
-        toggle_w,
-        toggle_h,
-        if grid_hovered { BLUE } else { DARKGRAY },
-    );
-    draw_text(
-        if show_grid { "Grid: ON" } else { "Grid: OFF" },
-        toggle_x + 10.0,
-        toggle_y + 20.0,
-        18.0,
-        WHITE,
-    );
-    if grid_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        show_grid = !show_grid;
-    }
-
-    // Target outline toggle
-    let outline_x = toggle_x + toggle_gap;
-    let outline_hovered =
-        mouse.0 >= outline_x
-        && mouse.0 <= outline_x + toggle_w
-        && mouse.1 >= toggle_y
-        && mouse.1 <= toggle_y + toggle_h;
-
-    draw_rectangle(
-        outline_x,
-        toggle_y,
-        toggle_w,
-        toggle_h,
-        if outline_hovered { BLUE } else { DARKGRAY },
-    );
-    draw_text(
-        if show_target_outline { "Outline: ON" } else { "Outline: OFF" },
-        outline_x + 8.0,
-        toggle_y + 20.0,
-        17.0,
-        WHITE,
-    );
-    if outline_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        show_target_outline = !show_target_outline;
-    }
-
-  
-    // Chunk boundaries toggle
-    let chunk_x = toggle_x + toggle_gap;
-    let chunk_y = toggle_y + 35.0;
-
-    let chunk_hovered =
-        mouse.0 >= chunk_x
-        && mouse.0 <= chunk_x + toggle_w
-        && mouse.1 >= chunk_y
-        && mouse.1 <= chunk_y + toggle_h;
-
-    draw_rectangle(
-        chunk_x,
-        chunk_y,
-        toggle_w,
-        toggle_h,
-        if chunk_hovered { BLUE } else { DARKGRAY },
-    );
-
-    draw_text(
-        if show_chunk_bounds {
-            "Chunks: ON"
-        } else {
-            "Chunks: OFF"
-        },
-        chunk_x + 8.0,
-        chunk_y + 20.0,
-        17.0,
-        WHITE,
-    );
-
-    if chunk_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        show_chunk_bounds = !show_chunk_bounds;
-    }
-
-    // Crosshair color buttons
-    let color_y = toggle_y + 70.0;
-    let color_w = 95.0;
-    let color_h = 28.0;
-    let color_gap = 10.0;
-
-    let white_x = toggle_x;
-    let red_x = white_x + color_w + color_gap;
-    let green_x = red_x + color_w + color_gap;
-    let yellow_x = green_x + color_w + color_gap;
-
-    let white_hovered =
-        mouse.0 >= white_x
-        && mouse.0 <= white_x + color_w
-        && mouse.1 >= color_y
-        && mouse.1 <= color_y + color_h;
-
-    draw_rectangle(
-        white_x, color_y, color_w, color_h,
-        if white_hovered { BLUE } else { DARKGRAY },
-    );
-    draw_text("White", white_x + 20.0, color_y + 20.0, 16.0, WHITE);
-
-    if white_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        crosshair_color = WHITE;
-    }
-
-    let red_hovered =
-        mouse.0 >= red_x
-        && mouse.0 <= red_x + color_w
-        && mouse.1 >= color_y
-        && mouse.1 <= color_y + color_h;
-
-    draw_rectangle(
-        red_x, color_y, color_w, color_h,
-        if red_hovered { BLUE } else { DARKGRAY },
-    );
-    draw_text("Red", red_x + 30.0, color_y + 20.0, 16.0, WHITE);
-
-    if red_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        crosshair_color = RED;
-    }
-
-    let green_hovered =
-        mouse.0 >= green_x
-        && mouse.0 <= green_x + color_w
-        && mouse.1 >= color_y
-        && mouse.1 <= color_y + color_h;
-
-    draw_rectangle(
-        green_x, color_y, color_w, color_h,
-        if green_hovered { BLUE } else { DARKGRAY },
-    );
-    draw_text("Green", green_x + 25.0, color_y + 20.0, 16.0, WHITE);
-
-    if green_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        crosshair_color = GREEN;
-    }
-
-    let yellow_hovered =
-        mouse.0 >= yellow_x
-        && mouse.0 <= yellow_x + color_w
-        && mouse.1 >= color_y
-        && mouse.1 <= color_y + color_h;
-
-    draw_rectangle(
-        yellow_x, color_y, color_w, color_h,
-        if yellow_hovered { BLUE } else { DARKGRAY },
-    );
-    draw_text("Yellow", yellow_x + 22.0, color_y + 20.0, 16.0, WHITE);
-
-    if yellow_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        crosshair_color = YELLOW;
-    }
-
-    let reset_x = panel_x + 20.0;
-    let reset_y = panel_y + 600.0;
-    let reset_w = 180.0;
-    let reset_h = 38.0;
-    let mouse = mouse_position();
-
-    let reset_hovered =
-        mouse.0 >= reset_x
-        && mouse.0 <= reset_x + reset_w
-        && mouse.1 >= reset_y
-        && mouse.1 <= reset_y + reset_h;
-
-    draw_rectangle(
-        reset_x,
-        reset_y,
-        reset_w,
-        reset_h,
-        if reset_hovered { BLUE } else { DARKGRAY },
-    );
-
-    draw_text(
-        "Reset defaults",
-        reset_x + 15.0,
-        reset_y + 25.0,
-        20.0,
-        WHITE,
-    );
-
-    if reset_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
-        move_speed = DEFAULT_MOVE_SPEED;
-        camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
-        crosshair_size = DEFAULT_CROSSHAIR_SIZE;
-        crosshair_color = DEFAULT_CROSSHAIR_COLOR;
-        camera_fov = DEFAULT_CAMERA_FOV;
-        wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
-    }
-
+            "HEXEL ENGINE  /  PLAYABLE PROTOTYPE",
+            20.0,
+            30.0,
+            22.0,
+            WHITE,
+        );
         draw_text(
-        "F1: close menu",
-        panel_x + 245.0,
-        reset_y + 25.0,
-        18.0,
-        LIGHTGRAY,
-    );
-    }
-
-    if show_crosshair {
-       draw_line(
-        screen_w * 0.5 - crosshair_size,
-        screen_h * 0.5,
-        screen_w * 0.5 + crosshair_size,
-        screen_h * 0.5,
-        2.0,
-        crosshair_color,
+            "WASD move  |  Mouse look  |  Left click add  |  Right click remove  |  R reset",
+            20.0,
+            56.0,
+            18.0,
+            LIGHTGRAY,
         );
-        draw_line(
-        screen_w * 0.5,
-        screen_h * 0.5 - crosshair_size,
-        screen_w * 0.5,
-        screen_h * 0.5 + crosshair_size,
-        2.0,
-        crosshair_color,
-        );
-    }
-
-    draw_text(
-        "HEXEL ENGINE  /  PLAYABLE PROTOTYPE",
-        20.0,
-        30.0,
-        22.0,
-        WHITE,
-    );
-    draw_text(
-        "WASD move  |  Mouse look  |  Left click add  |  Right click remove  |  R reset",
-        20.0,
-        56.0,
-        18.0,
-        LIGHTGRAY,
-    );
-    draw_text(
+        draw_text(
         "Mouse wheel: fine vertical move  |  Space / Shift: vertical move  |  C: capture/release  |  Esc: release",
         20.0,
         80.0,
         16.0,
         LIGHTGRAY,
     );
-    if !captured {
-        draw_text(
-            "Press C to capture the mouse and edit; press Esc to release it",
-            20.0,
-            screen_h - 24.0,
-            18.0,
-            YELLOW,
-        );
-    }
+        if !captured {
+            draw_text(
+                "Press C to capture the mouse and edit; press Esc to release it",
+                20.0,
+                screen_h - 24.0,
+                18.0,
+                YELLOW,
+            );
+        }
 
         next_frame().await;
     }
