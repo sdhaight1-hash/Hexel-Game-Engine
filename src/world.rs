@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use macroquad::prelude::{Mesh, Vec3, Vertex};
 
@@ -69,6 +70,17 @@ impl World {
                 for layer in 0..height {
                     let coord = HexCoord::new(q, r);
                     world.hexels.insert((coord, layer));
+                    for layer in 0..height {
+                        let coord = HexCoord::new(q, r);
+                        world.hexels.insert((coord, layer));
+
+                        let chunk = ChunkCoord::from_hex(coord, layer);
+                        world
+                            .chunk_hexels
+                            .entry(chunk)
+                            .or_default()
+                            .insert((coord, layer));
+                    }
 
                     let chunk = ChunkCoord::from_hex(coord, layer);
                     world
@@ -105,7 +117,15 @@ impl World {
                 let height = 1 + broad / 4 + extra;
 
                 for layer in 0..height {
-                    world.hexels.insert((HexCoord::new(q, r), layer));
+                    let coord = HexCoord::new(q, r);
+                    world.hexels.insert((coord, layer));
+
+                    let chunk = ChunkCoord::from_hex(coord, layer);
+                    world
+                        .chunk_hexels
+                        .entry(chunk)
+                        .or_default()
+                        .insert((coord, layer));
                 }
             }
         }
@@ -338,6 +358,29 @@ impl World {
                 self.chunks_rebuilt_this_frame += 1;
             }
         }
+    }
+
+    /// Measure the time needed to build chunk meshes for a stress-test world.
+
+    pub fn benchmark_chunk_rebuild(radius: i32) -> (usize, f64) {
+        let mut world = Self::stress_test(radius);
+
+        println!(
+            "Radius {radius}: {} hexels, {} occupied chunks",
+            world.hexels.len(),
+            world.chunk_hexels.len()
+        );
+
+        // Mark every occupied chunk dirty so the benchmark rebuilds them.
+        world.dirty_chunks = world.chunk_hexels.keys().copied().collect();
+        world.chunk_meshes.clear();
+        world.chunks_rebuilt_this_frame = 0;
+
+        let start = Instant::now();
+        world.rebuild_dirty_chunks();
+        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        (world.chunks_rebuilt_this_frame(), elapsed_ms)
     }
 
     pub fn meshes_with_coords(&self) -> impl Iterator<Item = ((i32, i32, u32), &Mesh)> {

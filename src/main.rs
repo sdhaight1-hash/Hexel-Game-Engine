@@ -3,7 +3,8 @@ mod spherical;
 mod world;
 
 use macroquad::prelude::*;
-
+use std::io::Write;
+use std::process::{Command, Stdio};
 use spherical::{Icosphere, SphericalWorld};
 use world::World;
 
@@ -21,7 +22,7 @@ fn window_conf() -> Conf {
     Conf {
         window_title: "Hexel Engine — Prototype".to_owned(),
         window_width: 1280,
-        window_height: 800,
+        window_height: 1000,
         high_dpi: true,
         ..Default::default()
     }
@@ -100,7 +101,6 @@ fn debug_slider(label: &str, x: f32, y: f32, width: f32, value: &mut f32, min: f
 }
 
 #[macroquad::main(window_conf)]
-
 async fn main() {
     let mut world = World::demo();
     let sphere = Icosphere::new(2);
@@ -116,6 +116,15 @@ async fn main() {
     let mut camera_fov = DEFAULT_CAMERA_FOV;
     let mut wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
     let mut debug_menu_open = false;
+    let mut console_open = true;
+    let mut benchmark_running = false;
+    let mut benchmark_results = String::from("Hexel Engine Benchmark Console\nPress F1 and select Run All Benchmarks.\n");
+    let mut benchmark_radii = [8_i32, 16, 24, 32];
+    let mut benchmark_radius_index = 0_usize;
+    let mut benchmark_run_index = 0_u32;
+    let mut benchmark_timings: Vec<f64> = Vec::new();
+    let mut benchmark_rebuilt_chunks = 0_usize;
+    let mut benchmark_tab_open = false;
     let mut show_grid = true;
     let mut show_target_outline = true;
     let mut show_chunk_bounds = false;
@@ -140,6 +149,58 @@ async fn main() {
     let mut benchmark_low_fps = 0.0_f32;
 
     loop {
+            if benchmark_running {
+            if benchmark_radius_index == 0 && benchmark_run_index == 0 {
+                benchmark_results.clear();
+                benchmark_results.push_str("HEXEL ENGINE BENCHMARK RESULTS\n");
+                benchmark_results.push_str("===============================\n\n");
+                benchmark_results.push_str("Chunk rebuild benchmark (5 runs per radius)\n\n");
+            }
+
+            let radius = benchmark_radii[benchmark_radius_index];
+            let (chunks, elapsed_ms) = World::benchmark_chunk_rebuild(radius);
+
+            benchmark_rebuilt_chunks = chunks;
+            benchmark_timings.push(elapsed_ms);
+            benchmark_run_index += 1;
+
+            if benchmark_run_index >= 5 {
+                let average_ms =
+                    benchmark_timings.iter().sum::<f64>() / benchmark_timings.len() as f64;
+                let fastest_ms = benchmark_timings
+                    .iter()
+                    .copied()
+                    .fold(f64::INFINITY, f64::min);
+
+                benchmark_results.push_str(&format!(
+                    "Radius {radius}: {benchmark_rebuilt_chunks} chunks | avg {average_ms:.2} ms | fastest {fastest_ms:.2} ms\n"
+                ));
+
+                benchmark_timings.clear();
+                benchmark_run_index = 0;
+                benchmark_radius_index += 1;
+
+                if benchmark_radius_index >= benchmark_radii.len() {
+                    benchmark_running = false;
+                    benchmark_radius_index = 0;
+
+                    benchmark_results.push_str("\nLive performance metrics:\n");
+                    benchmark_results.push_str(&format!(
+                        "10-second average FPS: {:.1}\n",
+                        benchmark_avg_fps
+                    ));
+                    benchmark_results.push_str(&format!(
+                        "10-second average frame time: {:.2} ms\n",
+                        benchmark_avg_ms
+                    ));
+                    benchmark_results.push_str(&format!(
+                        "10-second lowest FPS: {:.1}\n",
+                        benchmark_low_fps
+                    ));
+                }
+            }
+        }
+
         let frame_seconds = get_frame_time().max(0.000_001);
         let dt = frame_seconds.min(0.05);
 
@@ -712,10 +773,83 @@ async fn main() {
 
             draw_rectangle_lines(panel_x, panel_y, panel_w, panel_h, 2.0, SKYBLUE);
 
+            let tab_y = panel_y + 10.0;
+            let tab_h = 32.0;
+            let tab_w = (panel_w - 50.0) / 2.0;
+            let debug_tab_x = panel_x + 15.0;
+            let benchmark_tab_x = debug_tab_x + tab_w + 20.0;
+            let mouse = mouse_position();
+
+            let debug_tab_hovered = mouse.0 >= debug_tab_x
+                && mouse.0 <= debug_tab_x + tab_w
+                && mouse.1 >= tab_y
+                && mouse.1 <= tab_y + tab_h;
+
+            draw_rectangle(
+                debug_tab_x,
+                tab_y,
+                tab_w,
+                tab_h,
+                if !benchmark_tab_open {
+                    BLUE
+                } else if debug_tab_hovered {
+                    DARKGRAY
+                } else {
+                    Color::new(0.10, 0.13, 0.18, 1.0)
+                },
+            );
+
             draw_text(
-                "DEBUG OPTIONS",
+                "Debug",
+                debug_tab_x + tab_w * 0.5 - 25.0,
+                tab_y + 22.0,
+                20.0,
+                WHITE,
+            );
+
+            if debug_tab_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                benchmark_tab_open = false;
+            }
+
+            let benchmark_tab_hovered = mouse.0 >= benchmark_tab_x
+                && mouse.0 <= benchmark_tab_x + tab_w
+                && mouse.1 >= tab_y
+                && mouse.1 <= tab_y + tab_h;
+
+            draw_rectangle(
+                benchmark_tab_x,
+                tab_y,
+                tab_w,
+                tab_h,
+                if benchmark_tab_open {
+                    BLUE
+                } else if benchmark_tab_hovered {
+                    DARKGRAY
+                } else {
+                    Color::new(0.10, 0.13, 0.18, 1.0)
+                },
+            );
+
+            draw_text(
+                "Benchmarks",
+                benchmark_tab_x + tab_w * 0.5 - 53.0,
+                tab_y + 22.0,
+                20.0,
+                WHITE,
+            );
+
+            if benchmark_tab_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                benchmark_tab_open = true;
+            }
+
+            draw_text(
+                if benchmark_tab_open {
+                    "BENCHMARKS"
+                } else {
+                    "DEBUG OPTIONS"
+                },
                 panel_x + 20.0,
-                panel_y + 35.0,
+                panel_y + 70.0,
                 28.0,
                 SKYBLUE,
             );
@@ -728,6 +862,7 @@ async fn main() {
                 LIGHTGRAY,
             );
 
+            if !benchmark_tab_open {
             let slider_x = panel_x + 20.0;
             let slider_w = panel_w - 40.0;
 
@@ -788,6 +923,41 @@ async fn main() {
                 2.0,
                 20.0,
             );
+
+            draw_text(
+                "Benchmarking",
+                panel_x + 20.0,
+                panel_y + 445.0,
+                20.0,
+                SKYBLUE,
+            );
+
+            let benchmark_x = panel_x + 20.0;
+            let benchmark_y = panel_y + 455.0;
+            let benchmark_w = panel_w - 40.0;
+            let benchmark_h = 32.0;
+
+            let benchmark_hovered = mouse_position().0 >= benchmark_x
+                && mouse_position().0 <= benchmark_x + benchmark_w
+                && mouse_position().1 >= benchmark_y
+                && mouse_position().1 <= benchmark_y + benchmark_h;
+
+            draw_rectangle(
+                benchmark_x,
+                benchmark_y,
+                benchmark_w,
+                benchmark_h,
+                if benchmark_hovered { BLUE } else { DARKGRAY },
+            );
+
+            draw_text(
+                "Run All Benchmarks",
+                benchmark_x + 12.0,
+                benchmark_y + 22.0,
+                18.0,
+                WHITE,
+            );
+
             draw_text("Rendering", panel_x + 20.0, panel_y + 460.0, 20.0, SKYBLUE);
 
             let toggle_x = panel_x + 20.0;
@@ -1010,7 +1180,129 @@ async fn main() {
                 18.0,
                 LIGHTGRAY,
             );
+            }
+            if benchmark_tab_open {
+                let button_x = panel_x + 20.0;
+                let button_y = panel_y + 105.0;
+                let button_w = panel_w - 40.0;
+                let button_h = 40.0;
+                let mouse = mouse_position();
+
+                let run_hovered = mouse.0 >= button_x
+                    && mouse.0 <= button_x + button_w
+                    && mouse.1 >= button_y
+                    && mouse.1 <= button_y + button_h;
+
+                draw_rectangle(
+                    button_x,
+                    button_y,
+                    button_w,
+                    button_h,
+                    if run_hovered { BLUE } else { DARKGRAY },
+                );
+
+                draw_text(
+                    "Run All Benchmarks",
+                    button_x + 12.0,
+                    button_y + 26.0,
+                    20.0,
+                    WHITE,
+                );
+
+                if run_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    benchmark_running = true;
+                }
+            }
         }
+
+    if console_open {
+    let console_height = 190.0;
+    let console_y = screen_height() - console_height;
+
+    draw_rectangle(
+        0.0,
+        console_y,
+        screen_width(),
+        console_height,
+        Color::new(0.015, 0.02, 0.03, 0.97),
+    );
+
+    draw_line(
+        0.0,
+        console_y,
+        screen_width(),
+        console_y,
+        2.0,
+        SKYBLUE,
+    );
+
+    draw_text(
+        "BENCHMARK CONSOLE",
+        16.0,
+        console_y + 25.0,
+        20.0,
+        SKYBLUE,
+    );
+
+    let copy_x = screen_width() - 150.0;
+    let copy_y = console_y + 8.0;
+    let copy_w = 120.0;
+    let copy_h = 30.0;
+
+    let mouse = mouse_position();
+    let copy_hovered = mouse.0 >= copy_x
+        && mouse.0 <= copy_x + copy_w
+        && mouse.1 >= copy_y
+        && mouse.1 <= copy_y + copy_h;
+
+    draw_rectangle(
+        copy_x,
+        copy_y,
+        copy_w,
+        copy_h,
+        if copy_hovered { BLUE } else { DARKGRAY },
+    );
+
+    draw_text(
+        "Copy Results",
+        copy_x + 8.0,
+        copy_y + 20.0,
+        16.0,
+        WHITE,
+    );
+
+    if copy_hovered && is_mouse_button_pressed(MouseButton::Left) {
+        match Command::new("clip")
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(benchmark_results.as_bytes());
+                }
+
+                let _ = child.wait();
+            }
+            Err(error) => {
+                eprintln!("Failed to copy benchmark results: {error}");
+            }
+        }
+    }
+
+    let mut y = console_y + 55.0;
+
+    for line in benchmark_results
+        .lines()
+        .rev()
+        .take(6)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        draw_text(line, 16.0, y, 17.0, LIGHTGRAY);
+        y += 21.0;
+    }
+}
 
         if show_crosshair {
             draw_line(
