@@ -70,17 +70,6 @@ impl World {
                 for layer in 0..height {
                     let coord = HexCoord::new(q, r);
                     world.hexels.insert((coord, layer));
-                    for layer in 0..height {
-                        let coord = HexCoord::new(q, r);
-                        world.hexels.insert((coord, layer));
-
-                        let chunk = ChunkCoord::from_hex(coord, layer);
-                        world
-                            .chunk_hexels
-                            .entry(chunk)
-                            .or_default()
-                            .insert((coord, layer));
-                    }
 
                     let chunk = ChunkCoord::from_hex(coord, layer);
                     world
