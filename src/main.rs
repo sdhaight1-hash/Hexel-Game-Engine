@@ -28,6 +28,36 @@ fn window_conf() -> Conf {
     }
 }
 
+fn ray_sphere_hit(
+    origin: Vec3,
+    direction: Vec3,
+    radius: f32,
+) -> Option<Vec3> {
+    let direction = direction.normalize();
+    let b = origin.dot(direction);
+    let c = origin.length_squared() - radius * radius;
+    let discriminant = b * b - c;
+
+    if discriminant < 0.0 {
+        return None;
+    }
+
+    let root = discriminant.sqrt();
+    let near = -b - root;
+    let far = -b + root;
+
+    let distance = if near >= 0.0 {
+        near
+    } else if far >= 0.0 {
+        far
+    } else {
+        return None;
+    };
+
+    Some(origin + direction * distance)
+}
+
+
 fn debug_slider(
     label: &str,
     x: f32,
@@ -95,8 +125,8 @@ fn debug_slider(
 async fn main() {
     let mut world = World::demo();
     let sphere = Icosphere::new(2);
-    let spherical_world = SphericalWorld::from_icosphere(&sphere, 10.0);
-    let spherical_mesh = spherical_world.build_surface_mesh(&sphere);
+    let mut spherical_world = SphericalWorld::from_icosphere(&sphere, 10.0);
+    let mut spherical_mesh = spherical_world.build_surface_mesh(&sphere);
     let mut show_sphere = false;
     let mut stress_test_level = 0;
     let mut look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
@@ -283,9 +313,9 @@ async fn main() {
         if captured {
             target = world.raycast(position, forward);
 
-                        if is_mouse_button_pressed(MouseButton::Left) {
+            if is_mouse_button_pressed(MouseButton::Left) {
                 if let Some((coord, layer, side)) = target {
-                     match side {
+                    match side {
                         Some(6) if layer > 0 => {
                             world.add_hexel_at_layer(coord, layer - 1);
                         }
@@ -301,14 +331,63 @@ async fn main() {
                     }
                 }
             }
+
             if is_mouse_button_pressed(MouseButton::Right) {
                 if let Some((coord, layer, _side)) = target {
                     world.remove_hexel_at_layer(coord, layer);
                 }
             }
+       
+        } // This closes if captured.
+
+        let mut spherical_target = None;
+
+        if show_sphere {
+            if let Some(hit) = ray_sphere_hit(
+                position,
+                forward,
+                spherical_world.radius,
+            ) {
+                let direction = [hit.x, hit.y, hit.z];
+
+                spherical_target =
+                    spherical_world.cell_at_direction(direction, &sphere);
+            }
+
+            if captured {
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    if let Some(cell_index) = spherical_target {
+                        if spherical_world.raise_cell(cell_index) {
+                            spherical_mesh =
+                                spherical_world.build_surface_mesh(&sphere);
+                        }
+                    }
+                }
+
+                if is_mouse_button_pressed(MouseButton::Right) {
+                    if let Some(cell_index) = spherical_target {
+                        if spherical_world.lower_cell(cell_index) {
+                            spherical_mesh =
+                                spherical_world.build_surface_mesh(&sphere);
+                        }
+                    }
+                }
+            }
         }
 
 
+        if show_sphere {
+            if let Some(hit) = ray_sphere_hit(
+                position,
+                forward,
+                spherical_world.radius,
+            ) {
+                let direction = [hit.x, hit.y, hit.z];
+
+                spherical_target =
+                    spherical_world.cell_at_direction(direction, &sphere);
+            }
+        }
 
         clear_background(Color::new(0.055, 0.075, 0.11, 1.0));
         let camera = Camera3D {
@@ -374,27 +453,39 @@ fn chunk_is_visible(
     // Keep chunks that intersect the view, including a safety margin.
     side.abs() <= depth.max(0.0) * horizontal_limit + CHUNK_RADIUS
 }
+        if show_sphere {
+            draw_mesh(&spherical_mesh);
 
+            if let Some(cell_index) = spherical_target {
+                if let Some(points) =
+                    spherical_world.cell_outline(cell_index, 0.04)
+                {
+                    for i in 0..points.len() {
+                        let next = (i + 1) % points.len();
 
-        
-    
-    
-    if show_sphere {
-        draw_mesh(&spherical_mesh);
-    } else {
-        for ((chunk_q, chunk_r, _chunk_y), world_mesh) in world.meshes_with_coords() {
-            if chunk_is_visible(
-                chunk_q,
-                chunk_r,
-                position,
-                forward,
-                camera_fov,
-            ) {
-                draw_mesh(world_mesh);
+                        draw_line_3d(
+                            points[i],
+                            points[next],
+                            YELLOW,
+                        );
+                    }
+                }
+            }
+        } else {
+            for ((chunk_q, chunk_r, _chunk_y), world_mesh)
+                in world.meshes_with_coords()
+            {
+                if chunk_is_visible(
+                    chunk_q,
+                    chunk_r,
+                    position,
+                    forward,
+                    camera_fov,
+                ) {
+                    draw_mesh(world_mesh);
+                }
             }
         }
-    }
-
 
 
 

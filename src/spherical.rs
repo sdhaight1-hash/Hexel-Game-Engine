@@ -420,9 +420,82 @@ impl SphericalWorld {
         }
     }
 
-    /// Return the outward direction at the center of a cell.
+        /// Return the outward direction at the center of a cell.
     pub fn cell_normal(&self, cell_index: usize, sphere: &Icosphere) -> [f32; 3] {
         sphere.outward_normal(self.cells[cell_index].center_vertex)
+    }
+    
+    /// Return the 3D outline points for a cell, slightly above its surface.
+    pub fn cell_outline(
+        &self,
+        cell_index: usize,
+        offset: f32,
+    ) -> Option<Vec<macroquad::prelude::Vec3>> {
+        let cell = self.cells.get(cell_index)?;
+        let radius = self.radius + cell.height as f32 + offset;
+
+        Some(
+            cell.corners
+                .iter()
+                .map(|&corner_index| {
+                    let point = self.corners[corner_index];
+                    let length = (
+                        point[0] * point[0]
+                            + point[1] * point[1]
+                            + point[2] * point[2]
+                    ).sqrt();
+
+                    if length <= f32::EPSILON {
+                        return macroquad::prelude::Vec3::ZERO;
+                    }
+
+                    macroquad::prelude::Vec3::new(
+                        point[0] * radius / length,
+                        point[1] * radius / length,
+                        point[2] * radius / length,
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// Find the cell whose center direction is closest to a point.
+    /// The direction does not need to be normalized.
+    pub fn cell_at_direction(
+        &self,
+        direction: [f32; 3],
+        sphere: &Icosphere,
+    ) -> Option<usize> {
+        let length = (
+            direction[0] * direction[0]
+                + direction[1] * direction[1]
+                + direction[2] * direction[2]
+        ).sqrt();
+
+        if length <= f32::EPSILON {
+            return None;
+        }
+
+        let direction = [
+            direction[0] / length,
+            direction[1] / length,
+            direction[2] / length,
+        ];
+
+        self.cells
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| {
+                let dot = |cell: &SphericalCell| {
+                    let normal = sphere.outward_normal(cell.center_vertex);
+                    normal[0] * direction[0]
+                        + normal[1] * direction[1]
+                        + normal[2] * direction[2]
+                };
+
+                dot(a).total_cmp(&dot(b))
+            })
+            .map(|(index, _)| index)
     }
 
     pub fn pentagon_count(&self) -> usize {
