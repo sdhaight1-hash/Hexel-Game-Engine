@@ -28,6 +28,9 @@ pub struct World {
     /// Each hexel exists independently at a coordinate and vertical layer.
     hexels: HashSet<(HexCoord, u32)>,
 
+    /// Hexels grouped by their owning chunk for faster mesh rebuilding.
+    chunk_hexels: HashMap<ChunkCoord, HashSet<(HexCoord, u32)>>,
+
     /// Chunks whose meshes need to be rebuilt.
     dirty_chunks: HashSet<ChunkCoord>,
 
@@ -42,6 +45,7 @@ impl World {
     pub fn demo() -> Self {
         let mut world = Self {
             hexels: HashSet::new(),
+            chunk_hexels: HashMap::new(),
             dirty_chunks: HashSet::new(),
             chunk_meshes: HashMap::new(),
             chunks_rebuilt_this_frame: 0,
@@ -63,7 +67,15 @@ impl World {
                 let height = 1 + broad / 4 + extra;
 
                 for layer in 0..height {
-                    world.hexels.insert((HexCoord::new(q, r), layer));
+                    let coord = HexCoord::new(q, r);
+                    world.hexels.insert((coord, layer));
+
+                    let chunk = ChunkCoord::from_hex(coord, layer);
+                    world
+                        .chunk_hexels
+                        .entry(chunk)
+                        .or_default()
+                        .insert((coord, layer));
                 }
             }
         }
@@ -75,6 +87,7 @@ impl World {
     pub fn stress_test(radius: i32) -> Self {
         let mut world = Self {
             hexels: HashSet::new(),
+            chunk_hexels: HashMap::new(),
             dirty_chunks: HashSet::new(),
             chunk_meshes: HashMap::new(),
             chunks_rebuilt_this_frame: 0,
@@ -153,12 +166,29 @@ impl World {
 
     pub fn add_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
         if self.hexels.insert((coord, layer)) {
+            let chunk = ChunkCoord::from_hex(coord, layer);
+
+            self.chunk_hexels
+                .entry(chunk)
+                .or_default()
+                .insert((coord, layer));
+
             self.mark_dirty(coord, layer);
         }
     }
 
     pub fn remove_hexel_at_layer(&mut self, coord: HexCoord, layer: u32) {
         if self.hexels.remove(&(coord, layer)) {
+            let chunk = ChunkCoord::from_hex(coord, layer);
+
+            if let Some(hexels) = self.chunk_hexels.get_mut(&chunk) {
+                hexels.remove(&(coord, layer));
+
+                if hexels.is_empty() {
+                    self.chunk_hexels.remove(&chunk);
+                }
+            }
+
             self.mark_dirty(coord, layer);
         }
     }
@@ -285,11 +315,7 @@ impl World {
     pub fn rebuild_dirty_chunks(&mut self) {
         self.chunks_rebuilt_this_frame = 0;
 
-        let occupied_chunks: HashSet<ChunkCoord> = self
-            .hexels
-            .iter()
-            .map(|(coord, layer)| ChunkCoord::from_hex(*coord, *layer))
-            .collect();
+        let occupied_chunks: HashSet<ChunkCoord> = self.chunk_hexels.keys().copied().collect();
 
         self.chunk_meshes
             .retain(|chunk, _| occupied_chunks.contains(chunk));
@@ -336,9 +362,9 @@ impl World {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        for (coord, layer) in &self.hexels {
-            if ChunkCoord::from_hex(*coord, *layer) == chunk {
-                self.append_hexel_faces(*coord, *layer, &mut vertices, &mut indices);
+        if let Some(hexels) = self.chunk_hexels.get(&chunk) {
+            for &(coord, layer) in hexels {
+                self.append_hexel_faces(coord, layer, &mut vertices, &mut indices);
             }
         }
 
