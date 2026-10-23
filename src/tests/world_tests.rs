@@ -11,6 +11,60 @@ fn chunk_coordinates_use_16_hexel_boundaries() {
 }
 
 #[test]
+fn vertical_chunk_boundary_marks_adjacent_chunks_dirty() {
+    let coord = HexCoord::new(0, 0);
+
+    let mut world = World::stress_test(1);
+
+    world.mark_dirty(coord, 15);
+    let below_chunk = ChunkCoord::from_hex(coord, 15);
+    let above_chunk = ChunkCoord::from_hex(coord, 16);
+
+    assert!(world.dirty_chunks.contains(&below_chunk));
+    assert!(world.dirty_chunks.contains(&above_chunk));
+
+    world.dirty_chunks.clear();
+
+    world.mark_dirty(coord, 16);
+
+    assert!(world.dirty_chunks.contains(&below_chunk));
+    assert!(world.dirty_chunks.contains(&above_chunk));
+}
+
+#[test]
+fn vertical_boundary_edit_rebuilds_adjacent_chunk_meshes() {
+    let coord = HexCoord::new(0, 0);
+    let mut world = World::stress_test(1);
+
+    // Use a clean world with just two vertically adjacent hexels.
+    for &(hex_coord, layer) in &world.hexels.clone() {
+        world.remove_hexel_at_layer(hex_coord, layer);
+    }
+
+    world.add_hexel_at_layer(coord, 15);
+    world.add_hexel_at_layer(coord, 16);
+    world.rebuild_dirty_chunks();
+
+    let below_chunk = ChunkCoord::from_hex(coord, 15);
+    let above_chunk = ChunkCoord::from_hex(coord, 16);
+
+    let below_mesh = world.chunk_mesh(below_chunk);
+    let above_mesh = world.chunk_mesh(above_chunk);
+
+    // Each hexel has 6 triangles for its top and 6 for its bottom.
+    // With adjacent hexels, their shared faces should be omitted.
+    assert_eq!(below_mesh.indices.len(), 3 * 6 * 3);
+    assert_eq!(above_mesh.indices.len(), 3 * 6 * 3);
+
+    // Removing the upper hexel should restore the lower hexel's top face.
+    world.remove_hexel_at_layer(coord, 16);
+    world.rebuild_dirty_chunks();
+
+    let below_mesh = world.chunk_mesh(below_chunk);
+    assert_eq!(below_mesh.indices.len(), 72);
+}
+
+#[test]
 fn demo_world_has_many_columns() {
     let world = World::demo();
     assert!(world.hexels.len() > 150);

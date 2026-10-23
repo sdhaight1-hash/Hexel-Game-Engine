@@ -126,7 +126,7 @@ impl World {
         let chunk = ChunkCoord::from_hex(coord, layer);
         self.dirty_chunks.insert(chunk);
 
-        // Neighboring chunks may need new faces at a shared boundary.
+        // Neighboring horizontal chunks may need new faces.
         for direction in 0..6 {
             let neighbor = coord.neighbor(direction);
             let neighbor_chunk = ChunkCoord::from_hex(neighbor, layer);
@@ -134,6 +134,18 @@ impl World {
             if neighbor_chunk != chunk {
                 self.dirty_chunks.insert(neighbor_chunk);
             }
+        }
+
+        // If this layer is at a vertical chunk boundary,
+        // the chunk above or below may need new faces too.
+        if layer % CHUNK_HEIGHT == 0 && layer > 0 {
+            let below_chunk = ChunkCoord::from_hex(coord, layer - 1);
+            self.dirty_chunks.insert(below_chunk);
+        }
+
+        if layer % CHUNK_HEIGHT == CHUNK_HEIGHT - 1 {
+            let above_chunk = ChunkCoord::from_hex(coord, layer + 1);
+            self.dirty_chunks.insert(above_chunk);
         }
     }
 
@@ -398,6 +410,17 @@ impl World {
             for &(coord, layer) in hexels {
                 self.append_hexel_faces(coord, layer, &mut vertices, &mut indices);
             }
+        }
+
+        if vertices.len() > 10_000 {
+            println!(
+                "Large chunk mesh: chunk=({}, {}, {}), vertices={}, indices={}",
+                chunk.q,
+                chunk.r,
+                chunk.y,
+                vertices.len(),
+                indices.len()
+            );
         }
 
         Mesh {

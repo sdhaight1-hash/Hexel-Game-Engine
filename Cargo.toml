@@ -7,3 +7,10 @@ license = "UNLICENSED"
 
 [dependencies]
 macroquad = "0.4.14"
+
+# Vulkan bindings
+ash = "0.38"
+ash-window = "0.13"
+
+# Window creation and event handling
+winit = { version = "0.30.13", features = ["rwh_06"] }

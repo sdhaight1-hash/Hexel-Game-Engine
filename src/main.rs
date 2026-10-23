@@ -1,11 +1,12 @@
 mod hexel;
 mod spherical;
+mod vulkan;
 mod world;
 
 use macroquad::prelude::*;
+use spherical::{Icosphere, SphericalWorld};
 use std::io::Write;
 use std::process::{Command, Stdio};
-use spherical::{Icosphere, SphericalWorld};
 use world::World;
 
 const DEFAULT_LOOK_SENSITIVITY: f32 = 0.00015;
@@ -118,7 +119,8 @@ async fn main() {
     let mut debug_menu_open = false;
     let mut console_open = true;
     let mut benchmark_running = false;
-    let mut benchmark_results = String::from("Hexel Engine Benchmark Console\nPress F1 and select Run All Benchmarks.\n");
+    let mut benchmark_results =
+        String::from("Hexel Engine Benchmark Console\nPress F1 and select Run All Benchmarks.\n");
     let mut benchmark_radii = [8_i32, 16, 24, 32];
     let mut benchmark_radius_index = 0_usize;
     let mut benchmark_run_index = 0_u32;
@@ -149,7 +151,7 @@ async fn main() {
     let mut benchmark_low_fps = 0.0_f32;
 
     loop {
-            if benchmark_running {
+        if benchmark_running {
             if benchmark_radius_index == 0 && benchmark_run_index == 0 {
                 benchmark_results.clear();
                 benchmark_results.push_str("HEXEL ENGINE BENCHMARK RESULTS\n");
@@ -193,10 +195,8 @@ async fn main() {
                         "10-second average frame time: {:.2} ms\n",
                         benchmark_avg_ms
                     ));
-                    benchmark_results.push_str(&format!(
-                        "10-second lowest FPS: {:.1}\n",
-                        benchmark_low_fps
-                    ));
+                    benchmark_results
+                        .push_str(&format!("10-second lowest FPS: {:.1}\n", benchmark_low_fps));
                 }
             }
         }
@@ -863,323 +863,323 @@ async fn main() {
             );
 
             if !benchmark_tab_open {
-            let slider_x = panel_x + 20.0;
-            let slider_w = panel_w - 40.0;
+                let slider_x = panel_x + 20.0;
+                let slider_w = panel_w - 40.0;
 
-            debug_slider(
-                "Mouse sensitivity",
-                slider_x,
-                panel_y + 100.0,
-                slider_w,
-                &mut look_sensitivity,
-                0.00002,
-                0.001,
-            );
+                debug_slider(
+                    "Mouse sensitivity",
+                    slider_x,
+                    panel_y + 100.0,
+                    slider_w,
+                    &mut look_sensitivity,
+                    0.00002,
+                    0.001,
+                );
 
-            debug_slider(
-                "Camera field of view",
-                slider_x,
-                panel_y + 165.0,
-                slider_w,
-                &mut camera_fov,
-                25.0,
-                85.0,
-            );
+                debug_slider(
+                    "Camera field of view",
+                    slider_x,
+                    panel_y + 165.0,
+                    slider_w,
+                    &mut camera_fov,
+                    25.0,
+                    85.0,
+                );
 
-            debug_slider(
-                "Movement speed",
-                slider_x,
-                panel_y + 230.0,
-                slider_w,
-                &mut move_speed,
-                1.0,
-                20.0,
-            );
+                debug_slider(
+                    "Movement speed",
+                    slider_x,
+                    panel_y + 230.0,
+                    slider_w,
+                    &mut move_speed,
+                    1.0,
+                    20.0,
+                );
 
-            debug_slider(
-                "Wheel vertical speed",
-                slider_x,
-                panel_y + 295.0,
-                slider_w,
-                &mut wheel_vertical_speed,
-                0.02,
-                1.0,
-            );
-            debug_slider(
-                "Camera speed multiplier",
-                slider_x,
-                panel_y + 350.0,
-                slider_w,
-                &mut camera_speed_multiplier,
-                0.25,
-                3.0,
-            );
-            debug_slider(
-                "Crosshair size",
-                slider_x,
-                panel_y + 405.0,
-                slider_w,
-                &mut crosshair_size,
-                2.0,
-                20.0,
-            );
+                debug_slider(
+                    "Wheel vertical speed",
+                    slider_x,
+                    panel_y + 295.0,
+                    slider_w,
+                    &mut wheel_vertical_speed,
+                    0.02,
+                    1.0,
+                );
+                debug_slider(
+                    "Camera speed multiplier",
+                    slider_x,
+                    panel_y + 350.0,
+                    slider_w,
+                    &mut camera_speed_multiplier,
+                    0.25,
+                    3.0,
+                );
+                debug_slider(
+                    "Crosshair size",
+                    slider_x,
+                    panel_y + 405.0,
+                    slider_w,
+                    &mut crosshair_size,
+                    2.0,
+                    20.0,
+                );
 
-            draw_text(
-                "Benchmarking",
-                panel_x + 20.0,
-                panel_y + 445.0,
-                20.0,
-                SKYBLUE,
-            );
+                draw_text(
+                    "Benchmarking",
+                    panel_x + 20.0,
+                    panel_y + 445.0,
+                    20.0,
+                    SKYBLUE,
+                );
 
-            let benchmark_x = panel_x + 20.0;
-            let benchmark_y = panel_y + 455.0;
-            let benchmark_w = panel_w - 40.0;
-            let benchmark_h = 32.0;
+                let benchmark_x = panel_x + 20.0;
+                let benchmark_y = panel_y + 455.0;
+                let benchmark_w = panel_w - 40.0;
+                let benchmark_h = 32.0;
 
-            let benchmark_hovered = mouse_position().0 >= benchmark_x
-                && mouse_position().0 <= benchmark_x + benchmark_w
-                && mouse_position().1 >= benchmark_y
-                && mouse_position().1 <= benchmark_y + benchmark_h;
+                let benchmark_hovered = mouse_position().0 >= benchmark_x
+                    && mouse_position().0 <= benchmark_x + benchmark_w
+                    && mouse_position().1 >= benchmark_y
+                    && mouse_position().1 <= benchmark_y + benchmark_h;
 
-            draw_rectangle(
-                benchmark_x,
-                benchmark_y,
-                benchmark_w,
-                benchmark_h,
-                if benchmark_hovered { BLUE } else { DARKGRAY },
-            );
+                draw_rectangle(
+                    benchmark_x,
+                    benchmark_y,
+                    benchmark_w,
+                    benchmark_h,
+                    if benchmark_hovered { BLUE } else { DARKGRAY },
+                );
 
-            draw_text(
-                "Run All Benchmarks",
-                benchmark_x + 12.0,
-                benchmark_y + 22.0,
-                18.0,
-                WHITE,
-            );
+                draw_text(
+                    "Run All Benchmarks",
+                    benchmark_x + 12.0,
+                    benchmark_y + 22.0,
+                    18.0,
+                    WHITE,
+                );
 
-            draw_text("Rendering", panel_x + 20.0, panel_y + 460.0, 20.0, SKYBLUE);
+                draw_text("Rendering", panel_x + 20.0, panel_y + 460.0, 20.0, SKYBLUE);
 
-            let toggle_x = panel_x + 20.0;
-            let toggle_y = panel_y + 475.0;
-            let toggle_w = 130.0;
-            let toggle_h = 28.0;
-            let toggle_gap = 145.0;
-            let mouse = mouse_position();
+                let toggle_x = panel_x + 20.0;
+                let toggle_y = panel_y + 475.0;
+                let toggle_w = 130.0;
+                let toggle_h = 28.0;
+                let toggle_gap = 145.0;
+                let mouse = mouse_position();
 
-            // Grid toggle
-            let grid_hovered = mouse.0 >= toggle_x
-                && mouse.0 <= toggle_x + toggle_w
-                && mouse.1 >= toggle_y
-                && mouse.1 <= toggle_y + toggle_h;
+                // Grid toggle
+                let grid_hovered = mouse.0 >= toggle_x
+                    && mouse.0 <= toggle_x + toggle_w
+                    && mouse.1 >= toggle_y
+                    && mouse.1 <= toggle_y + toggle_h;
 
-            draw_rectangle(
-                toggle_x,
-                toggle_y,
-                toggle_w,
-                toggle_h,
-                if grid_hovered { BLUE } else { DARKGRAY },
-            );
-            draw_text(
-                if show_grid { "Grid: ON" } else { "Grid: OFF" },
-                toggle_x + 10.0,
-                toggle_y + 20.0,
-                18.0,
-                WHITE,
-            );
-            if grid_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                show_grid = !show_grid;
-            }
+                draw_rectangle(
+                    toggle_x,
+                    toggle_y,
+                    toggle_w,
+                    toggle_h,
+                    if grid_hovered { BLUE } else { DARKGRAY },
+                );
+                draw_text(
+                    if show_grid { "Grid: ON" } else { "Grid: OFF" },
+                    toggle_x + 10.0,
+                    toggle_y + 20.0,
+                    18.0,
+                    WHITE,
+                );
+                if grid_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    show_grid = !show_grid;
+                }
 
-            // Target outline toggle
-            let outline_x = toggle_x + toggle_gap;
-            let outline_hovered = mouse.0 >= outline_x
-                && mouse.0 <= outline_x + toggle_w
-                && mouse.1 >= toggle_y
-                && mouse.1 <= toggle_y + toggle_h;
+                // Target outline toggle
+                let outline_x = toggle_x + toggle_gap;
+                let outline_hovered = mouse.0 >= outline_x
+                    && mouse.0 <= outline_x + toggle_w
+                    && mouse.1 >= toggle_y
+                    && mouse.1 <= toggle_y + toggle_h;
 
-            draw_rectangle(
-                outline_x,
-                toggle_y,
-                toggle_w,
-                toggle_h,
-                if outline_hovered { BLUE } else { DARKGRAY },
-            );
-            draw_text(
-                if show_target_outline {
-                    "Outline: ON"
-                } else {
-                    "Outline: OFF"
-                },
-                outline_x + 8.0,
-                toggle_y + 20.0,
-                17.0,
-                WHITE,
-            );
-            if outline_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                show_target_outline = !show_target_outline;
-            }
+                draw_rectangle(
+                    outline_x,
+                    toggle_y,
+                    toggle_w,
+                    toggle_h,
+                    if outline_hovered { BLUE } else { DARKGRAY },
+                );
+                draw_text(
+                    if show_target_outline {
+                        "Outline: ON"
+                    } else {
+                        "Outline: OFF"
+                    },
+                    outline_x + 8.0,
+                    toggle_y + 20.0,
+                    17.0,
+                    WHITE,
+                );
+                if outline_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    show_target_outline = !show_target_outline;
+                }
 
-            // Chunk boundaries toggle
-            let chunk_x = toggle_x + toggle_gap;
-            let chunk_y = toggle_y + 35.0;
+                // Chunk boundaries toggle
+                let chunk_x = toggle_x + toggle_gap;
+                let chunk_y = toggle_y + 35.0;
 
-            let chunk_hovered = mouse.0 >= chunk_x
-                && mouse.0 <= chunk_x + toggle_w
-                && mouse.1 >= chunk_y
-                && mouse.1 <= chunk_y + toggle_h;
+                let chunk_hovered = mouse.0 >= chunk_x
+                    && mouse.0 <= chunk_x + toggle_w
+                    && mouse.1 >= chunk_y
+                    && mouse.1 <= chunk_y + toggle_h;
 
-            draw_rectangle(
-                chunk_x,
-                chunk_y,
-                toggle_w,
-                toggle_h,
-                if chunk_hovered { BLUE } else { DARKGRAY },
-            );
+                draw_rectangle(
+                    chunk_x,
+                    chunk_y,
+                    toggle_w,
+                    toggle_h,
+                    if chunk_hovered { BLUE } else { DARKGRAY },
+                );
 
-            draw_text(
-                if show_chunk_bounds {
-                    "Chunks: ON"
-                } else {
-                    "Chunks: OFF"
-                },
-                chunk_x + 8.0,
-                chunk_y + 20.0,
-                17.0,
-                WHITE,
-            );
+                draw_text(
+                    if show_chunk_bounds {
+                        "Chunks: ON"
+                    } else {
+                        "Chunks: OFF"
+                    },
+                    chunk_x + 8.0,
+                    chunk_y + 20.0,
+                    17.0,
+                    WHITE,
+                );
 
-            if chunk_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                show_chunk_bounds = !show_chunk_bounds;
-            }
+                if chunk_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    show_chunk_bounds = !show_chunk_bounds;
+                }
 
-            // Crosshair color buttons
-            let color_y = toggle_y + 70.0;
-            let color_w = 95.0;
-            let color_h = 28.0;
-            let color_gap = 10.0;
+                // Crosshair color buttons
+                let color_y = toggle_y + 70.0;
+                let color_w = 95.0;
+                let color_h = 28.0;
+                let color_gap = 10.0;
 
-            let white_x = toggle_x;
-            let red_x = white_x + color_w + color_gap;
-            let green_x = red_x + color_w + color_gap;
-            let yellow_x = green_x + color_w + color_gap;
+                let white_x = toggle_x;
+                let red_x = white_x + color_w + color_gap;
+                let green_x = red_x + color_w + color_gap;
+                let yellow_x = green_x + color_w + color_gap;
 
-            let white_hovered = mouse.0 >= white_x
-                && mouse.0 <= white_x + color_w
-                && mouse.1 >= color_y
-                && mouse.1 <= color_y + color_h;
+                let white_hovered = mouse.0 >= white_x
+                    && mouse.0 <= white_x + color_w
+                    && mouse.1 >= color_y
+                    && mouse.1 <= color_y + color_h;
 
-            draw_rectangle(
-                white_x,
-                color_y,
-                color_w,
-                color_h,
-                if white_hovered { BLUE } else { DARKGRAY },
-            );
-            draw_text("White", white_x + 20.0, color_y + 20.0, 16.0, WHITE);
+                draw_rectangle(
+                    white_x,
+                    color_y,
+                    color_w,
+                    color_h,
+                    if white_hovered { BLUE } else { DARKGRAY },
+                );
+                draw_text("White", white_x + 20.0, color_y + 20.0, 16.0, WHITE);
 
-            if white_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                crosshair_color = WHITE;
-            }
+                if white_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    crosshair_color = WHITE;
+                }
 
-            let red_hovered = mouse.0 >= red_x
-                && mouse.0 <= red_x + color_w
-                && mouse.1 >= color_y
-                && mouse.1 <= color_y + color_h;
+                let red_hovered = mouse.0 >= red_x
+                    && mouse.0 <= red_x + color_w
+                    && mouse.1 >= color_y
+                    && mouse.1 <= color_y + color_h;
 
-            draw_rectangle(
-                red_x,
-                color_y,
-                color_w,
-                color_h,
-                if red_hovered { BLUE } else { DARKGRAY },
-            );
-            draw_text("Red", red_x + 30.0, color_y + 20.0, 16.0, WHITE);
+                draw_rectangle(
+                    red_x,
+                    color_y,
+                    color_w,
+                    color_h,
+                    if red_hovered { BLUE } else { DARKGRAY },
+                );
+                draw_text("Red", red_x + 30.0, color_y + 20.0, 16.0, WHITE);
 
-            if red_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                crosshair_color = RED;
-            }
+                if red_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    crosshair_color = RED;
+                }
 
-            let green_hovered = mouse.0 >= green_x
-                && mouse.0 <= green_x + color_w
-                && mouse.1 >= color_y
-                && mouse.1 <= color_y + color_h;
+                let green_hovered = mouse.0 >= green_x
+                    && mouse.0 <= green_x + color_w
+                    && mouse.1 >= color_y
+                    && mouse.1 <= color_y + color_h;
 
-            draw_rectangle(
-                green_x,
-                color_y,
-                color_w,
-                color_h,
-                if green_hovered { BLUE } else { DARKGRAY },
-            );
-            draw_text("Green", green_x + 25.0, color_y + 20.0, 16.0, WHITE);
+                draw_rectangle(
+                    green_x,
+                    color_y,
+                    color_w,
+                    color_h,
+                    if green_hovered { BLUE } else { DARKGRAY },
+                );
+                draw_text("Green", green_x + 25.0, color_y + 20.0, 16.0, WHITE);
 
-            if green_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                crosshair_color = GREEN;
-            }
+                if green_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    crosshair_color = GREEN;
+                }
 
-            let yellow_hovered = mouse.0 >= yellow_x
-                && mouse.0 <= yellow_x + color_w
-                && mouse.1 >= color_y
-                && mouse.1 <= color_y + color_h;
+                let yellow_hovered = mouse.0 >= yellow_x
+                    && mouse.0 <= yellow_x + color_w
+                    && mouse.1 >= color_y
+                    && mouse.1 <= color_y + color_h;
 
-            draw_rectangle(
-                yellow_x,
-                color_y,
-                color_w,
-                color_h,
-                if yellow_hovered { BLUE } else { DARKGRAY },
-            );
-            draw_text("Yellow", yellow_x + 22.0, color_y + 20.0, 16.0, WHITE);
+                draw_rectangle(
+                    yellow_x,
+                    color_y,
+                    color_w,
+                    color_h,
+                    if yellow_hovered { BLUE } else { DARKGRAY },
+                );
+                draw_text("Yellow", yellow_x + 22.0, color_y + 20.0, 16.0, WHITE);
 
-            if yellow_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                crosshair_color = YELLOW;
-            }
+                if yellow_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    crosshair_color = YELLOW;
+                }
 
-            let reset_x = panel_x + 20.0;
-            let reset_y = panel_y + 600.0;
-            let reset_w = 180.0;
-            let reset_h = 38.0;
-            let mouse = mouse_position();
+                let reset_x = panel_x + 20.0;
+                let reset_y = panel_y + 600.0;
+                let reset_w = 180.0;
+                let reset_h = 38.0;
+                let mouse = mouse_position();
 
-            let reset_hovered = mouse.0 >= reset_x
-                && mouse.0 <= reset_x + reset_w
-                && mouse.1 >= reset_y
-                && mouse.1 <= reset_y + reset_h;
+                let reset_hovered = mouse.0 >= reset_x
+                    && mouse.0 <= reset_x + reset_w
+                    && mouse.1 >= reset_y
+                    && mouse.1 <= reset_y + reset_h;
 
-            draw_rectangle(
-                reset_x,
-                reset_y,
-                reset_w,
-                reset_h,
-                if reset_hovered { BLUE } else { DARKGRAY },
-            );
+                draw_rectangle(
+                    reset_x,
+                    reset_y,
+                    reset_w,
+                    reset_h,
+                    if reset_hovered { BLUE } else { DARKGRAY },
+                );
 
-            draw_text(
-                "Reset defaults",
-                reset_x + 15.0,
-                reset_y + 25.0,
-                20.0,
-                WHITE,
-            );
+                draw_text(
+                    "Reset defaults",
+                    reset_x + 15.0,
+                    reset_y + 25.0,
+                    20.0,
+                    WHITE,
+                );
 
-            if reset_hovered && is_mouse_button_pressed(MouseButton::Left) {
-                look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
-                move_speed = DEFAULT_MOVE_SPEED;
-                camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
-                crosshair_size = DEFAULT_CROSSHAIR_SIZE;
-                crosshair_color = DEFAULT_CROSSHAIR_COLOR;
-                camera_fov = DEFAULT_CAMERA_FOV;
-                wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
-            }
+                if reset_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                    look_sensitivity = DEFAULT_LOOK_SENSITIVITY;
+                    move_speed = DEFAULT_MOVE_SPEED;
+                    camera_speed_multiplier = DEFAULT_CAMERA_SPEED_MULTIPLIER;
+                    crosshair_size = DEFAULT_CROSSHAIR_SIZE;
+                    crosshair_color = DEFAULT_CROSSHAIR_COLOR;
+                    camera_fov = DEFAULT_CAMERA_FOV;
+                    wheel_vertical_speed = DEFAULT_WHEEL_VERTICAL_SPEED;
+                }
 
-            draw_text(
-                "F1: close menu",
-                panel_x + 245.0,
-                reset_y + 25.0,
-                18.0,
-                LIGHTGRAY,
-            );
+                draw_text(
+                    "F1: close menu",
+                    panel_x + 245.0,
+                    reset_y + 25.0,
+                    18.0,
+                    LIGHTGRAY,
+                );
             }
             if benchmark_tab_open {
                 let button_x = panel_x + 20.0;
@@ -1215,94 +1215,72 @@ async fn main() {
             }
         }
 
-    if console_open {
-    let console_height = 190.0;
-    let console_y = screen_height() - console_height;
+        if console_open {
+            let console_height = 190.0;
+            let console_y = screen_height() - console_height;
 
-    draw_rectangle(
-        0.0,
-        console_y,
-        screen_width(),
-        console_height,
-        Color::new(0.015, 0.02, 0.03, 0.97),
-    );
+            draw_rectangle(
+                0.0,
+                console_y,
+                screen_width(),
+                console_height,
+                Color::new(0.015, 0.02, 0.03, 0.97),
+            );
 
-    draw_line(
-        0.0,
-        console_y,
-        screen_width(),
-        console_y,
-        2.0,
-        SKYBLUE,
-    );
+            draw_line(0.0, console_y, screen_width(), console_y, 2.0, SKYBLUE);
 
-    draw_text(
-        "BENCHMARK CONSOLE",
-        16.0,
-        console_y + 25.0,
-        20.0,
-        SKYBLUE,
-    );
+            draw_text("BENCHMARK CONSOLE", 16.0, console_y + 25.0, 20.0, SKYBLUE);
 
-    let copy_x = screen_width() - 150.0;
-    let copy_y = console_y + 8.0;
-    let copy_w = 120.0;
-    let copy_h = 30.0;
+            let copy_x = screen_width() - 150.0;
+            let copy_y = console_y + 8.0;
+            let copy_w = 120.0;
+            let copy_h = 30.0;
 
-    let mouse = mouse_position();
-    let copy_hovered = mouse.0 >= copy_x
-        && mouse.0 <= copy_x + copy_w
-        && mouse.1 >= copy_y
-        && mouse.1 <= copy_y + copy_h;
+            let mouse = mouse_position();
+            let copy_hovered = mouse.0 >= copy_x
+                && mouse.0 <= copy_x + copy_w
+                && mouse.1 >= copy_y
+                && mouse.1 <= copy_y + copy_h;
 
-    draw_rectangle(
-        copy_x,
-        copy_y,
-        copy_w,
-        copy_h,
-        if copy_hovered { BLUE } else { DARKGRAY },
-    );
+            draw_rectangle(
+                copy_x,
+                copy_y,
+                copy_w,
+                copy_h,
+                if copy_hovered { BLUE } else { DARKGRAY },
+            );
 
-    draw_text(
-        "Copy Results",
-        copy_x + 8.0,
-        copy_y + 20.0,
-        16.0,
-        WHITE,
-    );
+            draw_text("Copy Results", copy_x + 8.0, copy_y + 20.0, 16.0, WHITE);
 
-    if copy_hovered && is_mouse_button_pressed(MouseButton::Left) {
-        match Command::new("clip")
-            .stdin(Stdio::piped())
-            .spawn()
-        {
-            Ok(mut child) => {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(benchmark_results.as_bytes());
+            if copy_hovered && is_mouse_button_pressed(MouseButton::Left) {
+                match Command::new("clip").stdin(Stdio::piped()).spawn() {
+                    Ok(mut child) => {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            let _ = stdin.write_all(benchmark_results.as_bytes());
+                        }
+
+                        let _ = child.wait();
+                    }
+                    Err(error) => {
+                        eprintln!("Failed to copy benchmark results: {error}");
+                    }
                 }
-
-                let _ = child.wait();
             }
-            Err(error) => {
-                eprintln!("Failed to copy benchmark results: {error}");
+
+            let mut y = console_y + 55.0;
+
+            for line in benchmark_results
+                .lines()
+                .rev()
+                .take(6)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
+                draw_text(line, 16.0, y, 17.0, LIGHTGRAY);
+                y += 21.0;
             }
         }
-    }
-
-    let mut y = console_y + 55.0;
-
-    for line in benchmark_results
-        .lines()
-        .rev()
-        .take(6)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-    {
-        draw_text(line, 16.0, y, 17.0, LIGHTGRAY);
-        y += 21.0;
-    }
-}
 
         if show_crosshair {
             draw_line(
