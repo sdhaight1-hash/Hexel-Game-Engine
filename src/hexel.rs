@@ -24,10 +24,57 @@ impl HexCoord {
         )
     }
 
+    /// Find the nearest axial cell for a world-space X/Z position.
+    pub fn from_world_xz(x: f32, z: f32) -> Self {
+        let fractional_r = z / (HEX_RADIUS * 1.5);
+        let fractional_q = x / (HEX_RADIUS * SQRT_3) - fractional_r * 0.5;
+
+        // Axial coordinates are rounded together with the implied cube axis,
+        // which keeps the result on the nearest hex instead of rounding each
+        // axis independently.
+        let cube_x = fractional_q;
+        let cube_z = fractional_r;
+        let cube_y = -cube_x - cube_z;
+        let mut rounded_x = cube_x.round();
+        let mut rounded_y = cube_y.round();
+        let mut rounded_z = cube_z.round();
+
+        let x_error = (rounded_x - cube_x).abs();
+        let y_error = (rounded_y - cube_y).abs();
+        let z_error = (rounded_z - cube_z).abs();
+
+        if x_error > y_error && x_error > z_error {
+            rounded_x = -rounded_y - rounded_z;
+        } else if y_error > z_error {
+            rounded_y = -rounded_x - rounded_z;
+        } else {
+            rounded_z = -rounded_x - rounded_y;
+        }
+
+        let _ = rounded_y;
+        Self::new(rounded_x as i32, rounded_z as i32)
+    }
+
     pub const fn neighbor(self, direction: usize) -> Self {
         const DIRECTIONS: [(i32, i32); 6] = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];
         let (dq, dr) = DIRECTIONS[direction % 6];
         Self::new(self.q + dq, self.r + dr)
+    }
+}
+
+#[cfg(test)]
+mod coordinate_tests {
+    use super::HexCoord;
+
+    #[test]
+    fn world_position_maps_back_to_axial_cell() {
+        for q in -20..=20 {
+            for r in -20..=20 {
+                let coord = HexCoord::new(q, r);
+                let world = coord.world_xz();
+                assert_eq!(HexCoord::from_world_xz(world.x, world.y), coord);
+            }
+        }
     }
 }
 

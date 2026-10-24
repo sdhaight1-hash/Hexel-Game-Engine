@@ -19,9 +19,9 @@ cargo run
 
 Controls:
 
-- `W A S D`: move
-- Mouse: look around after capturing it with right-click; press `Esc` to release
-- `Space` / `Left Shift`: move up / down (prototype free-fly movement)
+- `W A S D`: walk forward/backward and strafe
+- Mouse: look around after capturing it with `C`; press `Esc` to release
+- `Space`: jump while walking on the terrain
 - Left click: remove the targeted top hexel
 - `E`: add a hexel to the targeted column
 - Right click: capture the mouse (while released)
@@ -31,10 +31,10 @@ Controls:
 ## Design assumptions
 
 - **Hexel** means a vertical hexagonal prism, with a discrete axial hex-grid position `(q, r)` and integer height `y`.
-- Hexels are rendered as individually colored prism meshes; columns share a regular pointy-top hex grid.
+- The main prototype uses CPU-generated, chunked meshes with dirty-chunk rebuilds; chunk size and mesh behavior are covered by tests.
 - The initial goal is a playable desktop prototype, not yet a production engine or editor.
-- The first implementation favors simple, readable CPU-generated geometry over chunk meshing, streaming, physics, or GPU instancing.
-- Movement is free-fly rather than collision-based so the world and editing loop are immediately testable.
+- The main hexel world now uses first-person walking with gravity, jumping, ground-height checks, and limited step-up over terrain. The spherical experiment retains free-fly controls.
+- `hexel_vulkan` is an experimental standalone Vulkan rendering prototype. It is separate from the main Macroquad app and is not yet the default game renderer.
 
 ## Project layout
 
@@ -48,11 +48,14 @@ Run `cargo fmt --check` and `cargo test` before committing changes. `cargo run` 
 
 ## Roadmap
 
-1. Chunked mesh generation and dirty-chunk rebuilds
-2. Solid collision and grounded movement
-3. Save/load world format
-4. Block/hexel materials and lighting improvements
-5. Optional in-engine editor
+- [x] Chunked mesh generation and dirty-chunk rebuilds
+- [ ] Solid collision and grounded movement
+- [ ] Save/load world format with versioned data
+- [ ] Hexel materials and lighting improvements
+- [ ] Optional in-engine editor
+- [ ] Stabilize the experimental Vulkan renderer before considering it as a replacement for the main renderer
+
+The Vulkan prototype can be launched separately with `cargo run --bin hexel_vulkan`. Its renderer is still under development; the default `cargo run` command launches the Macroquad prototype.
 
 ## License
 
