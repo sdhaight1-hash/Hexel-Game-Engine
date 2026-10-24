@@ -119,7 +119,20 @@ impl Renderer {
 
     pub fn seed(&self) -> u32 { self.seed }
     pub fn ground_height(&self, q: i32, r: i32) -> f32 {
-        (terrain_height(self.seed, q, r) + 1) as f32 * WorldScale::default().hexel_height
+        let scale = WorldScale::default();
+        let terrain_top = terrain_height(self.seed, q, r);
+        let has_column_edits = self.edits.keys().any(|cell| cell.q == q && cell.r == r);
+        if !has_column_edits {
+            return (terrain_top + 1) as f32 * scale.hexel_height;
+        }
+        let highest = self.edits.keys().filter(|cell| cell.q == q && cell.r == r)
+            .map(|cell| cell.y).max().unwrap_or(terrain_top).max(terrain_top);
+        for y in (0..=highest).rev() {
+            if self.block_at(CellPos::new(q, r, y)).is_solid() {
+                return (y + 1) as f32 * scale.hexel_height;
+            }
+        }
+        0.0
     }
     pub fn cell_from_world(position: Vec3) -> CellPos {
         let scale = WorldScale::default();
