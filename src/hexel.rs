@@ -36,7 +36,7 @@ impl HexCoord {
         let cube_z = fractional_r;
         let cube_y = -cube_x - cube_z;
         let mut rounded_x = cube_x.round();
-        let rounded_y = cube_y.round();
+        let mut rounded_y = cube_y.round();
         let mut rounded_z = cube_z.round();
 
         let x_error = (rounded_x - cube_x).abs();
