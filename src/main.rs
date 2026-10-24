@@ -78,7 +78,8 @@ impl HexelApp {
         if self.pressed.contains(&KeyCode::Space) {
             movement.y += 1.0;
         }
-        if self.pressed.contains(&KeyCode::ShiftLeft) || self.pressed.contains(&KeyCode::ShiftRight) {
+        if self.pressed.contains(&KeyCode::ShiftLeft) || self.pressed.contains(&KeyCode::ShiftRight)
+        {
             movement.y -= 1.0;
         }
         let direction = movement.normalized();
