@@ -218,7 +218,23 @@ impl Renderer {
         let scale = WorldScale::default();
         let r_float = position.z / (scale.hex_radius * 1.5);
         let q_float = position.x / (scale.hex_radius * 3.0_f32.sqrt()) - r_float * 0.5;
-        CellPos::new(q_float.round() as i32, r_float.round() as i32, (position.y / scale.hexel_height).floor() as i32)
+
+        // Axial hex coordinates must be rounded together in cube space. Rounding q
+        // and r independently misclassifies points near hex corners, which can make
+        // both collision samples and block targeting select the wrong column.
+        let s_float = -q_float - r_float;
+        let mut q = q_float.round();
+        let mut r = r_float.round();
+        let s = s_float.round();
+        let q_error = (q - q_float).abs();
+        let r_error = (r - r_float).abs();
+        let s_error = (s - s_float).abs();
+        if q_error > r_error && q_error > s_error {
+            q = -r - s;
+        } else if r_error > s_error {
+            r = -q - s;
+        }
+        CellPos::new(q as i32, r as i32, (position.y / scale.hexel_height).floor() as i32)
     }
     pub fn block_at(&self, cell: CellPos) -> BlockId {
         self.edits.get(&cell).copied().unwrap_or_else(|| generated_block_from_height(cell, *self.terrain_heights.get(&(cell.q, cell.r)).unwrap_or(&0)))
