@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, sync::{Arc, mpsc::{self, Receiver, Sender}}, thread};
+use std::{collections::{HashMap, HashSet, VecDeque}, sync::{Arc, mpsc::{self, Receiver, Sender}}, thread};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -88,6 +88,7 @@ pub struct Renderer {
     _depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
     seed: u32, edits: HashMap<CellPos, BlockId>, terrain_heights: HashMap<(i32, i32), i32>,
     mesh_job_tx: Sender<MeshJob>, mesh_result_rx: Receiver<MeshResult>, dirty_chunks: HashSet<usize>, edit_revision: u64,
+    pending_mesh_chunks: VecDeque<(u64, usize, Vec<Vertex>)>, pending_mesh_count: usize, pending_mesh_revision: u64,
 }
 impl Renderer {
     pub async fn new(window: Arc<Window>, seed: u32) -> Result<Self, String> {
@@ -186,6 +187,7 @@ impl Renderer {
             surface, device, queue, config, pipeline, outline_pipeline, overlay_pipeline, crosshair_buffer, target_buffer, chunks: Vec::new(),
             camera_buffer, camera_bind_group, size, _depth_texture: depth_texture, depth_view,
             seed, edits: HashMap::new(), terrain_heights: (Q_START..Q_END).flat_map(|q| (R_START..R_END).map(move |r| ((q, r), terrain_height(seed, q, r)))).collect(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
+            pending_mesh_chunks: VecDeque::new(), pending_mesh_count: 0, pending_mesh_revision: 0,
         };
         for cr in 0..CHUNKS_R {
             for cq in 0..CHUNKS_Q {
@@ -273,17 +275,42 @@ impl Renderer {
     fn poll_mesh_results(&mut self) {
         while let Ok(result) = self.mesh_result_rx.try_recv() {
             if result.revision != self.edit_revision { continue; }
-            for (index, vertices) in result.chunks {
+            self.pending_mesh_chunks.clear();
+            self.pending_mesh_chunks.extend(result.chunks.into_iter().map(|(index, vertices)| (result.revision, index, vertices)));
+            self.pending_mesh_count = self.pending_mesh_chunks.len();
+            self.pending_mesh_revision = result.revision;
+        }
+
+        if self.pending_mesh_revision != self.edit_revision {
+            self.pending_mesh_chunks.clear();
+            self.pending_mesh_count = 0;
+            return;
+        }
+
+        // Upload at most one rebuilt chunk per frame. CPU meshing is already on
+        // the worker; spreading GPU buffer creation avoids multi-chunk edit spikes.
+        if let Some((revision, index, vertices)) = self.pending_mesh_chunks.pop_front() {
+            if revision == self.edit_revision {
                 let vertex_count = vertices.len() as u32;
                 let buffer = if vertices.is_empty() {
-                    self.device.create_buffer(&wgpu::BufferDescriptor { label: Some("Empty hexel chunk"), size: 4, usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false })
+                    self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("Empty hexel chunk"), size: 4,
+                        usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false,
+                    })
                 } else {
-                    self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Updated hexel chunk mesh"), contents: bytemuck::cast_slice(&vertices), usage: wgpu::BufferUsages::VERTEX })
+                    self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Updated hexel chunk mesh"),
+                        contents: bytemuck::cast_slice(&vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    })
                 };
                 self.chunks[index].buffer = buffer;
                 self.chunks[index].vertex_count = vertex_count;
+                self.pending_mesh_count = self.pending_mesh_count.saturating_sub(1);
+                if self.pending_mesh_count == 0 {
+                    self.dirty_chunks.clear();
+                }
             }
-            self.dirty_chunks.clear();
         }
     }
     fn create_chunk(&self, cq: i32, cr: i32) -> ChunkMesh {
