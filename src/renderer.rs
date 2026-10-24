@@ -290,27 +290,27 @@ impl Renderer {
 
         // Upload at most one rebuilt chunk per frame. CPU meshing is already on
         // the worker; spreading GPU buffer creation avoids multi-chunk edit spikes.
-        if let Some((revision, index, vertices)) = self.pending_mesh_chunks.pop_front() {
-            if revision == self.edit_revision {
-                let vertex_count = vertices.len() as u32;
-                let buffer = if vertices.is_empty() {
-                    self.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("Empty hexel chunk"), size: 4,
-                        usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false,
-                    })
-                } else {
-                    self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Updated hexel chunk mesh"),
-                        contents: bytemuck::cast_slice(&vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    })
-                };
-                self.chunks[index].buffer = buffer;
-                self.chunks[index].vertex_count = vertex_count;
-                self.pending_mesh_count = self.pending_mesh_count.saturating_sub(1);
-                if self.pending_mesh_count == 0 {
-                    self.dirty_chunks.clear();
-                }
+        if let Some((revision, index, vertices)) = self.pending_mesh_chunks.pop_front()
+            && revision == self.edit_revision
+        {
+            let vertex_count = vertices.len() as u32;
+            let buffer = if vertices.is_empty() {
+                self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Empty hexel chunk"), size: 4,
+                    usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false,
+                })
+            } else {
+                self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Updated hexel chunk mesh"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+            };
+            self.chunks[index].buffer = buffer;
+            self.chunks[index].vertex_count = vertex_count;
+            self.pending_mesh_count = self.pending_mesh_count.saturating_sub(1);
+            if self.pending_mesh_count == 0 {
+                self.dirty_chunks.clear();
             }
         }
     }
