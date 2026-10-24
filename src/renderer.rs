@@ -14,6 +14,7 @@ const R_START: i32 = -(CHUNKS_R * CHUNK_SIZE) / 2;
 const Q_END: i32 = Q_START + CHUNKS_Q * CHUNK_SIZE;
 const R_END: i32 = R_START + CHUNKS_R * CHUNK_SIZE;
 const MAX_EDIT_HEIGHT: i32 = 12;
+const RENDER_DISTANCE: f32 = 260.0;
 
 const SHADER: &str = r#"
 struct Camera { view_proj: mat4x4<f32>, };
@@ -56,11 +57,18 @@ impl Camera {
     }
 }
 
+struct ChunkMesh {
+    buffer: wgpu::Buffer,
+    vertex_count: u32,
+    bounds_min: Vec3,
+    bounds_max: Vec3,
+}
 pub struct Renderer {
     surface: wgpu::Surface<'static>, device: wgpu::Device, queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration, pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer, vertex_count: u32, camera_buffer: wgpu::Buffer,
+    chunks: Vec<ChunkMesh>, camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
+    depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
     seed: u32, edits: HashMap<CellPos, BlockId>,
 }
 impl Renderer {
@@ -103,16 +111,22 @@ impl Renderer {
             label: Some("Hexel prism pipeline"), layout: Some(&layout),
             vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), buffers: &[Vertex::layout()] },
             fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL })] }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, strip_index_format: None, front_face: wgpu::FrontFace::Ccw, cull_mode: None, unclipped_depth: false, polygon_mode: wgpu::PolygonMode::Fill, conservative: false },
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, strip_index_format: None, front_face: wgpu::FrontFace::Ccw, cull_mode: Some(wgpu::Face::Back), unclipped_depth: false, polygon_mode: wgpu::PolygonMode::Fill, conservative: false },
             depth_stencil: Some(wgpu::DepthStencilState { format: wgpu::TextureFormat::Depth24Plus, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
             multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
         });
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("Initial terrain buffer"), size: 4, usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false });
+        let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
         let mut renderer = Self {
-            surface, device, queue, config, pipeline, vertex_buffer, vertex_count: 0,
-            camera_buffer, camera_bind_group, size, seed, edits: HashMap::new(),
+            surface, device, queue, config, pipeline, chunks: Vec::new(),
+            camera_buffer, camera_bind_group, size, depth_texture, depth_view,
+            seed, edits: HashMap::new(),
         };
-        renderer.rebuild_mesh();
+        for cr in 0..CHUNKS_R {
+            for cq in 0..CHUNKS_Q {
+                let chunk = renderer.create_chunk(cq, cr);
+                renderer.chunks.push(chunk);
+            }
+        }
         Ok(renderer)
     }
 
@@ -165,31 +179,76 @@ impl Renderer {
         if cell.q < Q_START || cell.q >= Q_END || cell.r < R_START || cell.r >= R_END || cell.y < 0 || cell.y > 64 { return; }
         if self.block_at(cell).is_indestructible() { return; }
         self.edits.insert(cell, block);
-        self.rebuild_mesh();
+        let cq = (cell.q - Q_START).div_euclid(CHUNK_SIZE);
+        let cr = (cell.r - R_START).div_euclid(CHUNK_SIZE);
+        let local_q = (cell.q - Q_START).rem_euclid(CHUNK_SIZE);
+        let local_r = (cell.r - R_START).rem_euclid(CHUNK_SIZE);
+        let mut q_indices = vec![cq];
+        let mut r_indices = vec![cr];
+        if local_q == 0 { q_indices.push(cq - 1); }
+        if local_q == CHUNK_SIZE - 1 { q_indices.push(cq + 1); }
+        if local_r == 0 { r_indices.push(cr - 1); }
+        if local_r == CHUNK_SIZE - 1 { r_indices.push(cr + 1); }
+        let mut affected = Vec::with_capacity(9);
+        for rr in &r_indices {
+            for qq in &q_indices {
+                if (0..CHUNKS_Q).contains(qq) && (0..CHUNKS_R).contains(rr) {
+                    affected.push((*rr * CHUNKS_Q + *qq) as usize);
+                }
+            }
+        }
+        affected.sort_unstable();
+        affected.dedup();
+        for index in affected {
+            let cq = index as i32 % CHUNKS_Q;
+            let cr = index as i32 / CHUNKS_Q;
+            let chunk = self.create_chunk(cq, cr);
+            self.chunks[index] = chunk;
+        }
     }
-    fn rebuild_mesh(&mut self) {
-        let vertices = build_world_mesh(self.seed, &self.edits);
-        self.vertex_count = vertices.len() as u32;
-        self.vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("32-chunk hexel terrain"), contents: bytemuck::cast_slice(&vertices), usage: wgpu::BufferUsages::VERTEX,
-        });
+    fn create_chunk(&self, cq: i32, cr: i32) -> ChunkMesh {
+        let q_start = Q_START + cq * CHUNK_SIZE;
+        let r_start = R_START + cr * CHUNK_SIZE;
+        let q_end = q_start + CHUNK_SIZE;
+        let r_end = r_start + CHUNK_SIZE;
+        let vertices = build_chunk_mesh(self.seed, &self.edits, q_start, q_end, r_start, r_end);
+        let vertex_count = vertices.len() as u32;
+        let buffer = if vertices.is_empty() {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Empty hexel chunk"), size: 4, usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false,
+            })
+        } else {
+            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Hexel chunk mesh"), contents: bytemuck::cast_slice(&vertices), usage: wgpu::BufferUsages::VERTEX,
+            })
+        };
+        let scale = WorldScale::default();
+        let mut min = Vec3::new(f32::INFINITY, 0.0, f32::INFINITY);
+        let mut max = Vec3::new(f32::NEG_INFINITY, 70.0 * scale.hexel_height, f32::NEG_INFINITY);
+        for q in [q_start, q_end - 1] {
+            for r in [r_start, r_end - 1] {
+                let center = scale.prism_center(CellPos::new(q, r, 0));
+                min.x = min.x.min(center.x); min.z = min.z.min(center.z);
+                max.x = max.x.max(center.x); max.z = max.z.max(center.z);
+            }
+        }
+        min.x -= scale.hex_radius * 2.0; min.z -= scale.hex_radius * 2.0;
+        max.x += scale.hex_radius * 2.0; max.z += scale.hex_radius * 2.0;
+        ChunkMesh { buffer, vertex_count, bounds_min: min, bounds_max: max }
     }
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 { return; }
         self.size = size; self.config.width = size.width; self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
+        let (depth_texture, depth_view) = create_depth_target(&self.device, self.config.width, self.config.height);
+        self.depth_texture = depth_texture;
+        self.depth_view = depth_view;
     }
     pub fn render(&mut self, camera: &Camera) -> Result<(), wgpu::SurfaceError> {
         let uniform = CameraUniform { view_proj: camera.view_projection(self.size).to_cols_array_2d() };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Frame depth buffer"), size: wgpu::Extent3d { width: self.config.width, height: self.config.height, depth_or_array_layers: 1 },
-            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Depth24Plus,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT, view_formats: &[],
-        });
-        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Hexel frame encoder") });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -197,25 +256,65 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, resolve_target: None, ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.52, g: 0.72, b: 0.88, a: 1.0 }), store: wgpu::StoreOp::Store,
                 } })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth_view, depth_ops: Some(wgpu::Operations {
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.depth_view, depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store,
                 }), stencil_ops: None }), occlusion_query_set: None, timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline); pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..)); pass.draw(0..self.vertex_count, 0..1);
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            let view_proj = camera.view_projection(self.size);
+            let forward = camera.forward();
+            for chunk in &self.chunks {
+                if chunk.vertex_count == 0 || !chunk_visible(view_proj, camera.position, forward, chunk) { continue; }
+                pass.set_vertex_buffer(0, chunk.buffer.slice(..));
+                pass.draw(0..chunk.vertex_count, 0..1);
+            }
         }
         self.queue.submit(Some(encoder.finish())); frame.present(); Ok(())
     }
 }
 
-fn build_world_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>) -> Vec<Vertex> {
+fn create_depth_target(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Reusable frame depth buffer"),
+        size: wgpu::Extent3d { width: width.max(1), height: height.max(1), depth_or_array_layers: 1 },
+        mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth24Plus, usage: wgpu::TextureUsages::RENDER_ATTACHMENT, view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+fn chunk_visible(view_proj: Mat4, camera_position: Vec3, forward: Vec3, chunk: &ChunkMesh) -> bool {
+    let center = (chunk.bounds_min + chunk.bounds_max) * 0.5;
+    let radius = (chunk.bounds_max - center).length();
+    let to_center = center - camera_position;
+    if to_center.length() - radius > RENDER_DISTANCE || to_center.dot(forward) < -radius { return false; }
+    let corners = [
+        Vec3::new(chunk.bounds_min.x, chunk.bounds_min.y, chunk.bounds_min.z),
+        Vec3::new(chunk.bounds_min.x, chunk.bounds_min.y, chunk.bounds_max.z),
+        Vec3::new(chunk.bounds_min.x, chunk.bounds_max.y, chunk.bounds_min.z),
+        Vec3::new(chunk.bounds_min.x, chunk.bounds_max.y, chunk.bounds_max.z),
+        Vec3::new(chunk.bounds_max.x, chunk.bounds_min.y, chunk.bounds_min.z),
+        Vec3::new(chunk.bounds_max.x, chunk.bounds_min.y, chunk.bounds_max.z),
+        Vec3::new(chunk.bounds_max.x, chunk.bounds_max.y, chunk.bounds_min.z),
+        Vec3::new(chunk.bounds_max.x, chunk.bounds_max.y, chunk.bounds_max.z),
+    ];
+    let clip = corners.map(|p| view_proj * p.extend(1.0));
+    if clip.iter().all(|p| p.x < -p.w) || clip.iter().all(|p| p.x > p.w)
+        || clip.iter().all(|p| p.y < -p.w) || clip.iter().all(|p| p.y > p.w)
+        || clip.iter().all(|p| p.z < 0.0) || clip.iter().all(|p| p.z > p.w) { return false; }
+    true
+}
+fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, q_start: i32, q_end: i32, r_start: i32, r_end: i32) -> Vec<Vertex> {
     let scale = WorldScale::default();
-    let mut vertices = Vec::with_capacity(2_000_000);
+    let mut vertices = Vec::with_capacity(70_000);
     let block_at = |cell: CellPos| edits.get(&cell).copied().unwrap_or_else(|| generated_block(seed, cell));
-    for q in Q_START..Q_END {
-        for r in R_START..R_END {
+    for q in q_start..q_end {
+        for r in r_start..r_end {
             let terrain_top = terrain_height(seed, q, r);
-            for y in 0..=(terrain_top + MAX_EDIT_HEIGHT).max(terrain_top) {
+            let edited_top = edits.keys().filter(|cell| cell.q == q && cell.r == r).map(|cell| cell.y).max().unwrap_or(terrain_top);
+            let max_y = (terrain_top + MAX_EDIT_HEIGHT).max(edited_top).max(terrain_top).min(64);
+            for y in 0..=max_y {
                 let cell = CellPos::new(q, r, y);
                 let block = block_at(cell);
                 if block == BlockId::Air { continue; }
@@ -235,9 +334,7 @@ fn build_world_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>) -> Vec<Vertex>
                 }
                 let neighbors = [(0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0)];
                 for (i, (dq, dr)) in neighbors.into_iter().enumerate() {
-                    let nq = q + dq; let nr = r + dr;
-                    let outside = !(Q_START..Q_END).contains(&nq) || !(R_START..R_END).contains(&nr);
-                    if !outside && block_at(CellPos::new(nq, nr, y)).is_solid() { continue; }
+                    if block_at(CellPos::new(q + dq, r + dr, y)).is_solid() { continue; }
                     let a = ring[i]; let b = ring[(i + 1) % 6];
                     let shade = 0.48 + ((i * 7 % 6) as f32) * 0.055;
                     let side = [base[0] * shade, base[1] * shade, base[2] * shade];
