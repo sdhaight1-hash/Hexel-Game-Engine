@@ -20,6 +20,9 @@ struct VulkanApp {
     swapchain: Option<vk::SwapchainKHR>,
     swapchain_images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
+    render_pass: Option<vk::RenderPass>,
+    framebuffers: Vec<vk::Framebuffer>,
+    swapchain_extent: vk::Extent2D,
     command_pool: Option<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     images_in_flight: Vec<vk::Fence>,
@@ -267,7 +270,7 @@ impl ApplicationHandler for VulkanApp {
             capabilities.max_image_count
         );
 
-        let _ = window_size;
+        self.swapchain_extent = extent;
 
         self.surface_loader = Some(surface_loader);
         self.physical_device = Some(physical_device);
@@ -366,6 +369,61 @@ impl ApplicationHandler for VulkanApp {
 
         println!("Created {} swapchain image views.", image_views.len());
         self.image_views = image_views;
+
+        let color_attachment = [vk::AttachmentDescription::default()
+            .format(surface_format.format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)];
+        let color_attachment_ref = [vk::AttachmentReference::default()
+            .attachment(0)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+        let subpass = [vk::SubpassDescription::default()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&color_attachment_ref)];
+        let dependency = [vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)];
+        let render_pass_info = vk::RenderPassCreateInfo::default()
+            .attachments(&color_attachment)
+            .subpasses(&subpass)
+            .dependencies(&dependency);
+        let render_pass = match unsafe { device.create_render_pass(&render_pass_info, None) } {
+            Ok(render_pass) => render_pass,
+            Err(error) => {
+                eprintln!("Failed to create Vulkan render pass: {error:?}");
+                event_loop.exit();
+                return;
+            }
+        };
+        self.render_pass = Some(render_pass);
+
+        for &image_view in &self.image_views {
+            let attachments = [image_view];
+            let framebuffer_info = vk::FramebufferCreateInfo::default()
+                .render_pass(render_pass)
+                .attachments(&attachments)
+                .width(extent.width)
+                .height(extent.height)
+                .layers(1);
+            match unsafe { device.create_framebuffer(&framebuffer_info, None) } {
+                Ok(framebuffer) => self.framebuffers.push(framebuffer),
+                Err(error) => {
+                    eprintln!("Failed to create Vulkan framebuffer: {error:?}");
+                    event_loop.exit();
+                    return;
+                }
+            }
+        }
+        println!("Created {} Vulkan framebuffers.", self.framebuffers.len());
+
         let command_pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(graphics_queue_family)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
@@ -401,14 +459,34 @@ impl ApplicationHandler for VulkanApp {
             command_buffers.len()
         );
         self.command_buffers = command_buffers;
-        for &command_buffer in &self.command_buffers {
+        let clear_values = [vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.055, 0.075, 0.12, 1.0],
+            },
+        }];
+        for (index, &command_buffer) in self.command_buffers.iter().enumerate() {
             let begin_info = vk::CommandBufferBeginInfo::default();
-
-            if let Err(error) = unsafe { device.begin_command_buffer(command_buffer, &begin_info) }
-            {
+            if let Err(error) = unsafe { device.begin_command_buffer(command_buffer, &begin_info) } {
                 eprintln!("Failed to begin Vulkan command buffer: {error:?}");
                 event_loop.exit();
                 return;
+            }
+
+            let render_pass_begin = vk::RenderPassBeginInfo::default()
+                .render_pass(render_pass)
+                .framebuffer(self.framebuffers[index])
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent,
+                })
+                .clear_values(&clear_values);
+            unsafe {
+                device.cmd_begin_render_pass(
+                    command_buffer,
+                    &render_pass_begin,
+                    vk::SubpassContents::INLINE,
+                );
+                device.cmd_end_render_pass(command_buffer);
             }
 
             if let Err(error) = unsafe { device.end_command_buffer(command_buffer) } {
@@ -418,10 +496,7 @@ impl ApplicationHandler for VulkanApp {
             }
         }
 
-        println!(
-            "Recorded {} Vulkan command buffers.",
-            self.command_buffers.len()
-        );
+        println!("Recorded {} clear-frame command buffers.", self.command_buffers.len());
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
@@ -488,15 +563,168 @@ impl ApplicationHandler for VulkanApp {
                 event_loop.exit();
             }
             winit::event::WindowEvent::RedrawRequested => {
-                // Frame rendering will go here.
+                self.draw_frame(event_loop);
             }
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+}
+
+impl VulkanApp {
+    fn draw_frame(&mut self, event_loop: &ActiveEventLoop) {
+        let (Some(device), Some(swapchain_loader), Some(swapchain), Some(queue)) = (
+            self.device.as_ref(),
+            self.swapchain_loader.as_ref(),
+            self.swapchain,
+            self.graphics_queue,
+        ) else {
+            return;
+        };
+
+        let frame = self.current_frame % self.in_flight_fences.len();
+        let fence = self.in_flight_fences[frame];
+        unsafe {
+            if let Err(error) = device.wait_for_fences(&[fence], true, u64::MAX) {
+                eprintln!("Failed waiting for frame fence: {error:?}");
+                event_loop.exit();
+                return;
+            }
+        }
+
+        let (image_index, _suboptimal) = match unsafe {
+            swapchain_loader.acquire_next_image(
+                swapchain,
+                u64::MAX,
+                self.image_available_semaphores[frame],
+                vk::Fence::null(),
+            )
+        } {
+            Ok(result) => result,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                eprintln!("Swapchain is out of date; resize/recreation is the next lifecycle milestone.");
+                event_loop.exit();
+                return;
+            }
+            Err(error) => {
+                eprintln!("Failed to acquire swapchain image: {error:?}");
+                event_loop.exit();
+                return;
+            }
+        };
+        let image_index = image_index as usize;
+
+        if self.images_in_flight[image_index] != vk::Fence::null() {
+            unsafe {
+                if let Err(error) = device.wait_for_fences(
+                    &[self.images_in_flight[image_index]],
+                    true,
+                    u64::MAX,
+                ) {
+                    eprintln!("Failed waiting for swapchain image fence: {error:?}");
+                    event_loop.exit();
+                    return;
+                }
+            }
+        }
+        self.images_in_flight[image_index] = fence;
+
+        if let Err(error) = unsafe { device.reset_fences(&[fence]) } {
+            eprintln!("Failed to reset frame fence: {error:?}");
+            event_loop.exit();
+            return;
+        }
+
+        let wait_semaphores = [self.image_available_semaphores[frame]];
+        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = [self.command_buffers[image_index]];
+        let signal_semaphores = [self.render_finished_semaphores[image_index]];
+        let submit_info = [vk::SubmitInfo::default()
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_stages)
+            .command_buffers(&command_buffers)
+            .signal_semaphores(&signal_semaphores)];
+
+        if let Err(error) = unsafe { device.queue_submit(queue, &submit_info, fence) } {
+            eprintln!("Failed to submit Vulkan frame: {error:?}");
+            event_loop.exit();
+            return;
+        }
+
+        let swapchains = [swapchain];
+        let image_indices = [image_index as u32];
+        let present_wait_semaphores = [self.render_finished_semaphores[image_index]];
+        let present_info = vk::PresentInfoKHR::default()
+            .wait_semaphores(&present_wait_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&image_indices);
+        match unsafe { swapchain_loader.queue_present(queue, &present_info) } {
+            Ok(_) => {}
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR | vk::Result::SUBOPTIMAL_KHR) => {
+                eprintln!("Swapchain needs recreation; resize handling is the next lifecycle milestone.");
+                event_loop.exit();
+                return;
+            }
+            Err(error) => {
+                eprintln!("Failed to present Vulkan frame: {error:?}");
+                event_loop.exit();
+                return;
+            }
+        }
+
+        self.current_frame = (frame + 1) % self.in_flight_fences.len();
+    }
+}
+
+impl Drop for VulkanApp {
+    fn drop(&mut self) {
+        let Some(device) = self.device.as_ref() else {
+            return;
+        };
+        unsafe {
+            let _ = device.device_wait_idle();
+            for &framebuffer in &self.framebuffers {
+                device.destroy_framebuffer(framebuffer, None);
+            }
+            if let Some(render_pass) = self.render_pass {
+                device.destroy_render_pass(render_pass, None);
+            }
+            for &semaphore in &self.image_available_semaphores {
+                device.destroy_semaphore(semaphore, None);
+            }
+            for &semaphore in &self.render_finished_semaphores {
+                device.destroy_semaphore(semaphore, None);
+            }
+            for &fence in &self.in_flight_fences {
+                device.destroy_fence(fence, None);
+            }
+            if let Some(command_pool) = self.command_pool {
+                device.destroy_command_pool(command_pool, None);
+            }
+            for &view in &self.image_views {
+                device.destroy_image_view(view, None);
+            }
+            if let (Some(loader), Some(swapchain)) = (&self.swapchain_loader, self.swapchain) {
+                loader.destroy_swapchain(swapchain, None);
+            }
+            if let (Some(loader), Some(surface)) = (&self.surface_loader, self.surface) {
+                loader.destroy_surface(surface, None);
+            }
+            device.destroy_device(None);
+            if let Some(instance) = &self.instance {
+                instance.destroy_instance(None);
+            }
         }
     }
 }
 
 fn ash_window_extensions(
-    entry: &Entry,
+    _entry: &Entry,
     window: &Window,
 ) -> Result<Vec<*const i8>, Box<dyn std::error::Error>> {
     use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
