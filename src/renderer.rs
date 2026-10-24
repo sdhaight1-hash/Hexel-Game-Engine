@@ -31,6 +31,18 @@ struct VertexOutput { @builtin(position) clip_position: vec4<f32>, @location(0) 
 @fragment fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> { return vec4<f32>(input.color, 1.0); }
 "#;
 
+const OVERLAY_SHADER: &str = r#"
+struct VertexInput { @location(0) position: vec3<f32>, @location(1) color: vec3<f32>, };
+struct VertexOutput { @builtin(position) clip_position: vec4<f32>, @location(0) color: vec3<f32>, };
+@vertex fn vs_main(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    output.clip_position = vec4<f32>(input.position, 1.0);
+    output.color = input.color;
+    return output;
+}
+@fragment fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> { return vec4<f32>(input.color, 1.0); }
+"#;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Vertex { position: [f32; 3], color: [f32; 3] }
@@ -69,16 +81,19 @@ struct ChunkMesh {
 pub struct Renderer {
     surface: wgpu::Surface<'static>, device: wgpu::Device, queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration, pipeline: wgpu::RenderPipeline,
+    outline_pipeline: wgpu::RenderPipeline, overlay_pipeline: wgpu::RenderPipeline,
+    crosshair_buffer: wgpu::Buffer, target_buffer: wgpu::Buffer,
     chunks: Vec<ChunkMesh>, camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
     _depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
-    seed: u32, edits: HashMap<CellPos, BlockId>,
+    seed: u32, edits: HashMap<CellPos, BlockId>, terrain_heights: HashMap<(i32, i32), i32>,
     mesh_job_tx: Sender<MeshJob>, mesh_result_rx: Receiver<MeshResult>, dirty_chunks: HashSet<usize>, edit_revision: u64,
 }
 impl Renderer {
     pub async fn new(window: Arc<Window>, seed: u32) -> Result<Self, String> {
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let backends = if cfg!(target_os = "windows") { wgpu::Backends::DX12 } else { wgpu::Backends::all() };
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends, ..Default::default() });
         let surface = instance.create_surface(window).map_err(|e| format!("Could not create graphics surface: {e}"))?;
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance, compatible_surface: Some(&surface), force_fallback_adapter: false,
@@ -119,6 +134,40 @@ impl Renderer {
             depth_stencil: Some(wgpu::DepthStencilState { format: wgpu::TextureFormat::Depth24Plus, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
             multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
         });
+        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Voxel target outline pipeline"), layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), buffers: &[Vertex::layout()] },
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL })] }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::LineList, strip_index_format: None, front_face: wgpu::FrontFace::Ccw, cull_mode: None, unclipped_depth: false, polygon_mode: wgpu::PolygonMode::Fill, conservative: false },
+            depth_stencil: Some(wgpu::DepthStencilState { format: wgpu::TextureFormat::Depth24Plus, depth_write_enabled: false, depth_compare: wgpu::CompareFunction::LessEqual, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState { constant: -2, slope_scale: -1.0, clamp: 0.0 } }),
+            multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
+        });
+        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("Crosshair overlay shader"), source: wgpu::ShaderSource::Wgsl(OVERLAY_SHADER.into()) });
+        let overlay_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("Crosshair overlay layout"), bind_group_layouts: &[], push_constant_ranges: &[] });
+        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Crosshair overlay pipeline"), layout: Some(&overlay_layout),
+            vertex: wgpu::VertexState { module: &overlay_shader, entry_point: Some("vs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), buffers: &[Vertex::layout()] },
+            fragment: Some(wgpu::FragmentState { module: &overlay_shader, entry_point: Some("fs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL })] }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::LineList, strip_index_format: None, front_face: wgpu::FrontFace::Ccw, cull_mode: None, unclipped_depth: false, polygon_mode: wgpu::PolygonMode::Fill, conservative: false },
+            depth_stencil: None, multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
+        });
+        let crosshair_vertices = [
+            Vertex { position: [-0.018, 0.0, 0.0], color: [0.02, 0.02, 0.02] },
+            Vertex { position: [ 0.018, 0.0, 0.0], color: [0.02, 0.02, 0.02] },
+            Vertex { position: [0.0, -0.025, 0.0], color: [0.02, 0.02, 0.02] },
+            Vertex { position: [0.0,  0.025, 0.0], color: [0.02, 0.02, 0.02] },
+            Vertex { position: [-0.010, 0.0, 0.0], color: [1.0, 1.0, 1.0] },
+            Vertex { position: [ 0.010, 0.0, 0.0], color: [1.0, 1.0, 1.0] },
+            Vertex { position: [0.0, -0.015, 0.0], color: [1.0, 1.0, 1.0] },
+            Vertex { position: [0.0,  0.015, 0.0], color: [1.0, 1.0, 1.0] },
+        ];
+        let crosshair_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Centered crosshair"), contents: bytemuck::cast_slice(&crosshair_vertices), usage: wgpu::BufferUsages::VERTEX,
+        });
+        let target_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Targeted voxel outline"), size: (36 * std::mem::size_of::<Vertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+        });
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
         let (mesh_job_tx, mesh_job_rx) = mpsc::channel::<MeshJob>();
         let (mesh_result_tx, mesh_result_rx) = mpsc::channel::<MeshResult>();
@@ -134,9 +183,9 @@ impl Renderer {
             }
         }).map_err(|e| format!("Could not start mesh worker: {e}"))?;
         let mut renderer = Self {
-            surface, device, queue, config, pipeline, chunks: Vec::new(),
+            surface, device, queue, config, pipeline, outline_pipeline, overlay_pipeline, crosshair_buffer, target_buffer, chunks: Vec::new(),
             camera_buffer, camera_bind_group, size, _depth_texture: depth_texture, depth_view,
-            seed, edits: HashMap::new(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
+            seed, edits: HashMap::new(), terrain_heights: (Q_START..Q_END).flat_map(|q| (R_START..R_END).map(move |r| ((q, r), terrain_height(seed, q, r)))).collect(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
         };
         for cr in 0..CHUNKS_R {
             for cq in 0..CHUNKS_Q {
@@ -149,7 +198,7 @@ impl Renderer {
 
     pub fn ground_height(&self, q: i32, r: i32) -> f32 {
         let scale = WorldScale::default();
-        let terrain_top = terrain_height(self.seed, q, r);
+        let terrain_top = *self.terrain_heights.get(&(q, r)).unwrap_or(&0);
         let has_column_edits = self.edits.keys().any(|cell| cell.q == q && cell.r == r);
         if !has_column_edits {
             return (terrain_top + 1) as f32 * scale.hexel_height;
@@ -170,7 +219,7 @@ impl Renderer {
         CellPos::new(q_float.round() as i32, r_float.round() as i32, (position.y / scale.hexel_height).floor() as i32)
     }
     pub fn block_at(&self, cell: CellPos) -> BlockId {
-        self.edits.get(&cell).copied().unwrap_or_else(|| generated_block(self.seed, cell))
+        self.edits.get(&cell).copied().unwrap_or_else(|| generated_block_from_height(cell, *self.terrain_heights.get(&(cell.q, cell.r)).unwrap_or(&0)))
     }
     pub fn raycast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<(CellPos, CellPos)> {
         let scale = WorldScale::default();
@@ -279,6 +328,8 @@ impl Renderer {
         self.poll_mesh_results();
         let uniform = CameraUniform { view_proj: camera.view_projection(self.size).to_cols_array_2d() };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
+        let target_vertices = self.raycast(camera.position, camera.forward(), 8.0).map(|(cell, _)| build_target_outline(cell)).unwrap_or_default();
+        if !target_vertices.is_empty() { self.queue.write_buffer(&self.target_buffer, 0, bytemuck::cast_slice(&target_vertices)); }
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Hexel frame encoder") });
@@ -301,9 +352,60 @@ impl Renderer {
                 pass.set_vertex_buffer(0, chunk.buffer.slice(..));
                 pass.draw(0..chunk.vertex_count, 0..1);
             }
+            if !target_vertices.is_empty() {
+                pass.set_pipeline(&self.outline_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.target_buffer.slice(..));
+                pass.draw(0..target_vertices.len() as u32, 0..1);
+            }
+        }
+        {
+            let mut overlay = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Crosshair overlay pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None, occlusion_query_set: None, timestamp_writes: None,
+            });
+            overlay.set_pipeline(&self.overlay_pipeline);
+            overlay.set_vertex_buffer(0, self.crosshair_buffer.slice(..));
+            overlay.draw(0..4, 0..1);
+            overlay.draw(4..8, 0..1);
         }
         self.queue.submit(Some(encoder.finish())); frame.present(); Ok(())
     }
+}
+
+
+fn generated_block_from_height(cell: CellPos, height: i32) -> BlockId {
+    if cell.y < 0 { BlockId::Foundation }
+    else if cell.y > height { BlockId::Air }
+    else if cell.y == height { BlockId::Grass }
+    else if cell.y >= height - 3 { BlockId::Dirt }
+    else { BlockId::Stone }
+}
+
+fn build_target_outline(cell: CellPos) -> Vec<Vertex> {
+    let scale = WorldScale::default();
+    let center = scale.prism_center(cell);
+    let radius = scale.hex_radius * 1.025;
+    let bottom = cell.y as f32 * scale.hexel_height - 0.002;
+    let top = (cell.y + 1) as f32 * scale.hexel_height + 0.002;
+    let ring: [Vec3; 6] = std::array::from_fn(|i| {
+        let angle = (30.0_f32 + i as f32 * 60.0).to_radians();
+        Vec3::new(center.x + angle.cos() * radius, 0.0, center.z + angle.sin() * radius)
+    });
+    let color = [1.0, 0.92, 0.12];
+    let mut vertices = Vec::with_capacity(36);
+    let mut edge = |a: Vec3, b: Vec3| {
+        vertices.push(Vertex { position: a.to_array(), color });
+        vertices.push(Vertex { position: b.to_array(), color });
+    };
+    for i in 0..6 {
+        let next = (i + 1) % 6;
+        edge(Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[next].x, bottom, ring[next].z));
+        edge(Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[next].x, top, ring[next].z));
+        edge(Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[i].x, top, ring[i].z));
+    }
+    vertices
 }
 
 fn create_depth_target(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
