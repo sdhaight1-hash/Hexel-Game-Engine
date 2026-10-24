@@ -19,9 +19,9 @@ cargo run
 
 Controls:
 
-- `W A S D`: move
-- Mouse: look around after capturing it with right-click; press `Esc` to release
-- `Space` / `Left Shift`: move up / down (prototype free-fly movement)
+- `W A S D`: walk forward/backward and strafe
+- Mouse: look around after capturing it with `C`; press `Esc` to release
+- `Space`: jump while walking on the terrain
 - Left click: remove the targeted top hexel
 - `E`: add a hexel to the targeted column
 - Right click: capture the mouse (while released)
@@ -33,7 +33,7 @@ Controls:
 - **Hexel** means a vertical hexagonal prism, with a discrete axial hex-grid position `(q, r)` and integer height `y`.
 - The main prototype uses CPU-generated, chunked meshes with dirty-chunk rebuilds; chunk size and mesh behavior are covered by tests.
 - The initial goal is a playable desktop prototype, not yet a production engine or editor.
-- Movement is currently free-fly rather than collision-based, keeping world editing easy to test.
+- The main hexel world now uses first-person walking with gravity, jumping, ground-height checks, and limited step-up over terrain. The spherical experiment retains free-fly controls.
 - `hexel_vulkan` is an experimental standalone Vulkan rendering prototype. It is separate from the main Macroquad app and is not yet the default game renderer.
 
 ## Project layout
