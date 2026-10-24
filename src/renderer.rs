@@ -358,10 +358,18 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, q_start: i32, 
             else { BlockId::Stone }
         })
     };
+    let mut edited_tops = HashMap::<(i32, i32), i32>::new();
+    for cell in edits.keys() {
+        if (q_start..q_end).contains(&cell.q) && (r_start..r_end).contains(&cell.r) {
+            edited_tops.entry((cell.q, cell.r))
+                .and_modify(|top| *top = (*top).max(cell.y))
+                .or_insert(cell.y);
+        }
+    }
     for q in q_start..q_end {
         for r in r_start..r_end {
             let terrain_top = *heights.get(&(q, r)).unwrap_or(&0);
-            let edited_top = edits.iter().filter(|(cell, _)| cell.q == q && cell.r == r).map(|(cell, _)| cell.y).max().unwrap_or(terrain_top);
+            let edited_top = edited_tops.get(&(q, r)).copied().unwrap_or(terrain_top);
             let max_y = (terrain_top + MAX_EDIT_HEIGHT).max(edited_top).max(terrain_top).min(64);
             for y in 0..=max_y {
                 let cell = CellPos::new(q, r, y);
