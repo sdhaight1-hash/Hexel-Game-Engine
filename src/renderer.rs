@@ -227,18 +227,32 @@ impl Renderer {
         let scale = WorldScale::default();
         let dir = direction.normalize_or_zero();
         if dir == Vec3::ZERO { return None; }
-        let mut last_air = None;
+
+        // Walk the ray to find candidate cells, then use the exact prism intersection
+        // face to choose the adjacent cell. The last sampled air cell can be diagonally
+        // adjacent or even on the wrong layer near hex corners.
         let mut distance = 0.0;
         while distance <= max_distance {
             let cell = Self::cell_from_world(origin + dir * distance);
             if self.block_at(cell).is_solid() {
                 let center = scale.prism_center(cell);
-                if let Some((hit_distance, _)) = raycast_prism(origin, dir, center, scale.hex_radius, scale.hexel_height, max_distance)
-                    && hit_distance <= distance + 0.15
-                {
-                    return Some((cell, last_air.unwrap_or(cell)));
+                if let Some((hit_distance, face)) = raycast_prism(
+                    origin, dir, center, scale.hex_radius, scale.hexel_height, max_distance,
+                ) && hit_distance <= distance + 0.15 {
+                    let placement = match face {
+                        0 => CellPos::new(cell.q + 1, cell.r, cell.y),
+                        1 => CellPos::new(cell.q, cell.r + 1, cell.y),
+                        2 => CellPos::new(cell.q - 1, cell.r + 1, cell.y),
+                        3 => CellPos::new(cell.q - 1, cell.r, cell.y),
+                        4 => CellPos::new(cell.q, cell.r - 1, cell.y),
+                        5 => CellPos::new(cell.q + 1, cell.r - 1, cell.y),
+                        6 => CellPos::new(cell.q, cell.r, cell.y + 1),
+                        7 => CellPos::new(cell.q, cell.r, cell.y - 1),
+                        _ => cell,
+                    };
+                    return Some((cell, placement));
                 }
-            } else { last_air = Some(cell); }
+            }
             distance += 0.045;
         }
         None
