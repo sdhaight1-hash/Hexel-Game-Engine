@@ -334,7 +334,10 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, q_start: i32, 
                 }
                 let neighbors = [(0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0)];
                 for (i, (dq, dr)) in neighbors.into_iter().enumerate() {
-                    if block_at(CellPos::new(q + dq, r + dr, y)).is_solid() { continue; }
+                    let nq = q + dq;
+                    let nr = r + dr;
+                    let inside_world = (Q_START..Q_END).contains(&nq) && (R_START..R_END).contains(&nr);
+                    if inside_world && block_at(CellPos::new(nq, nr, y)).is_solid() { continue; }
                     let a = ring[i]; let b = ring[(i + 1) % 6];
                     let shade = 0.48 + ((i * 7 % 6) as f32) * 0.055;
                     let side = [base[0] * shade, base[1] * shade, base[2] * shade];
