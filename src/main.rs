@@ -3,7 +3,7 @@ mod renderer;
 use std::{collections::HashSet, sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}};
 
 use glam::Vec3;
-use hexel_engine::{BlockId, CellPos, WorldScale};
+use hexel_engine::{BlockId, CellPos};
 use renderer::{Camera, Renderer};
 use tracing::{error, info};
 use winit::{
@@ -75,7 +75,15 @@ impl HexelApp {
         let next_cell = Renderer::cell_from_world(proposed + Vec3::new(0.0, 0.01, 0.0));
         let current_ground = renderer.ground_height(current_cell.q, current_cell.r);
         let next_ground = renderer.ground_height(next_cell.q, next_cell.r);
-        if next_ground <= current_ground + 0.65 || self.player_feet.y > next_ground + 0.1 {
+        let footprint_offsets = [
+            (PLAYER_RADIUS, 0.0), (-PLAYER_RADIUS, 0.0),
+            (0.0, PLAYER_RADIUS), (0.0, -PLAYER_RADIUS),
+        ];
+        let blocked_by_step = footprint_offsets.iter().any(|(ox, oz)| {
+            let sample = Renderer::cell_from_world(proposed + Vec3::new(*ox, 0.01, *oz));
+            renderer.ground_height(sample.q, sample.r) > current_ground + 0.65
+        });
+        if (!blocked_by_step && next_ground <= current_ground + 0.65) || self.player_feet.y > next_ground + 0.1 {
             self.player_feet.x = proposed.x;
             self.player_feet.z = proposed.z;
         }
