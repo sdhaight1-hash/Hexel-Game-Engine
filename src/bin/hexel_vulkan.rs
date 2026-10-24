@@ -669,12 +669,14 @@ impl ApplicationHandler for VulkanApp {
                     .pipeline_layout
                     .expect("Pipeline layout should exist before recording commands");
 
+                // Column-major projection: show height on screen and angle the X/Z
+                // ground plane so the hexagonal prism has visible top and side faces.
                 let transform: [f32; 16] = [
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.0,
-    0.0, 0.0, 0.5, 1.0,
-];
+                    0.8, 0.0, 0.0, 0.0,
+                    0.0, 0.8, 0.0, 0.0,
+                    0.5, 0.35, 0.5, 0.0,
+                    0.0, 0.0, 0.5, 1.0,
+                ];
 
                 device.cmd_push_constants(
                     command_buffer,
@@ -1210,6 +1212,27 @@ impl VulkanApp {
                         buffer,
                         vk::PipelineBindPoint::GRAPHICS,
                         graphics_pipeline,
+                    );
+
+                    // Push the same column-major projection used by the initial frame.
+                    let pipeline_layout = self
+                        .pipeline_layout
+                        .expect("Pipeline layout should exist before recording resized commands");
+                    let transform: [f32; 16] = [
+                        0.8, 0.0, 0.0, 0.0,
+                        0.0, 0.8, 0.0, 0.0,
+                        0.5, 0.35, 0.5, 0.0,
+                        0.0, 0.0, 0.5, 1.0,
+                    ];
+                    device.cmd_push_constants(
+                        buffer,
+                        pipeline_layout,
+                        vk::ShaderStageFlags::VERTEX,
+                        0,
+                        std::slice::from_raw_parts(
+                            transform.as_ptr().cast::<u8>(),
+                            std::mem::size_of_val(&transform),
+                        ),
                     );
 
                     let vertex_buffer = self
