@@ -75,9 +75,14 @@ impl HexelApp {
         let next_cell = Renderer::cell_from_world(proposed + Vec3::new(0.0, 0.01, 0.0));
         let current_ground = renderer.ground_height(current_cell.q, current_cell.r);
         let next_ground = renderer.ground_height(next_cell.q, next_cell.r);
+        // Sample the full circular footprint, including diagonal corners. Four cardinal
+        // samples alone can let the player capsule clip into a hexel at its corners.
+        let diagonal = PLAYER_RADIUS * std::f32::consts::FRAC_1_SQRT_2;
         let footprint_offsets = [
             (PLAYER_RADIUS, 0.0), (-PLAYER_RADIUS, 0.0),
             (0.0, PLAYER_RADIUS), (0.0, -PLAYER_RADIUS),
+            (diagonal, diagonal), (diagonal, -diagonal),
+            (-diagonal, diagonal), (-diagonal, -diagonal),
         ];
         let blocked_by_step = footprint_offsets.iter().any(|(ox, oz)| {
             let sample = Renderer::cell_from_world(proposed + Vec3::new(*ox, 0.01, *oz));
@@ -185,7 +190,7 @@ impl ApplicationHandler for HexelApp {
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: winit::event::DeviceId, event: DeviceEvent) {
         if self.cursor_locked && let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             let sensitivity = 0.0022;
-            self.camera.yaw += dx as f32 * sensitivity;
+            self.camera.yaw -= dx as f32 * sensitivity;
             self.camera.pitch = (self.camera.pitch - dy as f32 * sensitivity).clamp(-1.52, 1.52);
         }
     }
