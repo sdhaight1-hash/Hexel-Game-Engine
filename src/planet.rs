@@ -243,7 +243,7 @@ fn classify_biome(elevation: f64, temperature_c: f64, moisture: f64, elevation_s
     if temperature_c < -8.0 {
         Biome::PolarIce
     } else if temperature_c < 2.0 {
-        if moisture > 0.45 { Biome::Tundra } else { Biome::Tundra }
+        Biome::Tundra
     } else if temperature_c < 10.0 {
         if moisture > 0.52 { Biome::BorealForest } else { Biome::Grassland }
     } else if temperature_c < 22.0 {
