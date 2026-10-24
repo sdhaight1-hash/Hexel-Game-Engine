@@ -61,7 +61,7 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_ref() else { return; };
         let dt = dt.min(0.04);
         let forward = Vec3::new(self.camera.yaw.sin(), 0.0, self.camera.yaw.cos()).normalize_or_zero();
-        let right = Vec3::new(self.camera.yaw.cos(), 0.0, -self.camera.yaw.sin()).normalize_or_zero();
+        let right = Vec3::new(-self.camera.yaw.cos(), 0.0, self.camera.yaw.sin()).normalize_or_zero();
         let mut direction = Vec3::ZERO;
         if self.pressed.contains(&KeyCode::KeyW) { direction += forward; }
         if self.pressed.contains(&KeyCode::KeyS) { direction -= forward; }
@@ -185,7 +185,7 @@ impl ApplicationHandler for HexelApp {
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: winit::event::DeviceId, event: DeviceEvent) {
         if self.cursor_locked && let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             let sensitivity = 0.0022;
-            self.camera.yaw += dx as f32 * sensitivity;
+            self.camera.yaw -= dx as f32 * sensitivity;
             self.camera.pitch = (self.camera.pitch - dy as f32 * sensitivity).clamp(-1.52, 1.52);
         }
     }
