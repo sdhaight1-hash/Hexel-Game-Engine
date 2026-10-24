@@ -202,13 +202,11 @@ impl ApplicationHandler for HexelApp {
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
-        if self.cursor_locked {
-            if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
-                let sensitivity = 0.0022;
-                self.camera.yaw += dx as f32 * sensitivity;
-                self.camera.pitch =
-                    (self.camera.pitch - dy as f32 * sensitivity).clamp(-1.52, 1.52);
-            }
+        if self.cursor_locked && let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            let sensitivity = 0.0022;
+            self.camera.yaw += dx as f32 * sensitivity;
+            self.camera.pitch =
+                (self.camera.pitch - dy as f32 * sensitivity).clamp(-1.52, 1.52);
         }
     }
 
