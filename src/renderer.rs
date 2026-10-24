@@ -7,7 +7,8 @@ use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const SEED: u32 = 0x4845_5845;
-const WORLD_RADIUS: i32 = 18;
+const CHUNK_START: i32 = -8;
+const CHUNK_END: i32 = 8;
 const VERTEX_SHADER: &str = r#"
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -136,12 +137,15 @@ impl Renderer {
             .map_err(|e| format!("No compatible graphics adapter was found: {e}"))?;
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("Hexel Engine device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            }, None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Hexel Engine device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            )
             .await
             .map_err(|e| format!("Could not create graphics device: {e}"))?;
 
@@ -351,10 +355,10 @@ impl Renderer {
 fn build_world_mesh() -> Vec<Vertex> {
     let scale = WorldScale::default();
     let mut vertices = Vec::with_capacity(160_000);
-    for q in -WORLD_RADIUS..=WORLD_RADIUS {
-        for r in -WORLD_RADIUS..=WORLD_RADIUS {
+    for q in CHUNK_START..CHUNK_END {
+        for r in CHUNK_START..CHUNK_END {
             let top = terrain_height(SEED, q, r);
-            for y in (top - 3).max(0)..=top {
+            for y in 0..=top {
                 let cell = CellPos::new(q, r, y);
                 let block = generated_block(SEED, cell);
                 if block == BlockId::Air {
@@ -389,7 +393,13 @@ fn build_world_mesh() -> Vec<Vertex> {
                 let side_neighbors = [(0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0)];
                 for i in 0..6 {
                     let (dq, dr) = side_neighbors[i];
-                    if generated_block(SEED, CellPos::new(q + dq, r + dr, y)).is_solid() {
+                    let neighbor_q = q + dq;
+                    let neighbor_r = r + dr;
+                    let at_chunk_edge = !(CHUNK_START..CHUNK_END).contains(&neighbor_q)
+                        || !(CHUNK_START..CHUNK_END).contains(&neighbor_r);
+                    if !at_chunk_edge
+                        && generated_block(SEED, CellPos::new(neighbor_q, neighbor_r, y)).is_solid()
+                    {
                         continue;
                     }
                     let next = (i + 1) % 6;
