@@ -8,6 +8,7 @@ use spherical::{Icosphere, SphericalWorld};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use world::World;
+use hexel::HexCoord;
 
 const DEFAULT_LOOK_SENSITIVITY: f32 = 0.00015;
 const DEFAULT_MOVE_SPEED: f32 = 8.0;
@@ -16,6 +17,10 @@ const SPHERE_CAMERA_FOV: f32 = 65.0;
 const SPHERE_CAMERA_DISTANCE: f32 = 28.0;
 const DEFAULT_WHEEL_VERTICAL_SPEED: f32 = 0.15;
 const DEFAULT_CAMERA_SPEED_MULTIPLIER: f32 = 1.0;
+const PLAYER_EYE_HEIGHT: f32 = 1.65;
+const PLAYER_GRAVITY: f32 = 22.0;
+const PLAYER_JUMP_SPEED: f32 = 8.0;
+const PLAYER_STEP_HEIGHT: f32 = 1.05;
 const DEFAULT_CROSSHAIR_SIZE: f32 = 7.0;
 const DEFAULT_CROSSHAIR_COLOR: Color = WHITE;
 
@@ -131,7 +136,9 @@ async fn main() {
     let mut show_target_outline = true;
     let mut show_chunk_bounds = false;
     let mut show_crosshair = true;
-    let mut position = vec3(0.0, 9.0, -16.0);
+    let spawn_ground = world.height(HexCoord::new(0, 0)) as f32 * hexel::HEX_HEIGHT;
+    let mut position = vec3(0.0, spawn_ground + PLAYER_EYE_HEIGHT, 0.0);
+    let mut vertical_velocity = 0.0_f32;
     let mut yaw = 0.0_f32;
     let mut pitch = -0.35_f32;
     let mut captured = false;
@@ -258,7 +265,9 @@ async fn main() {
                 pitch = 0.0;
                 camera_fov = SPHERE_CAMERA_FOV;
             } else {
-                position = vec3(0.0, 9.0, -16.0);
+                let ground = world.height(HexCoord::new(0, 0)) as f32 * hexel::HEX_HEIGHT;
+                position = vec3(0.0, ground + PLAYER_EYE_HEIGHT, 0.0);
+                vertical_velocity = 0.0;
                 yaw = 0.0;
                 pitch = -0.35;
                 camera_fov = DEFAULT_CAMERA_FOV;
@@ -282,10 +291,11 @@ async fn main() {
             previous_mouse = mouse;
         }
 
-        // Mouse-wheel deltas are discrete; clamp each frame's input and use a
-        // small step so a scroll notch nudges the camera rather than jumping it.
+        // Mouse-wheel vertical movement remains available in the spherical/free-fly test.
         let wheel = mouse_wheel();
-        position.y += wheel.1.clamp(-1.0, 1.0) * wheel_vertical_speed;
+        if show_sphere {
+            position.y += wheel.1.clamp(-1.0, 1.0) * wheel_vertical_speed;
+        }
 
         let forward = vec3(
             yaw.sin() * pitch.cos(),
@@ -302,24 +312,64 @@ async fn main() {
         if is_key_down(KeyCode::S) || is_key_down(KeyCode::Down) {
             movement -= flat_forward;
         }
-
-        // Keep the requested A/D mapping: A moves left, D moves right.
         if is_key_down(KeyCode::A) || is_key_down(KeyCode::Left) {
-            movement += right;
-        }
-        if is_key_down(KeyCode::D) || is_key_down(KeyCode::Right) {
             movement -= right;
         }
+        if is_key_down(KeyCode::D) || is_key_down(KeyCode::Right) {
+            movement += right;
+        }
 
-        // Space and Left Shift remain as alternate vertical controls.
-        if is_key_down(KeyCode::Space) {
-            movement.y += 1.0;
-        }
-        if is_key_down(KeyCode::LeftShift) {
-            movement.y -= 1.0;
-        }
-        if movement.length_squared() > 0.0 {
-            position += movement.normalize() * move_speed * camera_speed_multiplier * dt;
+        if show_sphere {
+            // Keep free-fly controls for the separate spherical experiment.
+            if is_key_down(KeyCode::Space) {
+                movement.y += 1.0;
+            }
+            if is_key_down(KeyCode::LeftShift) {
+                movement.y -= 1.0;
+            }
+            if movement.length_squared() > 0.0 {
+                position += movement.normalize() * move_speed * camera_speed_multiplier * dt;
+            }
+        } else {
+            // First-person movement: horizontal collision, gravity, and jump.
+            let horizontal = vec3(movement.x, 0.0, movement.z).normalize_or_zero()
+                * move_speed.min(5.0)
+                * camera_speed_multiplier
+                * dt;
+            let current_cell = HexCoord::from_world_xz(position.x, position.z);
+            let current_ground = world.height(current_cell) as f32 * hexel::HEX_HEIGHT;
+            let feet_y = position.y - PLAYER_EYE_HEIGHT;
+            let grounded = feet_y <= current_ground + 0.06 && vertical_velocity <= 0.0;
+
+            if grounded {
+                position.y = current_ground + PLAYER_EYE_HEIGHT;
+                vertical_velocity = 0.0;
+                if is_key_pressed(KeyCode::Space) {
+                    vertical_velocity = PLAYER_JUMP_SPEED;
+                }
+            } else {
+                vertical_velocity -= PLAYER_GRAVITY * dt;
+            }
+
+            let next_x = position.x + horizontal.x;
+            let next_z = position.z + horizontal.z;
+            let next_cell = HexCoord::from_world_xz(next_x, next_z);
+            let next_ground = world.height(next_cell) as f32 * hexel::HEX_HEIGHT;
+            let can_step_up = next_ground <= feet_y + PLAYER_STEP_HEIGHT;
+
+            if can_step_up {
+                position.x = next_x;
+                position.z = next_z;
+            }
+
+            position.y += vertical_velocity * dt;
+            let cell_after_move = HexCoord::from_world_xz(position.x, position.z);
+            let ground_after_move =
+                world.height(cell_after_move) as f32 * hexel::HEX_HEIGHT;
+            if position.y - PLAYER_EYE_HEIGHT <= ground_after_move {
+                position.y = ground_after_move + PLAYER_EYE_HEIGHT;
+                vertical_velocity = 0.0;
+            }
         }
 
         if is_key_pressed(KeyCode::R) {
@@ -1309,19 +1359,19 @@ async fn main() {
             WHITE,
         );
         draw_text(
-            "WASD move  |  Mouse look  |  Left click add  |  Right click remove  |  R reset",
+            "WASD: walk  |  Mouse: look  |  Space: jump  |  Left click: add  |  Right click: remove",
             20.0,
             56.0,
             18.0,
             LIGHTGRAY,
         );
         draw_text(
-        "Mouse wheel: fine vertical move  |  Space / Shift: vertical move  |  C: capture/release  |  Esc: release",
-        20.0,
-        80.0,
-        16.0,
-        LIGHTGRAY,
-    );
+            "C: capture/release mouse  |  Esc: release  |  F3: spherical test (free-fly)",
+            20.0,
+            80.0,
+            16.0,
+            LIGHTGRAY,
+        );
         if !captured {
             draw_text(
                 "Press C to capture the mouse and edit; press Esc to release it",
