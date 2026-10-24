@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::{Arc, mpsc::{self, Receiver, Sender}}, thread};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -57,6 +57,8 @@ impl Camera {
     }
 }
 
+struct MeshJob { revision: u64, seed: u32, edits: HashMap<CellPos, BlockId>, chunks: Vec<(usize, i32, i32)> }
+struct MeshResult { revision: u64, chunks: Vec<(usize, Vec<Vertex>)> }
 struct ChunkMesh {
     buffer: wgpu::Buffer,
     vertex_count: u32,
@@ -70,6 +72,7 @@ pub struct Renderer {
     camera_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
     _depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
     seed: u32, edits: HashMap<CellPos, BlockId>,
+    mesh_job_tx: Sender<MeshJob>, mesh_result_rx: Receiver<MeshResult>, dirty_chunks: HashSet<usize>, edit_revision: u64,
 }
 impl Renderer {
     pub async fn new(window: Arc<Window>, seed: u32) -> Result<Self, String> {
@@ -116,10 +119,23 @@ impl Renderer {
             multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
         });
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
+        let (mesh_job_tx, mesh_job_rx) = mpsc::channel::<MeshJob>();
+        let (mesh_result_tx, mesh_result_rx) = mpsc::channel::<MeshResult>();
+        thread::Builder::new().name("hexel-mesh-worker".into()).spawn(move || {
+            while let Ok(mut job) = mesh_job_rx.recv() {
+                while let Ok(newer) = mesh_job_rx.try_recv() { job = newer; }
+                let chunks = job.chunks.iter().map(|(index, cq, cr)| {
+                    let qs = Q_START + cq * CHUNK_SIZE;
+                    let rs = R_START + cr * CHUNK_SIZE;
+                    (*index, build_chunk_mesh(job.seed, &job.edits, qs, qs + CHUNK_SIZE, rs, rs + CHUNK_SIZE))
+                }).collect();
+                if mesh_result_tx.send(MeshResult { revision: job.revision, chunks }).is_err() { break; }
+            }
+        }).map_err(|e| format!("Could not start mesh worker: {e}"))?;
         let mut renderer = Self {
             surface, device, queue, config, pipeline, chunks: Vec::new(),
             camera_buffer, camera_bind_group, size, _depth_texture: depth_texture, depth_view,
-            seed, edits: HashMap::new(),
+            seed, edits: HashMap::new(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
         };
         for cr in 0..CHUNKS_R {
             for cq in 0..CHUNKS_Q {
@@ -199,11 +215,25 @@ impl Renderer {
         }
         affected.sort_unstable();
         affected.dedup();
-        for index in affected {
-            let cq = index as i32 % CHUNKS_Q;
-            let cr = index as i32 / CHUNKS_Q;
-            let chunk = self.create_chunk(cq, cr);
-            self.chunks[index] = chunk;
+        self.dirty_chunks.extend(affected);
+        self.edit_revision = self.edit_revision.wrapping_add(1);
+        let chunks = self.dirty_chunks.iter().map(|index| (*index, *index as i32 % CHUNKS_Q, *index as i32 / CHUNKS_Q)).collect();
+        let _ = self.mesh_job_tx.send(MeshJob { revision: self.edit_revision, seed: self.seed, edits: self.edits.clone(), chunks });
+    }
+    fn poll_mesh_results(&mut self) {
+        while let Ok(result) = self.mesh_result_rx.try_recv() {
+            if result.revision != self.edit_revision { continue; }
+            for (index, vertices) in result.chunks {
+                let vertex_count = vertices.len() as u32;
+                let buffer = if vertices.is_empty() {
+                    self.device.create_buffer(&wgpu::BufferDescriptor { label: Some("Empty hexel chunk"), size: 4, usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false })
+                } else {
+                    self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Updated hexel chunk mesh"), contents: bytemuck::cast_slice(&vertices), usage: wgpu::BufferUsages::VERTEX })
+                };
+                self.chunks[index].buffer = buffer;
+                self.chunks[index].vertex_count = vertex_count;
+            }
+            self.dirty_chunks.clear();
         }
     }
     fn create_chunk(&self, cq: i32, cr: i32) -> ChunkMesh {
@@ -245,6 +275,7 @@ impl Renderer {
         self.depth_view = depth_view;
     }
     pub fn render(&mut self, camera: &Camera) -> Result<(), wgpu::SurfaceError> {
+        self.poll_mesh_results();
         let uniform = CameraUniform { view_proj: camera.view_projection(self.size).to_cols_array_2d() };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         let frame = self.surface.get_current_texture()?;
