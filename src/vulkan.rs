@@ -39,9 +39,8 @@ impl VulkanContext {
         };
 
         let selected = physical_devices.iter().find_map(|&physical_device| {
-            let queue_families = unsafe {
-                instance.get_physical_device_queue_family_properties(physical_device)
-            };
+            let queue_families =
+                unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
             queue_families
                 .iter()
