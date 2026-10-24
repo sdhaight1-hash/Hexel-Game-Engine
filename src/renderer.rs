@@ -68,7 +68,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration, pipeline: wgpu::RenderPipeline,
     chunks: Vec<ChunkMesh>, camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
-    depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
+    _depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
     seed: u32, edits: HashMap<CellPos, BlockId>,
 }
 impl Renderer {
@@ -111,14 +111,14 @@ impl Renderer {
             label: Some("Hexel prism pipeline"), layout: Some(&layout),
             vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), buffers: &[Vertex::layout()] },
             fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL })] }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, strip_index_format: None, front_face: wgpu::FrontFace::Ccw, cull_mode: Some(wgpu::Face::Back), unclipped_depth: false, polygon_mode: wgpu::PolygonMode::Fill, conservative: false },
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, strip_index_format: None, front_face: wgpu::FrontFace::Ccw, cull_mode: None, unclipped_depth: false, polygon_mode: wgpu::PolygonMode::Fill, conservative: false },
             depth_stencil: Some(wgpu::DepthStencilState { format: wgpu::TextureFormat::Depth24Plus, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
             multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
         });
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
         let mut renderer = Self {
             surface, device, queue, config, pipeline, chunks: Vec::new(),
-            camera_buffer, camera_bind_group, size, depth_texture, depth_view,
+            camera_buffer, camera_bind_group, size, _depth_texture: depth_texture, depth_view,
             seed, edits: HashMap::new(),
         };
         for cr in 0..CHUNKS_R {
@@ -241,7 +241,7 @@ impl Renderer {
         self.size = size; self.config.width = size.width; self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
         let (depth_texture, depth_view) = create_depth_target(&self.device, self.config.width, self.config.height);
-        self.depth_texture = depth_texture;
+        self._depth_texture = depth_texture;
         self.depth_view = depth_view;
     }
     pub fn render(&mut self, camera: &Camera) -> Result<(), wgpu::SurfaceError> {
