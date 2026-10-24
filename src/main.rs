@@ -188,7 +188,6 @@ impl ApplicationHandler for HexelApp {
                             renderer.resize(window.inner_size());
                         }
                     }
-                    Err(wgpu::SurfaceError::Timeout) => {}
                     Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
                     Err(error) => error!(%error, "Surface rendering error"),
                 }
