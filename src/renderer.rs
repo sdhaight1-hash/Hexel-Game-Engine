@@ -308,11 +308,28 @@ fn chunk_visible(view_proj: Mat4, camera_position: Vec3, forward: Vec3, chunk: &
 fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, q_start: i32, q_end: i32, r_start: i32, r_end: i32) -> Vec<Vertex> {
     let scale = WorldScale::default();
     let mut vertices = Vec::with_capacity(70_000);
-    let block_at = |cell: CellPos| edits.get(&cell).copied().unwrap_or_else(|| generated_block(seed, cell));
+    let noise = Perlin::new(seed);
+    let mut heights = HashMap::with_capacity(((q_end - q_start + 2) * (r_end - r_start + 2)) as usize);
+    for q in (q_start - 1)..=q_end {
+        for r in (r_start - 1)..=r_end {
+            let height = (8.0 + noise.get([q as f64 / 28.0, r as f64 / 28.0]) * 5.0).round() as i32;
+            heights.insert((q, r), height);
+        }
+    }
+    let block_at = |cell: CellPos| {
+        edits.get(&cell).copied().unwrap_or_else(|| {
+            if cell.y < 0 { return BlockId::Foundation; }
+            let height = *heights.get(&(cell.q, cell.r)).unwrap_or(&0);
+            if cell.y > height { BlockId::Air }
+            else if cell.y == height { BlockId::Grass }
+            else if cell.y >= height - 3 { BlockId::Dirt }
+            else { BlockId::Stone }
+        })
+    };
     for q in q_start..q_end {
         for r in r_start..r_end {
-            let terrain_top = terrain_height(seed, q, r);
-            let edited_top = edits.keys().filter(|cell| cell.q == q && cell.r == r).map(|cell| cell.y).max().unwrap_or(terrain_top);
+            let terrain_top = *heights.get(&(q, r)).unwrap_or(&0);
+            let edited_top = edits.iter().filter(|(cell, _)| cell.q == q && cell.r == r).map(|(cell, _)| cell.y).max().unwrap_or(terrain_top);
             let max_y = (terrain_top + MAX_EDIT_HEIGHT).max(edited_top).max(terrain_top).min(64);
             for y in 0..=max_y {
                 let cell = CellPos::new(q, r, y);
