@@ -145,45 +145,46 @@ pub struct RayHit {
 pub fn raycast_prism(origin: Vec3, direction: Vec3, center: Vec3, radius: f32, height: f32, max_distance: f32) -> Option<(f32, usize)> {
     let dir = direction.normalize_or_zero();
     if dir == Vec3::ZERO { return None; }
+
+    let apothem = radius * 3.0_f32.sqrt() * 0.5;
     let half_h = height * 0.5;
+    let planes = [
+        (Vec3::new(1.0, 0.0, 0.0), apothem, 0usize),
+        (Vec3::new(0.5, 0.0, 3.0_f32.sqrt() * 0.5), apothem, 1usize),
+        (Vec3::new(-0.5, 0.0, 3.0_f32.sqrt() * 0.5), apothem, 2usize),
+        (Vec3::new(-1.0, 0.0, 0.0), apothem, 3usize),
+        (Vec3::new(-0.5, 0.0, -3.0_f32.sqrt() * 0.5), apothem, 4usize),
+        (Vec3::new(0.5, 0.0, -3.0_f32.sqrt() * 0.5), apothem, 5usize),
+        (Vec3::Y, half_h, 6usize),
+        (-Vec3::Y, half_h, 7usize),
+    ];
+
+    let relative_origin = origin - center;
     let mut enter = 0.0_f32;
     let mut exit = max_distance;
     let mut enter_face = 0usize;
-    let normals = [
-        Vec3::new(1.0, 0.0, 0.0),
-        Vec3::new(0.5, 0.0, 3.0_f32.sqrt() * 0.5),
-        Vec3::new(-0.5, 0.0, 3.0_f32.sqrt() * 0.5),
-        Vec3::new(-1.0, 0.0, 0.0),
-        Vec3::new(-0.5, 0.0, -3.0_f32.sqrt() * 0.5),
-        Vec3::new(0.5, 0.0, -3.0_f32.sqrt() * 0.5),
-    ];
-    // The apothem is radius*cos(30°); side normals define the prism half-spaces.
-    for (i, n) in normals.iter().enumerate() {
-        let denom = dir.dot(*n);
-        let dist = (center - origin).dot(*n) + radius * 3.0_f32.sqrt() * 0.5;
+
+    for (normal, limit, face) in planes {
+        let dist = normal.dot(relative_origin);
+        let denom = normal.dot(dir);
         if denom.abs() < 1e-6 {
-            if dist < 0.0 { return None; }
+            if dist > limit { return None; }
             continue;
         }
-        let t = dist / denom;
+        let t = (limit - dist) / denom;
         if denom < 0.0 {
-            if t > enter { enter = t; enter_face = i; }
+            if t > enter { enter = t; enter_face = face; }
         } else {
             exit = exit.min(t);
         }
+        if enter > exit { return None; }
     }
-    for (plane_y, face, denom_sign) in [(center.y - half_h, 7usize, -1.0_f32), (center.y + half_h, 6usize, 1.0_f32)] {
-        let denom = dir.y * denom_sign;
-        let dist = (plane_y - origin.y) * denom_sign;
-        if denom.abs() > 1e-6 {
-            let t = dist / denom;
-            if denom < 0.0 && t > enter { enter = t; enter_face = face; }
-            if denom > 0.0 { exit = exit.min(t); }
-        } else if (origin.y - plane_y) * denom_sign > 0.0 {
-            return None;
-        }
+
+    if exit >= 0.0 && enter <= max_distance {
+        Some((enter.max(0.0), enter_face))
+    } else {
+        None
     }
-    if enter <= exit && exit >= 0.0 && enter <= max_distance { Some((enter.max(0.0), enter_face)) } else { None }
 }
 
 #[cfg(test)]
