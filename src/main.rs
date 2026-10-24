@@ -3,7 +3,7 @@ mod renderer;
 use std::{collections::HashSet, sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}};
 
 use glam::Vec3;
-use hexel_engine::{BlockId, CellPos};
+use hexel_engine::BlockId;
 use renderer::{Camera, Renderer};
 use tracing::{error, info};
 use winit::{
