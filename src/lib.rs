@@ -1,6 +1,8 @@
 //! Core coordinate, storage, generation, and prism-mesh primitives.
 //! Rendering and interactive controls are added in later implementation stages.
 
+pub mod planet;
+
 use glam::Vec3;
 use noise::{NoiseFn, Perlin};
 use std::collections::HashMap;
