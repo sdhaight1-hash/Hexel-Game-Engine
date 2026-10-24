@@ -70,13 +70,11 @@ impl HexelApp {
         direction = direction.normalize_or_zero();
         let proposed = self.player_feet + direction * self.camera.speed * dt;
 
-        // Keep the capsule grounded on the sampled hexel surface and prevent walking up sheer cliffs.
+        // Keep the capsule outside higher terrain. Eight footprint samples catch hex
+        // corners; axis-separated fallback lets the player slide along a blocked face
+        // instead of becoming stuck whenever a diagonal step is obstructed.
         let current_cell = Renderer::cell_from_world(self.player_feet + Vec3::new(0.0, 0.01, 0.0));
-        let next_cell = Renderer::cell_from_world(proposed + Vec3::new(0.0, 0.01, 0.0));
         let current_ground = renderer.ground_height(current_cell.q, current_cell.r);
-        let next_ground = renderer.ground_height(next_cell.q, next_cell.r);
-        // Sample the full circular footprint, including diagonal corners. Four cardinal
-        // samples alone can let the player capsule clip into a hexel at its corners.
         let diagonal = PLAYER_RADIUS * std::f32::consts::FRAC_1_SQRT_2;
         let footprint_offsets = [
             (PLAYER_RADIUS, 0.0), (-PLAYER_RADIUS, 0.0),
@@ -84,13 +82,27 @@ impl HexelApp {
             (diagonal, diagonal), (diagonal, -diagonal),
             (-diagonal, diagonal), (-diagonal, -diagonal),
         ];
-        let blocked_by_step = footprint_offsets.iter().any(|(ox, oz)| {
-            let sample = Renderer::cell_from_world(proposed + Vec3::new(*ox, 0.01, *oz));
-            renderer.ground_height(sample.q, sample.r) > current_ground + 0.65
-        });
-        if (!blocked_by_step && next_ground <= current_ground + 0.65) || self.player_feet.y > next_ground + 0.1 {
+        let can_move_to = |x: f32, z: f32| {
+            let candidate = Vec3::new(x, self.player_feet.y, z);
+            let next_cell = Renderer::cell_from_world(candidate + Vec3::new(0.0, 0.01, 0.0));
+            let next_ground = renderer.ground_height(next_cell.q, next_cell.r);
+            let blocked_by_step = footprint_offsets.iter().any(|(ox, oz)| {
+                let sample = Renderer::cell_from_world(candidate + Vec3::new(*ox, 0.01, *oz));
+                renderer.ground_height(sample.q, sample.r) > current_ground + 0.65
+            });
+            (!blocked_by_step && next_ground <= current_ground + 0.65)
+                || self.player_feet.y > next_ground + 0.1
+        };
+        if can_move_to(proposed.x, proposed.z) {
             self.player_feet.x = proposed.x;
             self.player_feet.z = proposed.z;
+        } else {
+            if can_move_to(proposed.x, self.player_feet.z) {
+                self.player_feet.x = proposed.x;
+            }
+            if can_move_to(self.player_feet.x, proposed.z) {
+                self.player_feet.z = proposed.z;
+            }
         }
 
         if self.jump_requested && self.grounded {
