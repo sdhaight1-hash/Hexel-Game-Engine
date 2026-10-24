@@ -2,35 +2,51 @@
 
 A native Rust prototype for a first-person, fully 3D hexagonal-prism voxel world.
 
-## Status
+## Current prototype
 
-This repository is being initialized around a small, testable vertical slice. The world uses axial coordinates `(q, r)` plus integer vertical layer `y`, with chunks sized `16 × 16 × 16`. Hexel height is derived from player capsule height (`3/5`).
+The app opens a native window and renders a small, seeded terrain patch built from real hexagonal-prism geometry using `wgpu`. A free-fly first-person camera is included so the terrain can be inspected from different angles.
 
-## Planned implementation order
+### Controls
 
-1. Coordinate and chunk model, deterministic terrain, prism geometry, and unit tests.
-2. Native `wgpu` renderer using Vulkan where supported.
-3. First-person controller, collision, raycasting, and block edits.
-4. Chunk streaming and distance-based terrain LOD.
+- **W / A / S / D** — fly through the world
+- **Mouse** — look around (captured on launch)
+- **Space / Shift** — fly up / down
+- **Esc** — release or recapture the mouse
+- **Left click** — recapture the mouse when released
+- **Close window** — quit
 
-The implementation status and verification results will be updated as each stage lands. A successful compile is not treated as proof of interactive gameplay.
+This is an early visual slice, not a complete game yet. Movement is free-fly: gravity, terrain collision, block selection/editing, and chunk streaming are not implemented.
+
+## Implemented core
+
+- Axial hex coordinates `(q, r)` plus vertical layer `y`.
+- Chunk storage sized `16 × 16 × 16`.
+- Grass, dirt, stone, air, and foundation block types.
+- Seeded Perlin terrain-height generation.
+- Shared player-to-hexel height scale (`3/5`).
+- Ray/prism intersection math and unit tests.
+- Native `winit` window and `wgpu` renderer with depth testing.
 
 ## Requirements
 
 - Rust stable toolchain
-- A native graphics driver with Vulkan support (or another backend enabled by the platform)
+- A graphics driver supporting a backend enabled by `wgpu` on your platform.
 
-## Build and run
-
-Once the native application stage is implemented:
+## Build, test, and run
 
 ```sh
-cargo run --release
+cargo fmt --all -- --check
+cargo test
+cargo run
 ```
 
-## Coordinate convention
+The first run may take longer while Rust compiles the graphics dependencies.
 
-- `q, r`: axial coordinates on a pointy-top hex grid.
-- `y`: integer vertical layer.
-- Chunk coordinates and local cell coordinates are separate.
-- World-space geometry is derived from one shared scale configuration.
+## Next milestones
+
+1. Verify the rendered terrain on supported Windows GPUs and tune visibility/camera defaults.
+2. Add solid-body collision and grounded first-person movement.
+3. Add target highlighting, block breaking, and placement.
+4. Move terrain mesh generation into streamed chunks and add distance-based LOD.
+
+A successful compile is not treated as proof of interactive gameplay; the rendering slice should be inspected on the target machine.
