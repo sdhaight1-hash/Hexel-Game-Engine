@@ -22,7 +22,6 @@ struct VulkanApp {
     image_views: Vec<vk::ImageView>,
     render_pass: Option<vk::RenderPass>,
     framebuffers: Vec<vk::Framebuffer>,
-    swapchain_extent: vk::Extent2D,
     command_pool: Option<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     images_in_flight: Vec<vk::Fence>,
@@ -291,8 +290,6 @@ impl ApplicationHandler for VulkanApp {
                 ),
             }
         };
-
-        self.swapchain_extent = extent;
 
         let mut image_count = capabilities.min_image_count + 1;
         if capabilities.max_image_count > 0 {
