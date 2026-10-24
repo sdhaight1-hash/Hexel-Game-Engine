@@ -50,7 +50,6 @@ impl Camera {
     pub fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin() * self.pitch.cos(), self.pitch.sin(), self.yaw.cos() * self.pitch.cos()).normalize_or_zero()
     }
-    pub fn right(&self) -> Vec3 { Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin()).normalize_or_zero() }
     fn view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
         let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
         Mat4::perspective_rh(70.0_f32.to_radians(), aspect, 0.1, 900.0) * Mat4::look_to_rh(self.position, self.forward(), Vec3::Y)
@@ -117,7 +116,6 @@ impl Renderer {
         Ok(renderer)
     }
 
-    pub fn seed(&self) -> u32 { self.seed }
     pub fn ground_height(&self, q: i32, r: i32) -> f32 {
         let scale = WorldScale::default();
         let terrain_top = terrain_height(self.seed, q, r);
@@ -153,8 +151,10 @@ impl Renderer {
             let cell = Self::cell_from_world(origin + dir * distance);
             if self.block_at(cell).is_solid() {
                 let center = scale.prism_center(cell);
-                if let Some((hit_distance, _)) = raycast_prism(origin, dir, center, scale.hex_radius, scale.hexel_height, max_distance) {
-                    if hit_distance <= distance + 0.15 { return Some((cell, last_air.unwrap_or(cell))); }
+                if let Some((hit_distance, _)) = raycast_prism(origin, dir, center, scale.hex_radius, scale.hexel_height, max_distance)
+                    && hit_distance <= distance + 0.15
+                {
+                    return Some((cell, last_air.unwrap_or(cell)));
                 }
             } else { last_air = Some(cell); }
             distance += 0.045;
