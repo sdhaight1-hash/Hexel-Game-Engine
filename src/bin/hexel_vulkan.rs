@@ -270,9 +270,8 @@ impl ApplicationHandler for VulkanApp {
             capabilities.max_image_count
         );
 
-        self.swapchain_extent = extent;
-
         self.surface_loader = Some(surface_loader);
+        self.surface = Some(surface);
         self.physical_device = Some(physical_device);
         self.graphics_queue = Some(graphics_queue);
         self.window = Some(window);
@@ -292,6 +291,8 @@ impl ApplicationHandler for VulkanApp {
                 ),
             }
         };
+
+        self.swapchain_extent = extent;
 
         let mut image_count = capabilities.min_image_count + 1;
         if capabilities.max_image_count > 0 {
