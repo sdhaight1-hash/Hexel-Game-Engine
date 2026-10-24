@@ -134,7 +134,7 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|e| format!("No compatible graphics adapter was found: {e}"))?;
+            .ok_or_else(|| "No compatible graphics adapter was found".to_string())?;
 
         let (device, queue) = adapter
             .request_device(
