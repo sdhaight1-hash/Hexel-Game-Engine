@@ -275,10 +275,11 @@ impl Renderer {
     fn poll_mesh_results(&mut self) {
         while let Ok(result) = self.mesh_result_rx.try_recv() {
             if result.revision != self.edit_revision { continue; }
+            let revision = result.revision;
             self.pending_mesh_chunks.clear();
-            self.pending_mesh_chunks.extend(result.chunks.into_iter().map(|(index, vertices)| (result.revision, index, vertices)));
+            self.pending_mesh_chunks.extend(result.chunks.into_iter().map(|(index, vertices)| (revision, index, vertices)));
             self.pending_mesh_count = self.pending_mesh_chunks.len();
-            self.pending_mesh_revision = result.revision;
+            self.pending_mesh_revision = revision;
         }
 
         if self.pending_mesh_revision != self.edit_revision {
