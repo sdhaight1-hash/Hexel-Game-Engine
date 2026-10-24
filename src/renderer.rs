@@ -386,14 +386,7 @@ fn build_world_mesh() -> Vec<Vertex> {
                     }
                 }
 
-                let side_neighbors = [
-                    (0, 1),
-                    (-1, 1),
-                    (-1, 0),
-                    (0, -1),
-                    (1, -1),
-                    (1, 0),
-                ];
+                let side_neighbors = [(0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0)];
                 for i in 0..6 {
                     let (dq, dr) = side_neighbors[i];
                     if generated_block(SEED, CellPos::new(q + dq, r + dr, y)).is_solid() {
