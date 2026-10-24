@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet}, sync::{Arc, mpsc::{self, Receiver, Se
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
-use hexel_engine::{BlockId, CellPos, WorldScale, generated_block, raycast_prism, terrain_height};
+use hexel_engine::{BlockId, CellPos, WorldScale, raycast_prism, terrain_height};
 use noise::{NoiseFn, Perlin};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
