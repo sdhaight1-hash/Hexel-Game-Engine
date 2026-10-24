@@ -18,6 +18,9 @@ struct VulkanApp {
     surface: Option<vk::SurfaceKHR>,
     swapchain_loader: Option<ash::khr::swapchain::Device>,
     swapchain: Option<vk::SwapchainKHR>,
+    surface_format: Option<vk::SurfaceFormatKHR>,
+    present_mode: Option<vk::PresentModeKHR>,
+    recreate_swapchain: bool,
     swapchain_images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
     render_pass: Option<vk::RenderPass>,
@@ -326,6 +329,8 @@ impl ApplicationHandler for VulkanApp {
         println!("Swapchain image count: {}", image_count);
 
         self.swapchain = Some(swapchain);
+        self.surface_format = Some(surface_format);
+        self.present_mode = Some(present_mode);
 
         let swapchain_images = match unsafe { swapchain_loader.get_swapchain_images(swapchain) } {
             Ok(images) => images,
@@ -560,9 +565,10 @@ impl ApplicationHandler for VulkanApp {
             winit::event::WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-            winit::event::WindowEvent::RedrawRequested => {
-                self.draw_frame(event_loop);
+            winit::event::WindowEvent::Resized(size) => {
+                if size.width > 0 && size.height > 0 { self.recreate_swapchain = true; }
             }
+            winit::event::WindowEvent::RedrawRequested => { self.draw_frame(event_loop); }
             _ => {}
         }
     }
@@ -576,6 +582,10 @@ impl ApplicationHandler for VulkanApp {
 
 impl VulkanApp {
     fn draw_frame(&mut self, event_loop: &ActiveEventLoop) {
+        if self.recreate_swapchain {
+            if !self.recreate_swapchain_resources(event_loop) { return; }
+            self.recreate_swapchain = false;
+        }
         let (Some(device), Some(swapchain_loader), Some(swapchain), Some(queue)) = (
             self.device.as_ref(),
             self.swapchain_loader.as_ref(),
@@ -604,11 +614,7 @@ impl VulkanApp {
             )
         } {
             Ok(result) => result,
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                eprintln!("Swapchain is out of date; resize/recreation is the next lifecycle milestone.");
-                event_loop.exit();
-                return;
-            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { self.recreate_swapchain = true; return; }
             Err(error) => {
                 eprintln!("Failed to acquire swapchain image: {error:?}");
                 event_loop.exit();
@@ -663,11 +669,7 @@ impl VulkanApp {
             .image_indices(&image_indices);
         match unsafe { swapchain_loader.queue_present(queue, &present_info) } {
             Ok(_) => {}
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR | vk::Result::SUBOPTIMAL_KHR) => {
-                eprintln!("Swapchain needs recreation; resize handling is the next lifecycle milestone.");
-                event_loop.exit();
-                return;
-            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR | vk::Result::SUBOPTIMAL_KHR) => { self.recreate_swapchain = true; return; }
             Err(error) => {
                 eprintln!("Failed to present Vulkan frame: {error:?}");
                 event_loop.exit();
@@ -676,6 +678,163 @@ impl VulkanApp {
         }
 
         self.current_frame = (frame + 1) % self.in_flight_fences.len();
+    }
+}
+
+impl VulkanApp {
+    fn recreate_swapchain_resources(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        let (Some(window), Some(physical_device), Some(device), Some(surface_loader),
+            Some(surface), Some(swapchain_loader), Some(old_swapchain), Some(render_pass),
+            Some(command_pool), Some(surface_format), Some(present_mode)) = (
+            self.window.as_ref(), self.physical_device, self.device.as_ref(),
+            self.surface_loader.as_ref(), self.surface, self.swapchain_loader.as_ref(),
+            self.swapchain, self.render_pass, self.command_pool, self.surface_format,
+            self.present_mode,
+        ) else { return false; };
+
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 { return false; }
+        unsafe {
+            if let Err(error) = device.device_wait_idle() {
+                eprintln!("Failed waiting for device before resize: {error:?}");
+                event_loop.exit(); return false;
+            }
+        }
+        let capabilities = match unsafe {
+            surface_loader.get_physical_device_surface_capabilities(physical_device, surface)
+        } {
+            Ok(value) => value,
+            Err(error) => { eprintln!("Failed to query surface capabilities: {error:?}"); event_loop.exit(); return false; }
+        };
+        let extent = if capabilities.current_extent.width != u32::MAX {
+            capabilities.current_extent
+        } else {
+            vk::Extent2D {
+                width: size.width.clamp(capabilities.min_image_extent.width, capabilities.max_image_extent.width),
+                height: size.height.clamp(capabilities.min_image_extent.height, capabilities.max_image_extent.height),
+            }
+        };
+        let image_count = if capabilities.max_image_count > 0 {
+            (capabilities.min_image_count + 1).min(capabilities.max_image_count)
+        } else { capabilities.min_image_count + 1 };
+        let info = vk::SwapchainCreateInfoKHR::default()
+            .surface(surface).min_image_count(image_count)
+            .image_format(surface_format.format).image_color_space(surface_format.color_space)
+            .image_extent(extent).image_array_layers(1)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .pre_transform(capabilities.current_transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode).clipped(true).old_swapchain(old_swapchain);
+        let new_swapchain = match unsafe { swapchain_loader.create_swapchain(&info, None) } {
+            Ok(value) => value,
+            Err(error) => { eprintln!("Failed to recreate swapchain: {error:?}"); event_loop.exit(); return false; }
+        };
+        let images = match unsafe { swapchain_loader.get_swapchain_images(new_swapchain) } {
+            Ok(value) => value,
+            Err(error) => { eprintln!("Failed to get recreated swapchain images: {error:?}"); unsafe { swapchain_loader.destroy_swapchain(new_swapchain, None); } event_loop.exit(); return false; }
+        };
+        let mut views = Vec::with_capacity(images.len());
+        for &image in &images {
+            let info = vk::ImageViewCreateInfo::default().image(image)
+                .view_type(vk::ImageViewType::TYPE_2D).format(surface_format.format)
+                .components(vk::ComponentMapping::default())
+                .subresource_range(vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR).base_mip_level(0)
+                    .level_count(1).base_array_layer(0).layer_count(1));
+            match unsafe { device.create_image_view(&info, None) } {
+                Ok(view) => views.push(view),
+                Err(error) => {
+                    eprintln!("Failed to create resized image view: {error:?}");
+                    unsafe { for view in views { device.destroy_image_view(view, None); } swapchain_loader.destroy_swapchain(new_swapchain, None); }
+                    event_loop.exit(); return false;
+                }
+            }
+        }
+        let mut framebuffers = Vec::with_capacity(views.len());
+        for &view in &views {
+            let attachments = [view];
+            let info = vk::FramebufferCreateInfo::default().render_pass(render_pass)
+                .attachments(&attachments).width(extent.width).height(extent.height).layers(1);
+            match unsafe { device.create_framebuffer(&info, None) } {
+                Ok(fb) => framebuffers.push(fb),
+                Err(error) => {
+                    eprintln!("Failed to create resized framebuffer: {error:?}");
+                    unsafe { for fb in framebuffers { device.destroy_framebuffer(fb, None); } for view in views { device.destroy_image_view(view, None); } swapchain_loader.destroy_swapchain(new_swapchain, None); }
+                    event_loop.exit(); return false;
+                }
+            }
+        }
+        let allocation = vk::CommandBufferAllocateInfo::default().command_pool(command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(images.len() as u32);
+        let buffers = match unsafe { device.allocate_command_buffers(&allocation) } {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("Failed to allocate resized command buffers: {error:?}");
+                unsafe { for fb in framebuffers { device.destroy_framebuffer(fb, None); } for view in views { device.destroy_image_view(view, None); } swapchain_loader.destroy_swapchain(new_swapchain, None); }
+                event_loop.exit(); return false;
+            }
+        };
+        let clear = [vk::ClearValue { color: vk::ClearColorValue { float32: [0.055, 0.075, 0.12, 1.0] } }];
+        for (i, &buffer) in buffers.iter().enumerate() {
+            let begin = vk::CommandBufferBeginInfo::default();
+            let render = vk::RenderPassBeginInfo::default().render_pass(render_pass)
+                .framebuffer(framebuffers[i])
+                .render_area(vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent })
+                .clear_values(&clear);
+            let result = unsafe {
+                device.begin_command_buffer(buffer, &begin).and_then(|_| {
+                    device.cmd_begin_render_pass(buffer, &render, vk::SubpassContents::INLINE);
+                    device.cmd_end_render_pass(buffer);
+                    device.end_command_buffer(buffer)
+                })
+            };
+            if let Err(error) = result {
+                eprintln!("Failed recording resized command buffer: {error:?}");
+                unsafe { device.free_command_buffers(command_pool, &buffers); for fb in framebuffers { device.destroy_framebuffer(fb, None); } for view in views { device.destroy_image_view(view, None); } swapchain_loader.destroy_swapchain(new_swapchain, None); }
+                event_loop.exit(); return false;
+            }
+        }
+
+        // Image count can change on resize, so rebuild all per-image synchronization objects.
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+        let mut available = Vec::with_capacity(images.len());
+        let mut finished = Vec::with_capacity(images.len());
+        let mut fences = Vec::with_capacity(images.len());
+        for _ in 0..images.len() {
+            let a = match unsafe { device.create_semaphore(&semaphore_info, None) } {
+                Ok(v) => v, Err(e) => { eprintln!("Failed creating resize semaphore: {e:?}"); event_loop.exit(); return false; }
+            };
+            let b = match unsafe { device.create_semaphore(&semaphore_info, None) } {
+                Ok(v) => v, Err(e) => { eprintln!("Failed creating resize semaphore: {e:?}"); unsafe { device.destroy_semaphore(a, None); } event_loop.exit(); return false; }
+            };
+            let f = match unsafe { device.create_fence(&fence_info, None) } {
+                Ok(v) => v, Err(e) => { eprintln!("Failed creating resize fence: {e:?}"); unsafe { device.destroy_semaphore(a, None); device.destroy_semaphore(b, None); } event_loop.exit(); return false; }
+            };
+            available.push(a); finished.push(b); fences.push(f);
+        }
+        unsafe {
+            device.free_command_buffers(command_pool, &self.command_buffers);
+            for fb in self.framebuffers.drain(..) { device.destroy_framebuffer(fb, None); }
+            for view in self.image_views.drain(..) { device.destroy_image_view(view, None); }
+            for s in self.image_available_semaphores.drain(..) { device.destroy_semaphore(s, None); }
+            for s in self.render_finished_semaphores.drain(..) { device.destroy_semaphore(s, None); }
+            for f in self.in_flight_fences.drain(..) { device.destroy_fence(f, None); }
+            swapchain_loader.destroy_swapchain(old_swapchain, None);
+        }
+        self.swapchain = Some(new_swapchain);
+        self.swapchain_images = images;
+        self.image_views = views;
+        self.framebuffers = framebuffers;
+        self.command_buffers = buffers;
+        self.image_available_semaphores = available;
+        self.render_finished_semaphores = finished;
+        self.in_flight_fences = fences;
+        self.images_in_flight = vec![vk::Fence::null(); self.swapchain_images.len()];
+        self.current_frame = 0;
+        println!("Recreated Vulkan swapchain: {} x {}.", extent.width, extent.height);
+        true
     }
 }
 
