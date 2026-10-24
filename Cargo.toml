@@ -1,0 +1,20 @@
+[package]
+name = "hexel-engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "First-person hexagonal-prism voxel world prototype"
+
+[dependencies]
+bytemuck = { version = "1.21", features = ["derive"] }
+glam = "0.29"
+hexx = "0.20"
+noise = "0.9"
+pollster = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wgpu = "24"
+winit = "0.30"
+
+[dev-dependencies]
+approx = "0.5"
