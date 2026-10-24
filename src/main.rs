@@ -1,10 +1,6 @@
 mod renderer;
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use renderer::{Camera, Renderer};
 use tracing::{error, info};
@@ -82,9 +78,7 @@ impl HexelApp {
         if self.pressed.contains(&KeyCode::Space) {
             movement.y += 1.0;
         }
-        if self.pressed.contains(&KeyCode::ShiftLeft)
-            || self.pressed.contains(&KeyCode::ShiftRight)
-        {
+        if self.pressed.contains(&KeyCode::ShiftLeft) || self.pressed.contains(&KeyCode::ShiftRight) {
             movement.y -= 1.0;
         }
         let direction = movement.normalized();
@@ -119,7 +113,9 @@ impl ApplicationHandler for HexelApp {
             return;
         }
         let attributes = Window::default_attributes()
-            .with_title("Hexel Engine — WASD move · mouse look · Space/Shift fly · Esc release mouse")
+            .with_title(
+                "Hexel Engine — WASD move · mouse look · Space/Shift fly · Esc release mouse",
+            )
             .with_inner_size(PhysicalSize::new(1280, 800));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
@@ -210,8 +206,8 @@ impl ApplicationHandler for HexelApp {
             if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
                 let sensitivity = 0.0022;
                 self.camera.yaw += dx as f32 * sensitivity;
-                self.camera.pitch = (self.camera.pitch - dy as f32 * sensitivity)
-                    .clamp(-1.52, 1.52);
+                self.camera.pitch =
+                    (self.camera.pitch - dy as f32 * sensitivity).clamp(-1.52, 1.52);
             }
         }
     }
