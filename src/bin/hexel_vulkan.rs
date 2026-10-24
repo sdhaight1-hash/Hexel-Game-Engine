@@ -15,6 +15,15 @@ struct Vertex {
 
 const HEXEL_HEIGHT: f32 = 0.8;
 
+// Column-major projection: show height on screen and angle the X/Z ground plane
+// so the hexagonal prism has visible top and side faces.
+const HEXEL_PROJECTION: [f32; 16] = [
+    0.8, 0.0, 0.0, 0.0,
+    0.0, 0.8, 0.0, 0.0,
+    0.5, 0.35, 0.5, 0.0,
+    0.0, 0.0, 0.5, 1.0,
+];
+
 const HEXEL_VERTICES: [Vertex; 54] = {
     let corners = [
         [0.0, -0.6],
@@ -669,14 +678,7 @@ impl ApplicationHandler for VulkanApp {
                     .pipeline_layout
                     .expect("Pipeline layout should exist before recording commands");
 
-                // Column-major projection: show height on screen and angle the X/Z
-                // ground plane so the hexagonal prism has visible top and side faces.
-                let transform: [f32; 16] = [
-                    0.8, 0.0, 0.0, 0.0,
-                    0.0, 0.8, 0.0, 0.0,
-                    0.5, 0.35, 0.5, 0.0,
-                    0.0, 0.0, 0.5, 1.0,
-                ];
+                let transform = HEXEL_PROJECTION;
 
                 device.cmd_push_constants(
                     command_buffer,
@@ -1218,12 +1220,7 @@ impl VulkanApp {
                     let pipeline_layout = self
                         .pipeline_layout
                         .expect("Pipeline layout should exist before recording resized commands");
-                    let transform: [f32; 16] = [
-                        0.8, 0.0, 0.0, 0.0,
-                        0.0, 0.8, 0.0, 0.0,
-                        0.5, 0.35, 0.5, 0.0,
-                        0.0, 0.0, 0.5, 1.0,
-                    ];
+                    let transform = HEXEL_PROJECTION;
                     device.cmd_push_constants(
                         buffer,
                         pipeline_layout,
