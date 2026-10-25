@@ -102,6 +102,18 @@ Each species profile records its temperature and moisture bounds, relative rarit
 
 **Current limitation:** these are generation/data foundations, not completed playable vegetation. The current climate sample has no river network, bog map, soil survey, or Kapok-forest depth model, so wetland and deep-forest rules are approximated using moisture, elevation, and biome proxies. Tree rendering, collision, physical falling, save-file integration, and ecological regrowth are not yet connected. The source notes about plank crafting and replanting are roster requirements to implement in later gameplay systems, not claims that those mechanics already work.
 
+## Geology, ores, and soil foundation
+
+The renderer-independent geology rules live in `src/geology.rs`; soil and nutrient rules live in `src/soil.rs`.
+
+- **Rock categories:** sedimentary, metamorphic, extrusive igneous, and intrusive igneous. The registry includes Chert, Claystone, Conglomerate, Limestone, Sandstone, Shale, Chalk, Metamorphosed Claystone, Marble, Phyllite, Quartzite, Schist, Slate, Gneiss, Andesite, Basalt, Obsidian, Peridotite, Rhyolite, Scoria, Tuff, Granite, and Kimberlite.
+- **Strata:** a starter depth profile and depth-query helper establish the API for region-specific horizontal rock layers. The default profile is a placeholder, not a simulated planetary geology map.
+- **Host-rock rules:** ore profiles define mining tier, eligible host rocks, rarity weight, finite quantity range, and whether surface nuggets are allowed. Malachite is restricted to Limestone; Cassiterite to Granite/Gneiss; Diamond to Kimberlite. Meteoric Iron is represented as a surface meteorite rather than a normal vein.
+- **Finite deposits:** deterministic stable-slot generation produces bounded deposit quantities. Extraction reduces the stored quantity and cannot remove more than remains. The game must persist changed deposits by ID to preserve depletion across reloads.
+- **Soil:** Barren, Low, Medium, High, Terra Preta, and Peat profiles include fertility targets, nutrient capacity, and visual color. Farming consumes nutrients; fallowing and fertilization are explicit capped operations. Terra Preta does not passively regenerate, and peat is a finite harvestable deposit.
+
+**Current limitation:** this is a data and rules foundation only. Rock strata and ore deposits are not yet connected to generated terrain, mining tools, bloomery/crafting gameplay, or save files. The starter strata profile and host-rock list are intentionally simple; regional geological history, deposit association (such as Silver alongside Gold or Lead), mineral by-products, and real persistence remain follow-up work. Soil nutrient values are abstract balance units, not a completed crop simulation.
+
 ## Design roadmap
 
 1. **Define planetary geometry and scale:** choose the planet radius and a spherical surface partition compatible with pure hexagonal prisms.
