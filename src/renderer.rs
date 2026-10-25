@@ -225,6 +225,32 @@ impl Renderer {
     pub fn block_at(&self, cell: CellPos) -> BlockId {
         self.edits.get(&cell).copied().unwrap_or_else(|| generated_block_from_height(cell, terrain_height(self.seed, cell.q, cell.r)))
     }
+
+    /// Text inspection for the "What am I looking at?" debug/gameplay affordance.
+    pub fn describe_target(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> String {
+        let Some((cell, _)) = self.raycast(origin, direction, max_distance) else {
+            return "What am I looking at? Nothing identifiable in reach.".to_string();
+        };
+        let block = self.block_at(cell);
+        let surface = terrain_height(self.seed, cell.q, cell.r);
+        let layer = surface - cell.y;
+        let (name, detail) = match block {
+            BlockId::Grass => ("Grass-covered ground", "Surface cover over a soil layer. Soil fertility is not yet wired into the playable farming loop."),
+            BlockId::Dirt if layer <= 3 => ("Topsoil", "Loose near-surface soil. Its color varies by procedural soil patch; nutrient state is not yet persisted per cell."),
+            BlockId::Dirt => ("Subsoil", "Weathered material beneath the topsoil."),
+            BlockId::Stone => {
+                match cell.y.rem_euclid(11) {
+                    0..=2 => ("Sedimentary-looking rock", "Pale, layered rock appearance; exact rock strata are not yet connected to world generation."),
+                    3..=5 => ("Gray bedrock", "Hard bedrock. Mining deposits and host-rock rules are not yet spawned into playable chunks."),
+                    6..=8 => ("Tan bedrock", "Weathered-looking bedrock; the geology module is currently a data foundation."),
+                    _ => ("Dark bedrock", "Dense-looking rock. Exact mineral identity and finite deposit state are not yet integrated."),
+                }
+            },
+            BlockId::Foundation => ("Unbreakable foundation", "Below the playable terrain floor."),
+            BlockId::Air => ("Air", "An empty cell."),
+        };
+        format!("What am I looking at?\\n{name}\\n{detail}\\nCell: q={}, r={}, y={} | Surface layer: {}", cell.q, cell.r, cell.y, layer.max(0))
+    }
     pub fn raycast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<(CellPos, CellPos)> {
         let scale = WorldScale::default();
         let dir = direction.normalize_or_zero();
