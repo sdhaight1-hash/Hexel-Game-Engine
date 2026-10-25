@@ -81,12 +81,11 @@ impl CubeSphereTopology {
         let s = 2.0 * (f64::from(cell.u) + 0.5) / n - 1.0;
         let t = 2.0 * (f64::from(cell.v) + 0.5) / n - 1.0;
         let step = 2.0 / n;
-        let p = face_point(cell.face, s, t);
         Some([
-            self.project_cell(face_point(cell.face, s + step, t) + (p - face_point(cell.face, s, t))),
-            self.project_cell(face_point(cell.face, s - step, t) + (p - face_point(cell.face, s, t))),
-            self.project_cell(face_point(cell.face, s, t + step) + (p - face_point(cell.face, s, t))),
-            self.project_cell(face_point(cell.face, s, t - step) + (p - face_point(cell.face, s, t))),
+            self.project_cell(face_point(cell.face, s + step, t)),
+            self.project_cell(face_point(cell.face, s - step, t)),
+            self.project_cell(face_point(cell.face, s, t + step)),
+            self.project_cell(face_point(cell.face, s, t - step)),
         ])
     }
 
@@ -199,6 +198,31 @@ mod tests {
         let cell = CubeSphereCell { face: CubeFace::PositiveX, u: 3, v: 1 };
         let neighbours = topology.neighbors(cell).unwrap();
         assert!(neighbours.iter().any(|n| n.face != cell.face));
+    }
+
+    #[test]
+    fn neighbour_links_are_reciprocal_across_all_faces() {
+        let topology = CubeSphereTopology::new(6).unwrap();
+        for face in [
+            CubeFace::PositiveX,
+            CubeFace::NegativeX,
+            CubeFace::PositiveY,
+            CubeFace::NegativeY,
+            CubeFace::PositiveZ,
+            CubeFace::NegativeZ,
+        ] {
+            for u in 0..6 {
+                for v in 0..6 {
+                    let cell = CubeSphereCell { face, u, v };
+                    for neighbour in topology.neighbors(cell).unwrap() {
+                        assert!(
+                            topology.neighbors(neighbour).unwrap().contains(&cell),
+                            "neighbour link is not reciprocal: {cell:?} -> {neighbour:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
