@@ -607,7 +607,7 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
             let height = *heights.get(&(q, r)).unwrap_or(&0);
             if height < 0 || chunk.y != height.div_euclid(CHUNK_SIZE) { continue; }
             let hash = vegetation_hash(seed, q, r);
-            if hash % 7 != 0 { continue; }
+            if hash % 11 != 0 { continue; }
             let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
             let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
             let conifer = warmth < -0.25 || wetness < -0.32;
@@ -669,6 +669,7 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
     let crown_start = (height_layers as f32 * if species == 2 || species == 6 { 0.30 } else { 0.48 }) as i32;
     let crown_layers = (height_layers - crown_start).max(2);
     for cy in 0..crown_layers {
+        if cy % 2 != 0 { continue; }
         let progress = cy as f32 / crown_layers as f32;
         let radius = if species == 2 { ((crown_radius as f32) * (1.0 - progress * 0.88)).ceil() as i32 }
             else if species == 6 { ((crown_radius as f32) * (1.0 - progress * 0.72)).ceil() as i32 }
