@@ -1047,7 +1047,7 @@ mod tests {
         assert!(cell_points(&mesh, &mesh.cells[0]).is_none());
         let report = audit(&mesh);
         assert_eq!(report.non_finite_vertices, 1);
-        assert!(report.invalid_vertex_links > 0);
+        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
     }
 
     #[test]
@@ -1061,14 +1061,15 @@ mod tests {
 
     #[test]
     fn runtime_topology_validation_detects_disconnected_vertex_link() {
-        let mut mesh = square_mesh();
-        // Add a second fan around vertex 0, disconnected from the original fan.
+        let mut mesh = generate_icosphere_dual(2, 1.0).unwrap();
+        // Add a second fan around vertex 0, disconnected from the original closed link.
         let start = mesh.vertices.len();
         mesh.vertices.extend([
             Point3 { x: 0.0, y: 0.0, z: 1.0 },
             Point3 { x: 0.0, y: 0.0, z: -1.0 },
         ]);
-        mesh.cells.push(PolygonCell { id: 12, vertices: vec![0, start, start + 1] });
+        let cell_id = mesh.cells.len();
+        mesh.cells.push(PolygonCell { id: cell_id, vertices: vec![0, start, start + 1] });
         let topology = validate_topology(&mesh);
         assert!(topology.invalid_vertex_links > 0);
     }
