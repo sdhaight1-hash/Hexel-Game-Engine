@@ -1,6 +1,6 @@
 # Topology Comparison — Phase 2: Comparable-Scale Geometry Audit
 
-Status: setup plan; results must be collected from actual checker runs before any topology decision.
+Status: first comparable-scale run recorded; topology decision remains open.
 
 ## Goal
 
@@ -65,9 +65,26 @@ Do not change the playable-world topology during this phase. Do not claim a winn
 
 ## Results log
 
-Pending actual command output. Paste the full output from the first comparable-scale run here after running both commands. Record observed numbers only; do not infer missing values.
+Runs were executed locally at radius 100. Both commands completed successfully.
 
-| Candidate | Parameter | Cells | Area CV | Edge min / mean / max | Area min / mean / max | Structural issues |
-|---|---:|---:|---:|---|---|---|
-| Cube-sphere | 4 | 96 expected | Pending | Pending | Pending | Pending |
-| Geodesic dual | 3 | 92 expected | Pending | Pending | Pending | Pending |
+| Candidate | Parameter | Cells | Vertices | Unique edges | Area CV | Edge min / mean / max | Area min / mean / max |
+|---|---:|---:|---:|---:|---:|---|---|
+| Cube-sphere quads | Resolution 4 | 96 | 98 | 192 | 0.333649 (33.36%) | 27.477100 / 35.545705 / 45.950584 | 814.555876 / 1308.996939 / 2013.579208 |
+| Geodesic dual | Frequency 3 | 92 | 180 | 270 | 0.145563 (14.56%) | 21.915211 / 23.197045 / 24.482140 | 866.726518 / 1365.909849 / 1526.991978 |
+
+Structural checks observed:
+
+- Cube-sphere: all cells are quads; 96 unique cell loops; 0 boundary edges; 0 non-manifold edges; maximum radius error 0.
+- Geodesic dual: 12 pentagons and 80 hexagons; 0 boundary edges; 0 non-manifold edges; 0 degenerate cells; 0 duplicate IDs; maximum radius error 0.
+
+The displayed mean areas multiplied by cell count are consistent, within printed precision, with the theoretical sphere area 4πR² ≈ 125,663.706 for radius 100. This is a useful cross-check, not a substitute for explicit area-sum assertions in both checkers.
+
+## Initial interpretation (not a final topology decision)
+
+At these comparable cell counts, the geodesic dual's measured area coefficient of variation is about 56% lower than the cube-sphere quad grid's. Its measured edge-length range is also much narrower in absolute terms, although the edge lengths belong to different polygon constructions and should not be treated as a fully apples-to-apples score.
+
+This supports continuing the geodesic candidate as the leading shape-fit hypothesis for a hex-dominant world, but does not prove it is production-ready. The cube-sphere prototype is still a four-neighbor quad grid, not a six-sided Hexel topology. Neither checker yet establishes polygon non-overlap, consistent winding, adjacency-to-boundary agreement, or gap-free prism side walls.
+
+## Next experiment
+
+Add/confirm equivalent total-area assertions for both generators, then validate polygon winding and shared-edge/adjacency consistency. After that, prototype prism side walls on the geodesic dual—including how the twelve pentagonal cells are represented—before any production topology decision.
