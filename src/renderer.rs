@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, HashSet, VecDeque}, sync::{Arc, mpsc::{self, Receiver, Sender}}, thread};
 
 use bytemuck::{Pod, Zeroable};
-use glam::{DVec3, Mat4, Vec3};
+use glam::{Mat4, Vec3};
 use hexel_engine::{
     BlockId, CellPos, ChunkPos, WorldScale, raycast_prism, terrain_height,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
