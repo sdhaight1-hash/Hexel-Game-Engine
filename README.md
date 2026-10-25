@@ -4,6 +4,13 @@ A native Rust prototype for a first-person, fully 3D world built from hexagonal-
 
 Hexel Engine's long-term goal is a **finite, spherical world** with coherent planetary geography, system-driven climate, and strict resource conservation. The current build is an early flat-world prototype; the planetary systems described below are design goals, not features claimed to be implemented.
 
+## Playable-world additions in this branch
+
+The flat prototype now renders deterministic, coordinate-stable trees in streamed terrain chunks, with several canopy silhouettes/colors chosen from a lightweight local climate proxy. Surface grass, soil, and exposed bedrock also have deterministic color variation so the ground is less visually uniform. These are presentation-level first steps: they are not yet full species-driven tree placement from planetary biomes, and the visible rock bands do not yet represent actual `RockType` strata or spawned ore deposits.
+
+**What am I looking at?** Aim at a solid block and press **I**. The console prints its current material/surface-layer description and cell coordinates. This is an initial inspection affordance, not yet an in-game Vintage Story-style HUD panel. Tree rendering uses species-inspired, metre-scaled height ranges and hexagonal-prism trunks. Foliage now uses crossed, double-sided textured cards with RGBA alpha-cutout shading, while trunks and major branches remain solid hexagonal-prism geometry. Canopy placement is deterministic but intentionally sparse, allowing sky gaps and branch structure to show through; broadleaf, conifer, and tropical profiles now use different silhouette rules. The current leaf atlas is procedurally generated at startup as a self-contained placeholder, not an artist-authored asset, and is the next texture-art improvement. Tall-tree visibility is accounted for in terrain chunk bounds. The current species selection is still a renderer-side climate proxy, not yet fully driven by the shared tree-species data module. It deliberately identifies geology and soil integration as incomplete rather than claiming that the data modules already drive the playable world.
+
+
 ## Design vision
 
 ### A real, finite globe
@@ -58,7 +65,7 @@ These are compatible gameplay layers, not mutually exclusive world-size options.
 
 ## Current playable prototype
 
-The current build generates **32 terrain chunks (8 × 4 chunks, each 16 × 16 hexel columns)** from a random seed and opens a native first-person sandbox. The seed is printed to the terminal at startup so you can record a particular world.
+The current build streams a bounded neighborhood of **16 × 16 × 16 hexel-prism chunks (Q × R × Y)** around the player from a random seed. Chunk edits are kept separately from active meshes so unloading a chunk does not itself erase edits. The world renderer and player are still in the flat-world prototype stage; the spherical planet generator has not yet been connected to playable terrain. The seed is printed to the terminal at startup so you can record a particular world.
 
 ### Controls
 
@@ -85,6 +92,42 @@ Terrain faces use darker side shading and lighter top faces to make the hexagona
 - Native `winit` window and `wgpu` renderer with depth testing.
 - First-person mouse look, walking, jumping, gravity, and basic hexel placement/removal.
 - Random per-launch world seed, printed in the terminal.
+
+## Köppen climate and vegetation rules
+
+`src/climate.rs` defines monthly climate normals and a deterministic Köppen-Geiger classifier for tropical (A), arid (B), temperate (C), continental (D), polar (E), and highland (H) outcomes. It exposes subtype codes such as Af, Am, Aw, BWh, Csa, Cfb, Dfc, ET, and EF, with tests for representative rainforest, desert, tundra, ice-cap, and highland inputs.
+
+Planet samples now carry a `koppen` class, and the shared tree roster applies a climate-envelope gate as well as its existing temperature, moisture, elevation, and broad-biome checks. This prevents tropical hardwoods from appearing in cold continental climates and restricts cold-climate trees to appropriate cold subtypes.
+
+**Climate-model caveat:** monthly temperature and precipitation are currently synthesized from axial tilt, latitude, elevation, the existing temperature/moisture fields, and a seasonal rainfall curve. The classification thresholds operate on monthly normals, but those inputs are procedural estimates—not validated real-world climatology. Wind fields, circulation, ocean currents, orographic precipitation, and calibration against gridded climate data remain necessary before claiming Earth-like Köppen maps.
+
+## Tree species and generation foundation
+
+The canonical starting roster is data-defined in `src/trees.rs`:
+
+- **Common temperate trees:** Oak, Birch, Maple, Walnut, and the narrow-temperature Crimson King Maple.
+- **Cold-climate trees:** Pine and Larch.
+- **Warm and dry trees:** Mediterranean Cypress and Acacia, including the Prickly Moses variant.
+- **Wetland trees:** Bald Cypress and Willow; Willow exposes logs, flexible twigs, and medicinal bark as distinct harvest products.
+- **Tropical trees:** Kapok, Bamboo, Ebony, and rare Purpleheart.
+- **Special mountain/forest tree:** Redwood, including a giant variant.
+- **Variants:** Birch cultivars, Maple cultivars, Pine forms, swamp Bald Cypress, Kapok growth forms, Bamboo colors, old-growth Oak, and more are represented separately from base species.
+
+Each species profile records its temperature and moisture bounds, relative rarity, foliage style, expected height range, and harvest products. Placement is deterministic from the world seed and stable slot ID. Candidate trunks retain a diameter from **0.25 to 1.0 hexel diameters**, a hexagonal cross-section volume estimate, planet-relative root position, and local outward surface normal. Felling a live instance returns its trunk yield once; callers must persist state and awarded inventory by stable tree ID.
+
+**Current limitation:** these are generation/data foundations, not completed playable vegetation. The current climate sample has no river network, bog map, soil survey, or Kapok-forest depth model, so wetland and deep-forest rules are approximated using moisture, elevation, and biome proxies. Tree rendering, collision, physical falling, save-file integration, and ecological regrowth are not yet connected. The source notes about plank crafting and replanting are roster requirements to implement in later gameplay systems, not claims that those mechanics already work.
+
+## Geology, ores, and soil foundation
+
+The renderer-independent geology rules live in `src/geology.rs`; soil and nutrient rules live in `src/soil.rs`.
+
+- **Rock categories:** sedimentary, metamorphic, extrusive igneous, and intrusive igneous. The registry includes Chert, Claystone, Conglomerate, Limestone, Sandstone, Shale, Chalk, Metamorphosed Claystone, Marble, Phyllite, Quartzite, Schist, Slate, Gneiss, Andesite, Basalt, Obsidian, Peridotite, Rhyolite, Scoria, Tuff, Granite, and Kimberlite.
+- **Strata:** a starter depth profile and depth-query helper establish the API for region-specific horizontal rock layers. The default profile is a placeholder, not a simulated planetary geology map.
+- **Host-rock rules:** ore profiles define mining tier, eligible host rocks, rarity weight, finite quantity range, and whether surface nuggets are allowed. Malachite is restricted to Limestone; Cassiterite to Granite/Gneiss; Diamond to Kimberlite. Meteoric Iron is represented as a surface meteorite rather than a normal vein.
+- **Finite deposits:** deterministic stable-slot generation produces bounded deposit quantities. Extraction reduces the stored quantity and cannot remove more than remains. The game must persist changed deposits by ID to preserve depletion across reloads.
+- **Soil:** Barren, Low, Medium, High, Terra Preta, and Peat profiles include fertility targets, nutrient capacity, and visual color. Farming consumes nutrients; fallowing and fertilization are explicit capped operations. Terra Preta does not passively regenerate, and peat is a finite harvestable deposit.
+
+**Current limitation:** this is a data and rules foundation only. Rock strata and ore deposits are not yet connected to generated terrain, mining tools, bloomery/crafting gameplay, or save files. The starter strata profile and host-rock list are intentionally simple; regional geological history, deposit association (such as Silver alongside Gold or Lead), mineral by-products, and real persistence remain follow-up work. Soil nutrient values are abstract balance units, not a completed crop simulation.
 
 ## Design roadmap
 

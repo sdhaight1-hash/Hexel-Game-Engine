@@ -1,6 +1,12 @@
 //! Core coordinate, storage, generation, and prism-mesh primitives.
 //! Rendering and interactive controls are added in later implementation stages.
 
+pub mod climate;
+pub mod geology;
+pub mod planet;
+pub mod soil;
+pub mod trees;
+
 use glam::Vec3;
 use noise::{NoiseFn, Perlin};
 use std::collections::HashMap;

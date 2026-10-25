@@ -61,7 +61,10 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_ref() else { return; };
         let dt = dt.min(0.04);
         let forward = Vec3::new(self.camera.yaw.sin(), 0.0, self.camera.yaw.cos()).normalize_or_zero();
-        let right = Vec3::new(self.camera.yaw.cos(), 0.0, -self.camera.yaw.sin()).normalize_or_zero();
+        // `look_to_rh` defines screen-right as forward × world-up. With yaw=0
+        // the camera looks along +Z, so its actual right vector is -X, not +X.
+        // Keep this basis independent from mouse input: yaw only orients movement.
+        let right = Vec3::new(-self.camera.yaw.cos(), 0.0, self.camera.yaw.sin()).normalize_or_zero();
         let mut direction = Vec3::ZERO;
         if self.pressed.contains(&KeyCode::KeyW) { direction += forward; }
         if self.pressed.contains(&KeyCode::KeyS) { direction -= forward; }
@@ -123,6 +126,9 @@ impl HexelApp {
             self.grounded = false;
         }
         self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.update_streaming(self.player_feet);
+        }
     }
     fn edit_target(&mut self, remove: bool) {
         let Some(renderer) = self.renderer.as_mut() else { return; };
@@ -143,7 +149,7 @@ impl ApplicationHandler for HexelApp {
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u32
             ^ std::process::id().rotate_left(13);
         let attributes = Window::default_attributes()
-            .with_title("Hexel Engine | WASD move | Space jump | Left remove | Right place | Esc mouse")
+            .with_title("Hexel Engine | WASD move | Space jump | Left remove | Right place | I inspect | Esc mouse")
             .with_inner_size(PhysicalSize::new(1280, 800));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
@@ -154,9 +160,9 @@ impl ApplicationHandler for HexelApp {
                 let ground = renderer.ground_height(0, 0);
                 self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
                 self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
-                info!(seed, "Generated 32 terrain chunks (8 x 4); use this seed to identify this world");
+                info!(seed, "Generated streamed 16×16×16 hexel prism chunks; use this seed to identify this world");
                 println!("Hexel Engine world seed: {seed}");
-                println!("WASD move | Mouse look | Space jump | Left-click remove | Right-click place | Esc release mouse");
+                println!("WASD move | Mouse look | Space jump | Left-click remove | Right-click place | I inspect target | Esc release mouse");
                 self.window = Some(window);
                 self.renderer = Some(renderer);
                 self.lock_cursor();
@@ -179,6 +185,11 @@ impl ApplicationHandler for HexelApp {
                         if self.cursor_locked { self.unlock_cursor(); } else { self.lock_cursor(); }
                     }
                     if event.state == ElementState::Pressed {
+                        if code == KeyCode::KeyI {
+                            if let Some(renderer) = self.renderer.as_ref() {
+                                println!("{}", renderer.describe_target(self.camera.position, self.camera.forward(), 8.0));
+                            }
+                        }
                         if code == KeyCode::Space && !self.pressed.contains(&code) { self.jump_requested = true; }
                         self.pressed.insert(code);
                     } else { self.pressed.remove(&code); }
