@@ -126,6 +126,9 @@ impl HexelApp {
             self.grounded = false;
         }
         self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.update_streaming(self.player_feet);
+        }
     }
     fn edit_target(&mut self, remove: bool) {
         let Some(renderer) = self.renderer.as_mut() else { return; };
@@ -157,7 +160,7 @@ impl ApplicationHandler for HexelApp {
                 let ground = renderer.ground_height(0, 0);
                 self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
                 self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
-                info!(seed, "Generated 32 terrain chunks (8 x 4); use this seed to identify this world");
+                info!(seed, "Generated streamed 16×16×16 hexel prism chunks; use this seed to identify this world");
                 println!("Hexel Engine world seed: {seed}");
                 println!("WASD move | Mouse look | Space jump | Left-click remove | Right-click place | Esc release mouse");
                 self.window = Some(window);
