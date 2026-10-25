@@ -1,6 +1,6 @@
 # Topology Audit — Phase 5 Robustness and Frequency Scaling
 
-**Status:** Phase 5 and Phase 6 validated by the user; frequency-4 coverage summary should be confirmed from the complete runtime output.  
+**Status:** Phase 5 and Phase 6 validated by the user, including complete runtime coverage summaries for frequencies 2–4.  
 **Scope:** Offline diagnostic tooling only. Do not change gameplay topology, rendering, or production world generation.
 
 ## Goals
@@ -118,9 +118,9 @@ Runtime audits at frequencies 2, 3, and 4 completed. All three reported zero bou
 Coverage summaries visible in the user's pasted output:
 - Frequency 2: 4,096 samples covered exactly once; zero gaps, zero multiple ownership, zero boundary exclusions.
 - Frequency 3: 4,095 samples covered exactly once; zero gaps, zero multiple ownership, one boundary exclusion.
-- Frequency 4: the pasted output ended immediately after the relative area coverage error line, so its coverage-sample summary was not visible. The runtime audit did report the zero topology/input diagnostics and zero area-coverage error above.
+- Frequency 4: 4,096 samples covered exactly once; zero gaps, zero multiple ownership, zero boundary exclusions.
 
-This completes the Phase 6 test-suite and topology-metric validation. For a fully documented frequency-4 sampling result, capture the final lines of `cargo run --bin topology_geometry_check -- 4` if needed. Do not describe finite sampling or area agreement as proof of mathematical completeness.
+This completes the Phase 6 test-suite, topology-metric, and reported frequency 2–4 sampling validation. Do not describe finite sampling or area agreement as proof of mathematical completeness.
 
 ## Interpretation limits and next steps
 
