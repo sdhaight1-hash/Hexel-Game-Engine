@@ -6,6 +6,13 @@
 //!
 //! This is a data-generation foundation, not yet a spherical prism mesher or renderer.
 //! Surface topology and pure hexagonal-prism placement remain a separate engine layer.
+//!
+//! Scale invariant: the default radius is Earth-sized (one world unit represents one
+//! metre). At that radius, the surface departs from a local tangent plane by only about
+//! 0.8 mm over 100 m and 7.8 cm over 1 km. Normal play should therefore use a local
+//! tangent frame; planetary curvature becomes relevant over long distances, not during
+//! ordinary building, digging, or walking. Keep large world positions in f64 and render
+//! nearby geometry relative to the player to avoid floating-point jitter.
 
 use glam::DVec3;
 use noise::{NoiseFn, Perlin};
@@ -229,6 +236,21 @@ impl PlanetGenerator {
         }
     }
 
+    /// Approximate height of the curved surface above its local tangent plane after
+    /// travelling this far along the surface, in world units.
+    ///
+    /// This makes the "locally flat, globally spherical" scale explicit and testable.
+    /// Distances must be non-negative; values are clamped to a half-circumference.
+    pub fn curvature_drop(&self, surface_distance: f64) -> f64 {
+        if !surface_distance.is_finite() {
+            return 0.0;
+        }
+        let distance = surface_distance
+            .abs()
+            .min(std::f64::consts::PI * self.config.radius);
+        self.config.radius * (1.0 - (distance / self.config.radius).cos())
+    }
+
     /// Great-circle distance between two locations, in the same units as planet radius.
     pub fn surface_distance(&self, a: GeoCoord, b: GeoCoord) -> f64 {
         let a = a.direction();
@@ -369,5 +391,18 @@ mod tests {
         let b = generator.sample(coord, 1.15);
         assert_abs_diff_eq!(a.temperature_c, b.temperature_c, epsilon = 1e-8);
         assert_abs_diff_eq!(a.moisture, b.moisture, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn default_planet_is_large_enough_for_locally_flat_gameplay() {
+        let generator = PlanetGenerator::new(1);
+        let radius = generator.config().radius;
+        assert_abs_diff_eq!(radius, 6_371_000.0, epsilon = 0.01);
+        // Earth-scale curvature is sub-millimetre across a typical 100 m local area.
+        assert!(generator.curvature_drop(100.0) < 0.001);
+        // Even over 1 km, curvature is only about 8 cm.
+        assert!(generator.curvature_drop(1_000.0) < 0.1);
+        // But it is measurable over long-distance travel.
+        assert!(generator.curvature_drop(10_000.0) > 7.0);
     }
 }
