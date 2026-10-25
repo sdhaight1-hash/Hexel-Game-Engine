@@ -25,16 +25,13 @@ Record a coherent direction for Hexel Engine without treating exploratory resear
 
 ## Decisions and current direction
 
-### 1. Surface topology — OPEN; prototype before choosing
+### 1. Surface topology — GEODESIC IMPLEMENTATION STARTED; GAMEPLAY INTEGRATION IN PROGRESS
 
-**Candidate A:** Cubed-sphere patches with hierarchical subdivision.  
-**Candidate B:** Geodesic/Goldberg-style cell graph with hexagons and exceptional pentagons.
+**Starting implementation:** Geodesic/Goldberg-style cell graph generated as the dual of a frequency-subdivided icosahedron. Each primal vertex becomes a surface cell, primal edges define reciprocal cell adjacency, and primal triangles define ordered dual-polygon boundary corners. The expected result is twelve pentagonal cells and hexagons elsewhere.
 
-The research currently favors prototyping a cubed sphere first, but also recommends comparing both candidates. This is not a final selection.
+The first data-layer implementation is in `src/topology.rs`. It provides deterministic IDs for a fixed frequency/generator version, cell centers and boundary corners on a requested radius, neighbor lists, topology counts, and correctness tests. It is not yet connected to gameplay terrain, prism meshing, raycasting, movement, or save/load.
 
-**Required prototype:** Implement both candidates far enough to compare stable cell identity, neighbour lookup, surface position and normal, ray-to-cell selection, seam behavior, terrain editing, save/load, and a simple scalar or water-transfer test.
-
-**Decision gate:** Select only after correctness tests pass and the geometry fits the intended hexel representation. Do not replace the current flat axial prototype until the comparison supports the change.
+**Implementation direction:** Continue with this geodesic graph and solve concrete integration issues as they appear. Keep the cubed-sphere approach as a fallback only if the geodesic topology proves incompatible with the pure hexagonal-prism gameplay requirement or creates a demonstrated correctness/performance blocker. Do not pause implementation for another broad comparison exercise.
 
 ### 2. Geometry and vertical terrain representation — OPEN
 
@@ -96,7 +93,7 @@ Do not assume binary greedy meshing for axis-aligned voxels transfers directly t
 
 ## Implementation sequence
 
-1. **Topology proof:** Compare cubed-sphere and geodesic candidates using the same small test harness.
+1. **Planetary topology integration:** Connect the geodesic surface graph to planet-relative cell addressing and terrain columns; add surface lookup/raycast tests and resolve pentagon-specific prism geometry explicitly.
 2. **World-state contracts:** Document stable IDs, terrain/entity ownership, controlled mutations, save/load, and invalidation.
 3. **Correctness baseline:** Add repeatable tests and debug views for neighbours, seams, ray selection, edits, and persistence.
 4. **Finite-water prototype:** Add explicit water storage and transfers; test conservation and determinism.
@@ -107,7 +104,7 @@ This is a recommended dependency order, not a claim that these systems already e
 
 ## Minimum acceptance criteria
 
-Before selecting the planetary topology:
+Before treating the planetary topology as gameplay-ready:
 - Every valid cell has a stable identity within the documented save format.
 - Neighbour relations are reciprocal where required by the chosen cell model.
 - Face/edge seams have no gaps or duplicate/missing adjacency.
@@ -152,4 +149,4 @@ These require experiments, current-code inspection, or explicit project goals; t
 
 This record synthesizes the exploratory case studies in the Design ideas directory. Those documents draw on public documentation, repositories, and other public references; they are not proof of the complete internal implementations of the referenced games or engines. The directions above are proposals for Hexel, not statements that the current code already implements them.
 
-**Next action:** build the topology comparison prototype and record its results before choosing the planetary cell model.
+**Next action:** integrate the geodesic topology module into planet-relative terrain addressing, then implement and test surface lookup, ray selection, vertical layers, and persistent cell identity.
