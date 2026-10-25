@@ -1,9 +1,9 @@
 # Planetary Topology Integration Roadmap
 
-**Status:** Planned; Phase 0 baseline is passing locally  
+**Status:** Phase 1 in progress; direction-based terrain sampling is implemented and the developer-reported full test suite passes  
 **Target:** Integrate the geodesic dual-cell topology into Hexel Engine incrementally without regressing existing gameplay.  
 **Primary implementation:** `src/topology.rs`  
-**Current baseline:** The developer-reported `cargo test` run after pulling the topology implementation passed all 138 tests (54 library, 8 cube-sphere geometry, 38 topology geometry, and remaining binary/doc tests).
+**Current verification:** After pulling the direction-sampling change, the developer-reported `cargo test` run passed all 102 tests: 56 library, 8 cube-sphere geometry, and 38 topology geometry tests; main and doc-test targets had zero tests and no failures.
 
 This document is the working implementation roadmap. Update the phase status, decisions, test results, and any deviations as work lands. Prefer small, reviewable commits and keep `main` buildable.
 
@@ -29,7 +29,7 @@ This document is the working implementation roadmap. Update the phase status, de
 
 ## Phase 1 — Integrate topology with planetary terrain
 
-**Status:** In progress — direction-based sampling API and regression tests committed; local test run pending.
+**Status:** In progress — direction-based sampling API and regression tests committed; local full test suite passes. Remaining terrain integration decisions and Phase 1 exit criteria are still open.
 
 **Goal:** Let terrain systems consume geodesic surface cells without removing the current terrain path.
 
@@ -42,7 +42,7 @@ This document is the working implementation roadmap. Update the phase status, de
 - [ ] Preserve seed determinism: the same seed and same logical surface location must produce the same terrain sample.
 - [ ] Keep the existing latitude/longitude and local axial-hex path working during the transition. Do not make geodesic topology the default until integration tests demonstrate parity for required gameplay.
 - [x] Add tests for topology-cell direction sampling, finite outputs, invalid-direction fallback, and radius/elevation behavior. Broader pole/date-line regression coverage remains covered by existing planet tests.
-- [ ] Run focused planet/topology tests, then `cargo test` (pending local verification).
+- [x] Run `cargo test`; developer reports 102 passed, 0 failed (56 library, 8 cube-sphere geometry, 38 topology geometry; main/doc targets had no tests). Focused tests for direction sampling also passed within the library suite.
 
 ### Exit criteria
 
@@ -156,7 +156,12 @@ This document is the working implementation roadmap. Update the phase status, de
 - Added `PlanetGenerator::sample_direction`, which accepts a world-space direction or topology cell center and reuses the existing deterministic terrain sampler.
 - Zero and non-finite directions safely fall back to the positive X axis. Existing geographic sampling remains unchanged.
 - Added regression tests across frequency-2 topology cells for equivalence with geographic sampling, finite terrain output, and radial surface-position consistency, plus invalid-direction fallback.
-- Verification status: code and tests are committed; tests have **not yet been run locally**. Do not mark Phase 1 complete until the developer runs focused tests and `cargo test` successfully.
+- Verification status: developer ran `cargo test` after pulling; **102 passed, 0 failed**. The direction-sampling tests passed. Phase 1 remains in progress because elevation-to-rendered/gameplay-height semantics and the other integration exit criteria are not yet resolved.
+
+### Verification update — 2026-10-25
+
+- Developer pulled `main` and ran `cargo test`: **102 passed, 0 failed**. The new `planet::tests::direction_sampling_matches_geographic_sampling` and `planet::tests::direction_sampling_handles_invalid_directions_without_non_finite_output` tests passed.
+- Developer then ran `cargo run`, which reported that Cargo could not choose among three binaries. The manifest lists `hexel-engine`, `cube_sphere_geometry_check`, and `topology_geometry_check`; launching the main app should be attempted with `cargo run --bin hexel-engine`. This is a run-command selection issue, not a test failure.
 
 ### Implementation notes
 
