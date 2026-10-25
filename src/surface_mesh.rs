@@ -104,14 +104,33 @@ mod tests {
             },
         );
         let mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
-        let expected: usize = topology.cells().iter().map(|cell| cell.boundary.len()).sum();
+        let expected: usize = topology
+            .cells()
+            .iter()
+            .map(|cell| cell.boundary.len())
+            .sum();
 
         assert_eq!(mesh.triangles.len(), expected);
-        assert_eq!(mesh.triangles.iter().filter(|t| t.cell_id.0 < 12).count(), 60);
+        let pentagon_ids: Vec<_> = topology
+            .cells()
+            .iter()
+            .filter(|cell| cell.boundary.len() == 5)
+            .map(|cell| cell.id)
+            .collect();
+
+        assert_eq!(pentagon_ids.len(), 12);
+        assert_eq!(
+            mesh.triangles
+                .iter()
+                .filter(|triangle| pentagon_ids.contains(&triangle.cell_id))
+                .count(),
+            60
+        );
         assert!(mesh.triangles.iter().all(|triangle| {
-            triangle.vertices.iter().all(|vertex| {
-                vertex.position.is_finite() && vertex.sample.elevation.is_finite()
-            })
+            triangle
+                .vertices
+                .iter()
+                .all(|vertex| vertex.position.is_finite() && vertex.sample.elevation.is_finite())
         }));
     }
 
@@ -151,11 +170,7 @@ mod tests {
         for cell in topology.cells() {
             for corner in &cell.boundary {
                 let sample = terrain.sample_direction(*corner, 0.5);
-                let key = (
-                    corner.x.to_bits(),
-                    corner.y.to_bits(),
-                    corner.z.to_bits(),
-                );
+                let key = (corner.x.to_bits(), corner.y.to_bits(), corner.z.to_bits());
                 if let Some(existing) = positions.get(&key) {
                     assert_eq!(*existing, sample.surface_position);
                 } else {
