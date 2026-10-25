@@ -98,3 +98,15 @@ At the time these measurements were recorded, local verification passed:
 
 Both prototypes pass their current structural checks at the tested settings. The cube-sphere result is a closed quad grid, while the geodesic result is a closed pentagon/hexagon dual candidate. They are not yet equivalent candidates for Hexel Engine's hexagonal-prism terrain. Remaining work includes comparing at similar cell counts, measuring cell-area variation and broader geometric distortion, validating polygon winding/overlap and adjacency-to-edge agreement, and testing whether the resulting boundaries can form gap-free prism side walls. No topology decision is made by these measurements.
 
+## Next experiment: spherical cell-area metrics
+
+A follow-up prototype branch adds cell-area reporting to both standalone checkers. Each polygon is triangulated as a fan from its first boundary vertex; each spherical triangle uses the solid-angle expression
+
+`area = 2 atan2(|a · (b × c)|, 1 + a · b + b · c + c · a) × radius²`
+
+where `a`, `b`, and `c` are unit direction vectors for the triangle's vertices. This gives both prototypes a consistent area metric despite their different polygon side counts.
+
+The checkers report minimum, mean, and maximum spherical cell area, plus the population coefficient of variation (standard deviation divided by mean). This dimensionless coefficient helps compare relative area unevenness across different planet radii and approximate resolutions. These are diagnostics, not proof of full surface coverage: overlap, winding, and prism-wall compatibility remain separate checks.
+
+Validate the new metrics locally by running `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings`. Do not add new area numbers to the findings table until the checks pass and the output has been reviewed.
+
