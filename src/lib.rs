@@ -7,6 +7,7 @@ pub mod inventory;
 pub mod planet;
 pub mod soil;
 pub mod surface_navigation;
+pub mod surface_mesh;
 pub mod topology;
 pub mod trees;
 pub mod tree_blocks;
