@@ -29,13 +29,13 @@ Both audited meshes were closed in these runs, with zero boundary edges, zero no
 
 ## Automated checks — latest local validation
 
-The user pulled the Phase 3 commits and ran the complete test suite twice. Both full runs passed:
+The user pulled the Phase 4 implementation and ran the focused topology checker and full test suite. All tests passed:
 
 - Core engine: 46 passed.
 - Cube-sphere geometry checker: 8 passed.
-- Geodesic dual geometry checker: 17 passed.
+- Geodesic dual geometry checker: 27 passed.
 - Main binary and doc tests: 0 tests each.
-- **Total: 71 passed, 0 failed.**
+- **Total: 81 passed, 0 failed.**
 
 The frequency-3 runtime audit also completed successfully with these observed results:
 
@@ -74,13 +74,13 @@ Phase 3 added diagnostic-only code to `src/bin/topology_geometry_check.rs`:
 - Reports relative difference between the sum of valid measured cell areas and the full sphere area.
 - Tests the generated mesh, a removed-cell case, and a duplicated-cell case.
 
-The user ran `cargo test` twice: **71 passed, 0 failed** on both runs. The command `cargo run --bin topology_geometry_check -- 3` reported zero detected overlapping pairs and relative area error `0.00000000`.
+The user previously ran `cargo test` twice: **71 passed, 0 failed**. After Phase 4, the focused topology checker passed **27/27 tests** and `cargo test` passed **81/81 tests**. The command `cargo run --bin topology_geometry_check -- 3` reported zero detected overlapping pairs, relative area error `0.00000000`, 4,095 singly-owned samples, zero sampled gaps, zero multiple-owner samples, and one excluded boundary sample.
 
 **Important limitations:** the overlap check is designed for convex spherical polygons bounded by minor great-circle arcs. It is a practical diagnostic, not a formal proof for arbitrary, malformed, concave, or hemisphere-spanning polygons. The summed-area metric cannot by itself locate or prove the absence of gaps. Passing the current tests must not be described as a mathematical guarantee of full coverage.
 
-## Phase 4 — implementation committed; local validation pending
+## Phase 4 — implemented and locally validated
 
-Phase 4 implementation has been committed to `src/bin/topology_geometry_check.rs`; it is awaiting local compilation and execution by the user. The implementation adds:
+Phase 4 implementation in `src/bin/topology_geometry_check.rs` has been pulled and tested locally. The focused topology checker passed **27/27 tests** and the full suite passed **81/81 tests**. The implementation adds:
 
 1. Coordinate-set duplicate detection for coincident cells with different vertex IDs.
 2. Direct synthetic tests for duplicate interiors, crossing/partial overlap, strict containment, shared-edge-only contact, shared-vertex-only contact, disjoint polygons, and a small positive gap.
@@ -88,7 +88,7 @@ Phase 4 implementation has been committed to `src/bin/topology_geometry_check.rs
 4. Separate counts for samples owned by exactly one cell, sampled gaps, multiple ownership, and boundary samples excluded from ownership counts.
 5. Regression tests for generated coverage, a removed cell, and a duplicated cell.
 
-**Validation status:** code is committed, but these Phase 4 tests have not yet been compiled or run locally. Do not report Phase 4 as passing until the user runs the commands below and shares the output. Finite sampling is evidence, not proof, and the overlap predicates remain scoped to convex spherical polygons bounded by minor great-circle arcs.
+**Observed coverage result:** 4,095 samples were covered by exactly one cell, zero sampled gaps, zero multiple-owner samples, and one boundary sample excluded from ownership counts. The runtime audit also reported zero detected overlapping cell pairs and zero relative area coverage error. This is a successful finite-sampling check, not proof of complete coverage. The overlap predicates remain scoped to convex spherical polygons bounded by minor great-circle arcs.
 
 ## Remaining design questions
 
