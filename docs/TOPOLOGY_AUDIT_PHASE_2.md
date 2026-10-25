@@ -1,10 +1,10 @@
-# Topology Audit — Phase 2 Findings
+# Topology Audit — Phase 2 Findings and Phase 3 Validation
 
 **Status:** Experimental/offline diagnostics only. These findings do not change the playable world's topology or rendering.
 
 ## Scope
 
-The current comparison evaluates two candidate spherical surface meshes:
+The comparison evaluates two candidate spherical surface meshes:
 
 - A cube-sphere surface partition.
 - The dual polygon mesh of a subdivided icosahedron (geodesic dual).
@@ -27,36 +27,49 @@ Measurements below use radius 100 and the settings recorded during the Phase 2 a
 
 Both audited meshes were closed in these runs, with zero boundary edges, zero non-manifold edges, and zero measured radius error.
 
-## Current automated checks
+## Automated checks — latest completed local run
 
-The local full test run completed successfully:
+The most recent full local test run completed successfully before Phase 3 coverage/overlap diagnostics were added:
 
 - Core engine: 46 tests passed.
 - Cube-sphere geometry checker: 8 tests passed.
-- Geodesic dual geometry checker: 13 tests passed.
-- **Total: 67 passed, 0 failed.**
+- Geodesic dual geometry checker: 14 tests passed.
+- **Total: 68 passed, 0 failed.**
 
-The geodesic checker includes checks for expected frequency-2 and frequency-3 counts, pentagon/hexagon distribution, deterministic generation, invalid inputs, degenerate cells, duplicate cell IDs, edge-use counts, shared-edge traversal in opposite directions, total spherical area, and positive finite signed spherical area for generated cells.
+The geodesic checker at that checkpoint included expected frequency-2 and frequency-3 counts, pentagon/hexagon distribution, deterministic generation, invalid inputs, degenerate cells, duplicate cell IDs, edge-use counts, shared-edge traversal in opposite directions, reciprocal and connected cell adjacency, total spherical area, and positive finite signed spherical area for generated cells.
 
-The cube-sphere checker includes expected mesh counts, quad loops, edge sharing, radius, positive cell areas, and total spherical area.
+The cube-sphere checker included expected mesh counts, quad loops, edge sharing, radius, positive cell areas, and total spherical area.
 
-These are the results of the local working tree at the time of this report. The topology checker source had local modifications during this audit; verify the working tree and run the commands below when synchronizing.
+The 14-test checkpoint was committed and pushed as `31e0f07` (`test: strengthen topology mesh validation`). Phase 3 diagnostics have since been added to the branch, but **their compilation, tests, and runtime audit have not yet been confirmed locally**. Run the commands at the end of this report after pulling.
 
 ## Interpretation
 
 - **Area uniformity:** the geodesic dual has lower measured cell-area variation than the tested cube-sphere mesh at these specific settings. This is a comparison result, not proof that the geodesic partition is the final design.
 - **Edge lengths:** the geodesic dual's measured edge lengths are more uniform in this comparison.
 - **Cell shape compatibility:** the geodesic dual provides mostly hexagons, with the expected 12 pentagons. The cube-sphere candidate produces quads, which do not directly satisfy a six-sided horizontal-cell requirement.
-- **Not yet proven:** positive signed area and total-area agreement do not prove global non-overlap or complete geometric coverage. These need separate robust validation.
+- **Earlier limitation:** positive signed area and total-area agreement alone do not prove global non-overlap or complete geometric coverage.
 - **Gameplay unchanged:** neither experimental mesh is connected to or alters the playable world's current topology.
+
+## Phase 3 — coverage and overlap diagnostics added, validation pending
+
+Commit `4cd1c8d` adds diagnostic-only code to `src/bin/topology_geometry_check.rs`:
+
+- Counts pairs of cells whose interiors appear to overlap, using spherical-polygon containment and great-circle minor-arc intersection checks.
+- Reports relative difference between the sum of valid measured cell areas and the full sphere area.
+- Adds a generated-mesh regression test expecting zero detected overlap pairs and relative area error below 1%.
+- Adds a missing-cell regression test expecting boundary edges and a measurable area deficit.
+- Adds a duplicate-cell regression test expecting overlap detection and excess summed area.
+
+**Important limitations:** the overlap check is designed for convex spherical polygons bounded by minor great-circle arcs. It is a practical diagnostic, not a formal proof for arbitrary, malformed, concave, or hemisphere-spanning polygons. The summed-area metric is a useful consistency signal but cannot by itself locate or prove the absence of gaps. Passing these tests must not be described as a mathematical guarantee of full coverage. Review the test results and observed metrics before treating this phase as validated.
 
 ## Remaining validation work
 
-1. Derive cell adjacency from shared edges and test reciprocal neighbor relationships.
-2. Strengthen global coverage and overlap validation.
-3. Decide how the 12 pentagonal cells of a geodesic dual could be represented while preserving Hexel's pure hexagonal-prism requirement; do not silently substitute arbitrary polyhedra.
-4. Test prism wall construction for cracks, overlaps, and inconsistent shared boundaries.
-5. Keep deterministic IDs and neighbor reciprocity as explicit invariants when adjacency data is designed.
+1. Run and review the new Phase 3 tests and geometry audit output on the local machine.
+2. Add adversarial tests for overlapping cells with different vertex sets and for boundary crossings, ensuring ordinary shared edges and shared vertices are not false positives.
+3. Strengthen independent coverage validation beyond total-area agreement and missing-cell detection.
+4. Decide how the 12 pentagonal cells of a geodesic dual could be represented while preserving Hexel's pure hexagonal-prism requirement; do not silently substitute arbitrary polyhedra.
+5. Test prism wall construction for cracks, overlaps, and inconsistent shared boundaries.
+6. Keep deterministic IDs and neighbor reciprocity as explicit invariants when adjacency data is designed.
 
 ## Reproducible commands
 
@@ -66,6 +79,9 @@ Run from the repository root:
 cargo test --bin cube_sphere_geometry_check
 cargo test --bin topology_geometry_check
 cargo test
+cargo run --bin topology_geometry_check -- 3
 ```
 
-**Decision at this checkpoint:** keep the work diagnostic-only. Do not change playable-world topology until the remaining invariants and the pure-hexagonal-prism compatibility question are resolved.
+Inspect the final audit output for `Overlapping cell pairs detected` and `Relative area coverage error`. The intended result for the generated frequency-3 mesh is zero detected overlap pairs and relative area error below 1%; investigate any failure rather than changing tolerances merely to make tests pass.
+
+**Decision at this checkpoint:** keep the work diagnostic-only. Do not change playable-world topology until Phase 3 has been tested locally, the remaining invariants have evidence, and the pure-hexagonal-prism compatibility question is resolved.
