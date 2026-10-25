@@ -64,11 +64,14 @@ The focused test `frequency_sweep_has_no_sampled_gaps_or_multiple_ownership` che
 
 ## Acceptance criteria
 
-- The focused topology checker and complete test suite pass.
+- The focused topology checker and complete test suite pass after Phase 6.
 - Generated frequency 2, 3, and 4 meshes have zero invalid radius, non-finite vertices, zero-length vertices, off-radius vertices, invalid cell indices, and repeated vertex IDs.
+- Generated frequency 2, 3, and 4 meshes report zero inconsistent edge orientations and zero invalid vertex links.
 - The frequency sweep reports zero sampled gaps and zero multiple ownership for all three generated meshes.
-- Deliberately malformed fixtures are counted by the intended diagnostics without panics.
-- Existing Phase 4 adversarial overlap and missing-cell/duplicate-cell tests continue to pass.
+- Tiny-cell containment, one-to-one coordinate matching, malformed-coordinate handling, inconsistent orientation, and disconnected vertex-link fixtures behave as expected.
+- Deliberately malformed fixtures are diagnosed without panics.
+- Existing adversarial overlap and missing-cell/duplicate-cell tests continue to pass.
+- Runtime audits at frequencies 2, 3, and 4 complete, and the new orientation/link counts are reviewed in their output.
 - No production gameplay topology or rendering code is changed.
 
 ## Recorded local validation results
