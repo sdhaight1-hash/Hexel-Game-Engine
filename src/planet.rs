@@ -265,6 +265,33 @@ impl PlanetGenerator {
             temperature_c: monthly_temperature,
             precipitation_mm: monthly_precipitation,
         }.classify(elevation.max(0.0));
+        // Ocean depth and extreme relief remain geographic overrides. On land, the
+        // climate subtype now drives the broad biome used by downstream systems.
+        let biome = if elevation < -self.config.elevation_scale * 0.12 {
+            Biome::DeepOcean
+        } else if elevation <= 0.0 {
+            if temperature_c < -3.0 { Biome::PolarIce } else { Biome::ShallowOcean }
+        } else if matches!(koppen, crate::climate::KoppenClass::Highland)
+            || elevation > self.config.elevation_scale * 0.68 {
+            Biome::Mountain
+        } else {
+            use crate::climate::KoppenClass as K;
+            match koppen {
+                K::EF => Biome::PolarIce,
+                K::ET => Biome::Tundra,
+                K::Dsa | K::Dsb | K::Dsc | K::Dsd | K::Dwa | K::Dwb | K::Dwc | K::Dwd
+                | K::Dfa | K::Dfb | K::Dfc | K::Dfd => Biome::BorealForest,
+                K::Af | K::Am => Biome::TropicalForest,
+                K::Aw | K::As => Biome::Savanna,
+                K::BWh | K::BWk => Biome::Desert,
+                K::BSh | K::BSk => Biome::Grassland,
+                K::Csa | K::Csb | K::Csc if moisture < 0.45 => Biome::Grassland,
+                K::Csa | K::Csb | K::Csc | K::Cwa | K::Cwb | K::Cwc
+                | K::Cfa | K::Cfb | K::Cfc =>
+                    if moisture > 0.52 { Biome::TemperateForest } else { Biome::Grassland },
+                K::Highland => Biome::Mountain,
+            }
+        };
         PlanetSample {
             direction,
             surface_position: direction * (self.config.radius + elevation),
