@@ -245,8 +245,21 @@ impl PlanetGenerator {
             let seasonal_wave = (phase * TAU - std::f64::consts::FRAC_PI_2).sin()
                 * if coord.latitude >= 0.0 { 1.0 } else { -1.0 };
             monthly_temperature[month] = annual_mean_temperature + seasonal_amplitude * seasonal_wave;
-            let rainfall_wave = 0.55 + 0.45 * seasonal_wave;
-            monthly_precipitation[month] = (moisture * 300.0 * rainfall_wave).max(0.0);
+            // Separate rainfall field adds regional variation; seasonal amplitude grows away from the equator.
+            let rainfall_detail = self.moisture_field.get([
+                direction.x * 8.1 + 13.7,
+                direction.y * 8.1 - 4.3,
+                direction.z * 8.1 + 21.9,
+            ]);
+            let continental_drying = 1.0 - smoothstep(-0.18, 0.58, continentalness) * 0.38;
+            let lee_side_penalty = if ridge_noise > 0.55 { 0.78 } else { 1.0 };
+            let precipitation_capacity = (moisture * 720.0
+                * (0.78 + rainfall_detail * 0.22)
+                * continental_drying * lee_side_penalty).max(0.0);
+            let seasonal_strength = 0.18 + 0.42 * coord.latitude.sin().abs();
+            let rainfall_wave = (1.0 + seasonal_strength * seasonal_wave
+                + rainfall_detail * 0.16).clamp(0.08, 1.55);
+            monthly_precipitation[month] = precipitation_capacity * rainfall_wave;
         }
         let koppen = crate::climate::MonthlyClimateNormals {
             temperature_c: monthly_temperature,
