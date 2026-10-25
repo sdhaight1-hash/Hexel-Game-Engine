@@ -93,6 +93,14 @@ Terrain faces use darker side shading and lighter top faces to make the hexagona
 - First-person mouse look, walking, jumping, gravity, and basic hexel placement/removal.
 - Random per-launch world seed, printed in the terminal.
 
+## Köppen climate and vegetation rules
+
+`src/climate.rs` defines monthly climate normals and a deterministic Köppen-Geiger classifier for tropical (A), arid (B), temperate (C), continental (D), polar (E), and highland (H) outcomes. It exposes subtype codes such as Af, Am, Aw, BWh, Csa, Cfb, Dfc, ET, and EF, with tests for representative rainforest, desert, tundra, ice-cap, and highland inputs.
+
+Planet samples now carry a `koppen` class, and the shared tree roster applies a climate-envelope gate as well as its existing temperature, moisture, elevation, and broad-biome checks. This prevents tropical hardwoods from appearing in cold continental climates and restricts cold-climate trees to appropriate cold subtypes.
+
+**Climate-model caveat:** monthly temperature and precipitation are currently synthesized from axial tilt, latitude, elevation, the existing temperature/moisture fields, and a seasonal rainfall curve. The classification thresholds operate on monthly normals, but those inputs are procedural estimates—not validated real-world climatology. Wind fields, circulation, ocean currents, orographic precipitation, and calibration against gridded climate data remain necessary before claiming Earth-like Köppen maps.
+
 ## Tree species and generation foundation
 
 The canonical starting roster is data-defined in `src/trees.rs`:
