@@ -838,52 +838,29 @@ impl Renderer {
             return;
         }
         self.edits.insert(cell, block);
-        let (chunk_pos, local) = cell.chunk_and_local();
-        let mut affected = vec![chunk_pos];
-        if local[0] == 0 {
-            affected.push(ChunkPos {
-                q: chunk_pos.q - 1,
-                ..chunk_pos
-            });
-        }
-        if local[0] == 15 {
-            affected.push(ChunkPos {
-                q: chunk_pos.q + 1,
-                ..chunk_pos
-            });
-        }
-        if local[1] == 0 {
-            affected.push(ChunkPos {
-                r: chunk_pos.r - 1,
-                ..chunk_pos
-            });
-        }
-        if local[1] == 15 {
-            affected.push(ChunkPos {
-                r: chunk_pos.r + 1,
-                ..chunk_pos
-            });
-        }
-        if local[2] == 0 {
-            affected.push(ChunkPos {
-                y: chunk_pos.y - 1,
-                ..chunk_pos
-            });
-        }
-        if local[2] == 15 {
-            affected.push(ChunkPos {
-                y: chunk_pos.y + 1,
-                ..chunk_pos
-            });
-        }
-        affected.sort_by_key(|p| (p.q, p.r, p.y));
-        affected.dedup();
-        self.dirty_chunks.extend(affected.iter().copied());
+
+        // Invalidate the chunk containing this cell and every chunk containing one
+        // of its actual neighbors. Axial hex neighbors can cross two chunk axes at
+        // once, so checking q/r boundaries independently misses diagonal chunks.
+        let affected = affected_chunks_for_cell(cell);
+        self.dirty_chunks.extend(
+            affected
+                .iter()
+                .copied()
+                .filter(|chunk| self.chunks.contains_key(chunk)),
+        );
         self.edit_revision = self.edit_revision.wrapping_add(1);
-        let chunks = affected
-            .into_iter()
-            .filter(|p| self.chunks.contains_key(p))
-            .collect();
+
+        // The worker intentionally coalesces queued jobs. Always include the union
+        // of dirty loaded chunks so an earlier edit cannot be lost when its job is
+        // superseded by a later edit.
+        let mut chunks = self
+            .dirty_chunks
+            .iter()
+            .copied()
+            .filter(|chunk| self.chunks.contains_key(chunk))
+            .collect::<Vec<_>>();
+        chunks.sort_by_key(|p| (p.q, p.r, p.y));
         let _ = self.mesh_job_tx.send(MeshJob {
             revision: self.edit_revision,
             seed: self.seed,
@@ -1394,6 +1371,18 @@ fn chunk_visible(view_proj: Mat4, camera_position: Vec3, forward: Vec3, chunk: &
     }
     true
 }
+fn affected_chunks_for_cell(cell: CellPos) -> Vec<ChunkPos> {
+    let mut affected = cell
+        .neighbors()
+        .into_iter()
+        .map(|neighbor| neighbor.chunk_and_local().0)
+        .collect::<Vec<_>>();
+    affected.push(cell.chunk_and_local().0);
+    affected.sort_by_key(|p| (p.q, p.r, p.y));
+    affected.dedup();
+    affected
+}
+
 fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPos) -> Vec<Vertex> {
     let scale = WorldScale::default();
     let q_start = chunk.q * CHUNK_SIZE;
@@ -2105,4 +2094,24 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
         }
     }
     pixels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edit_invalidates_diagonal_axial_neighbor_chunk() {
+        // The (q + 1, r - 1) neighbor crosses both chunk axes here.
+        let chunks = affected_chunks_for_cell(CellPos::new(15, 16, 4));
+        assert!(chunks.contains(&ChunkPos { q: 1, r: 0, y: 0 }));
+    }
+
+    #[test]
+    fn edit_invalidates_vertical_chunks_at_layer_boundaries() {
+        let below = affected_chunks_for_cell(CellPos::new(4, 4, 16));
+        let above = affected_chunks_for_cell(CellPos::new(4, 4, 15));
+        assert!(below.contains(&ChunkPos { q: 0, r: 0, y: 0 }));
+        assert!(above.contains(&ChunkPos { q: 0, r: 0, y: 1 }));
+    }
 }
