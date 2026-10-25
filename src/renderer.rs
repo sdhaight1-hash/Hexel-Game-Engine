@@ -237,6 +237,59 @@ impl Renderer {
         Ok(renderer)
     }
 
+    /// True when the player capsule would overlap a generated tree's solid trunk.
+    /// Tree roots use the same deterministic hash and reduced-density threshold as meshing.
+    pub fn tree_blocks_player(&self, position: Vec3, player_radius: f32, player_height: f32) -> bool {
+        let scale = WorldScale::default();
+        let cell = Self::cell_from_world(position);
+        for q in (cell.q - 2)..=(cell.q + 2) {
+            for r in (cell.r - 2)..=(cell.r + 2) {
+                let hash = vegetation_hash(self.seed, q, r);
+                if hash % 29 != 0 { continue; }
+                let terrain = terrain_height(self.seed, q, r);
+                let warmth = Perlin::new(self.seed.wrapping_add(0x51ED_270B))
+                    .get([q as f64 / 90.0, r as f64 / 90.0]);
+                let wetness = Perlin::new(self.seed.wrapping_add(0x51ED_270B))
+                    .get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
+                let conifer = warmth < -0.25 || wetness < -0.32;
+                let tropical = warmth > 0.38 && wetness > 0.05;
+                let roll = (hash >> 16) % 1000;
+                let (min_m, max_m, trunk_radius, giant) = if tropical {
+                    if roll < 22 { (55.0_f32, 95.0, 2, true) }
+                    else if roll < 105 { (25.0, 45.0, 1, false) }
+                    else { (16.0, 32.0, 1, false) }
+                } else if conifer {
+                    if roll < 8 { (55.0_f32, 95.0, 2, true) }
+                    else if roll < 570 { (18.0, 38.0, 1, false) }
+                    else { (10.0, 24.0, 1, false) }
+                } else if wetness > 0.25 {
+                    if roll < 9 { (55.0_f32, 95.0, 2, true) }
+                    else if roll < 590 { (18.0, 32.0, 1, false) }
+                    else { (10.0, 24.0, 1, false) }
+                } else { (6.0, 16.0, 1, false) };
+                let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
+                let mut height_m = min_m + (max_m - min_m) * variance;
+                if giant && (hash >> 28) % 4 != 0 { height_m = min_m * 0.55; }
+                let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
+                let trunk_top = layers * if tropical && roll < 22 { 3 } else { 2 } / 3;
+                let radius_cells = if trunk_radius > 1 { 0.70 } else { 0.43 };
+                let root = scale.prism_center(CellPos::new(q, r, terrain + 1));
+                let dx = position.x - root.x;
+                let dz = position.z - root.z;
+                let horizontal_limit = player_radius + scale.hex_radius * radius_cells;
+                let player_bottom = position.y;
+                let player_top = position.y + player_height;
+                let trunk_bottom = (terrain + 1) as f32 * scale.hexel_height;
+                let trunk_end = (terrain + 1 + trunk_top) as f32 * scale.hexel_height;
+                if dx * dx + dz * dz < horizontal_limit * horizontal_limit
+                    && player_top > trunk_bottom && player_bottom < trunk_end {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub fn ground_height(&self, q: i32, r: i32) -> f32 {
         let scale = WorldScale::default();
         let terrain_top = terrain_height(self.seed, q, r);
