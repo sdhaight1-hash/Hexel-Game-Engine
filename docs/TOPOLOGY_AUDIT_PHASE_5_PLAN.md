@@ -1,6 +1,6 @@
 # Topology Audit — Phase 5 Robustness and Frequency Scaling
 
-**Status:** Phase 5 validated by the user; Phase 6 audit hardening implemented, local validation pending.  
+**Status:** Phase 5 and Phase 6 validated by the user; frequency-4 coverage summary should be confirmed from the complete runtime output.  
 **Scope:** Offline diagnostic tooling only. Do not change gameplay topology, rendering, or production world generation.
 
 ## Goals
@@ -42,7 +42,7 @@ The current branch adds these review-driven checks to `src/bin/topology_geometry
 
 The new runtime metrics are `Inconsistent edge orientations` and `Invalid vertex links`. A clean generated mesh should report zero for both. The checks intentionally do not claim to certify arbitrary concave or hemisphere-spanning polygons.
 
-**Phase 6 local validation is pending.** The code has been pushed, but no post-change Rust test execution is claimed here.
+**Phase 6 local validation is complete for tests and reported topology metrics.** The user ran all test commands and runtime audits after pulling the changes.
 
 ## Local validation commands
 
@@ -104,6 +104,23 @@ Runtime results (radius 100; 4,096 coverage samples per run):
 | Maximum radius error | 0.000000000000 | 0.000000000000 | 0.000000000000 |
 
 The frequency-3 run excluded one sample on a cell boundary under the audit's ownership rules; it still found zero sampled gaps and zero multiple ownership. These are finite-sampling diagnostics, not a formal proof of complete coverage. No gameplay topology or rendering code was changed.
+
+## Phase 6 recorded validation
+
+The user reported the following results after pulling the Phase 6 audit hardening:
+
+- `cargo test --bin topology_geometry_check`: **38 passed, 0 failed**.
+- `cargo test --bin cube_sphere_geometry_check`: **8 passed, 0 failed**.
+- `cargo test`: **92 passed, 0 failed** (46 core, 8 cube-sphere, 38 topology; main and doc-test targets had zero tests).
+
+Runtime audits at frequencies 2, 3, and 4 completed. All three reported zero boundary edges, non-manifold edges, degenerate cells, duplicate cell IDs, invalid radius, non-finite vertices, zero-length vertices, off-radius vertices, invalid cell indices, repeated vertex IDs, inconsistent edge orientations, invalid vertex links, detected overlaps, and relative area coverage error. Maximum radius error was zero at all three frequencies.
+
+Coverage summaries visible in the user's pasted output:
+- Frequency 2: 4,096 samples covered exactly once; zero gaps, zero multiple ownership, zero boundary exclusions.
+- Frequency 3: 4,095 samples covered exactly once; zero gaps, zero multiple ownership, one boundary exclusion.
+- Frequency 4: the pasted output ended immediately after the relative area coverage error line, so its coverage-sample summary was not visible. The runtime audit did report the zero topology/input diagnostics and zero area-coverage error above.
+
+This completes the Phase 6 test-suite and topology-metric validation. For a fully documented frequency-4 sampling result, capture the final lines of `cargo run --bin topology_geometry_check -- 4` if needed. Do not describe finite sampling or area agreement as proof of mathematical completeness.
 
 ## Interpretation limits and next steps
 
