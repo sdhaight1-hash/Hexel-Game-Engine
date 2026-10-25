@@ -61,7 +61,10 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_ref() else { return; };
         let dt = dt.min(0.04);
         let forward = Vec3::new(self.camera.yaw.sin(), 0.0, self.camera.yaw.cos()).normalize_or_zero();
-        let right = Vec3::new(self.camera.yaw.cos(), 0.0, -self.camera.yaw.sin()).normalize_or_zero();
+        // `look_to_rh` defines screen-right as forward × world-up. With yaw=0
+        // the camera looks along +Z, so its actual right vector is -X, not +X.
+        // Keep this basis independent from mouse input: yaw only orients movement.
+        let right = Vec3::new(-self.camera.yaw.cos(), 0.0, self.camera.yaw.sin()).normalize_or_zero();
         let mut direction = Vec3::ZERO;
         if self.pressed.contains(&KeyCode::KeyW) { direction += forward; }
         if self.pressed.contains(&KeyCode::KeyS) { direction -= forward; }
