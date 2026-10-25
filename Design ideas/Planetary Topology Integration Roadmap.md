@@ -3,7 +3,7 @@
 **Status:** Phase 1 complete — implementation committed; developer reports latest full test suite passed  
 **Target:** Integrate the geodesic dual-cell topology into Hexel Engine incrementally without regressing existing gameplay.  
 **Primary implementation:** `src/topology.rs`  
-**Current verification:** After pulling the direction-sampling change, the developer-reported `cargo test` run passed all 102 tests: 56 library, 8 cube-sphere geometry, and 38 topology geometry tests; main and doc-test targets had zero tests and no failures.
+**Current verification:** The developer-reported latest `cargo test` run passed all 103 tests (57 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no tests). Phase 2 lookup changes are committed, and their new tests are awaiting a local run.
 
 This document is the working implementation roadmap. Update the phase status, decisions, test results, and any deviations as work lands. Prefer small, reviewable commits and keep `main` buildable.
 
@@ -53,18 +53,20 @@ This document is the working implementation roadmap. Update the phase status, de
 
 ## Phase 2 — Surface-cell lookup and neighbor traversal
 
+**Status:** In progress — public lookup/neighbor APIs and regression tests committed; local verification pending.
+
 **Goal:** Provide a dependable gameplay API for mapping positions/directions to cells and traversing the surface graph.
 
 ### Work
 
-- [ ] Specify lookup input semantics: normalized direction versus world-space position, radius handling, zero/non-finite input handling, and behavior for points near boundaries.
-- [ ] Keep the existing linear `nearest_cell` as the correctness reference; add an accelerated lookup only when profiling justifies it.
-- [ ] Add APIs for neighbor iteration and direct neighbor queries, with invalid-ID behavior made explicit.
-- [ ] Verify adjacency is reciprocal, neighbor IDs are valid, and traversal does not emit duplicates.
-- [ ] Define deterministic tie-breaking for directions exactly or nearly on cell boundaries.
-- [ ] Add tests for cell-center lookup, boundary cases, invalid directions, neighbor traversal, and connectivity across the sphere.
+- [x] Specify lookup input semantics: direction or planet-centered position, magnitude ignored, zero/non-finite inputs return `None`, and exact score ties choose the lowest cell ID.
+- [x] Keep the linear `nearest_cell` as the correctness reference; no acceleration added without profiling evidence.
+- [x] Add `neighbor_ids` and `are_neighbors`; invalid IDs return `None`, while valid non-adjacent pairs return `Some(false)`.
+- [x] Add tests for reciprocal adjacency, valid IDs, sorted unique neighbors, and whole-graph connectivity.
+- [x] Define deterministic exact-tie behavior (lowest cell ID); non-tied near-boundary inputs use the greatest dot-product score.
+- [x] Add tests for center lookup with scaled position vectors, symmetric tie resolution, invalid directions/IDs, neighbor queries, and connected traversal across the sphere.
 - [ ] Introduce gameplay/movement integration through an adapter rather than replacing movement or collision in one change.
-- [ ] Run focused lookup/traversal tests, then `cargo test`.
+- [ ] Run focused lookup/traversal tests, then `cargo test` after pulling commit [2831ad2](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/2831ad2a031bc47a702ff7b373bf74c73068a6d3).
 
 ### Exit criteria
 
@@ -181,6 +183,14 @@ This document is the working implementation roadmap. Update the phase status, de
 - The new same-seed/same-cell determinism regression test passed.
 - Developer previously confirmed `cargo run --bin hexel-engine` launches successfully.
 - Phase 1 is closed for the sampler/height-contract scope. Renderer, movement, collision, persistence, and live gameplay integration remain explicitly out of scope and must be handled in later phases.
+
+### Phase 2 — lookup and neighbor API
+
+- Commit: [2831ad2](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/2831ad2a031bc47a702ff7b373bf74c73068a6d3).
+- Added `cell_id_for_direction`, `neighbor_ids`, and `are_neighbors` to `SurfaceTopology` without changing the existing renderer or gameplay path.
+- Clarified `nearest_cell` input semantics and made exact-score ties choose the lowest cell ID. Invalid direction inputs return `None`; invalid neighbor IDs return `None`.
+- Added regression tests for scaled center lookup, tie determinism, sorted/unique neighbor IDs, reciprocal adjacency, invalid IDs, and full graph connectivity.
+- Verification pending: developer should pull and run `cargo test`; the new tests have not been run locally yet.
 
 ### Implementation notes
 
