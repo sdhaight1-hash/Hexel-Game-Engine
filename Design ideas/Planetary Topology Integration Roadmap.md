@@ -1,6 +1,6 @@
 # Planetary Topology Integration Roadmap
 
-**Status:** Phase 1 complete; Phase 2 lookup/neighbor APIs verified; opt-in navigation adapter committed, adapter verification pending  
+**Status:** Phase 1 complete; Phase 2 APIs/adapter verified by reported tests; Phase 3 CPU surface-mesh adapter committed, local verification pending  
 **Target:** Integrate the geodesic dual-cell topology into Hexel Engine incrementally without regressing existing gameplay.  
 **Primary implementation:** `src/topology.rs`  
 **Current verification:** Developer-reported `cargo test` after pulling the Phase 2 changes passed **107 tests, 0 failed** (61 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no tests).
@@ -84,9 +84,9 @@ This document is the working implementation roadmap. Update the phase status, de
 ### Work
 
 - [ ] Audit current renderer, mesh, chunk, raycast, and world-edit assumptions before selecting an integration boundary.
-- [ ] Define a render-mesh adapter that consumes topology boundaries and cell terrain data; keep rendering types out of the core topology module.
-- [ ] Ensure boundary vertices are shared or canonicalized consistently so adjacent cells do not develop cracks due to independent calculations.
-- [ ] Define how pentagons, hexagons, and any future cell side counts map to mesh construction; do not assume every surface cell is a hexagon.
+- [x] Define a CPU-side surface-mesh adapter that consumes topology boundaries and terrain samples; keep renderer-specific types out of the core topology module. Local verification pending.
+- [x] Sample boundary corners by direction so adjacent cells derive identical terrain-displaced positions for shared corners; regression test added, local verification pending.
+- [x] Triangulate arbitrary polygon side counts with a center fan; regression test covers pentagonal and hexagonal cells. Local verification pending.
 - [ ] Preserve winding, outward normals, radius constraints, and shared-edge consistency.
 - [ ] Connect raycasting and selection to the same cell geometry or a verified equivalent, avoiding visual/gameplay disagreement.
 - [ ] Map edits to a surface-cell identity through a world-state adapter. Keep current world-edit behavior intact until equivalent semantics are tested.
@@ -217,3 +217,12 @@ This document is the working implementation roadmap. Update the phase status, de
 - Developer ran the full `cargo test` suite after pulling the surface-navigation adapter commits.
 - Result: **111 passed, 0 failed**: 65 library tests (including 4 `surface_navigation` tests), 8 cube-sphere geometry tests, and 38 topology geometry tests. Main and documentation test targets had no failures.
 - The opt-in navigation adapter is verified. Phase 2 should be reviewed against all exit criteria before closure; the existing flat gameplay path has intentionally not been switched to spherical movement.
+
+
+### Phase 3 first slice — CPU surface mesh adapter — 2026-10-25
+
+- Commit [64c1e0d](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/64c1e0da04a4859c4dcde73c97c869c23c3babd6) adds `src/surface_mesh.rs` and defines a renderer-independent `SurfaceMesh` built from topology cell centers, polygon boundaries, and `PlanetGenerator` samples.
+- Commit [f047d17](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/f047d17d9bad2f098c9bcc90ea1685afc8b7374a) exports `surface_mesh` from `src/lib.rs`.
+- The mesh adapter triangulates each cell as a center fan, supports non-six-sided cells, corrects triangle winding outward, and terrain-displaces boundary corners by direction so shared corners receive identical positions.
+- Added tests for expected triangle count/pentagon coverage, finite positions and elevations, outward winding, and shared-corner consistency. These tests are committed but **local verification is pending**; the developer must pull and run the test suite.
+- This is a CPU data adapter only. It is not connected to `renderer.rs`, camera-relative rendering, raycasting, or world edits. The existing flat gameplay path remains unchanged.
