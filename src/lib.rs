@@ -3,6 +3,7 @@
 
 pub mod climate;
 pub mod geology;
+pub mod inventory;
 pub mod planet;
 pub mod soil;
 pub mod trees;
