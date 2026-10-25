@@ -1,6 +1,6 @@
 # Topology Audit — Phase 5 Robustness and Frequency Scaling
 
-**Status:** Implemented and locally validated by the user.  
+**Status:** Phase 5 validated by the user; Phase 6 audit hardening implemented, local validation pending.  
 **Scope:** Offline diagnostic tooling only. Do not change gameplay topology, rendering, or production world generation.
 
 ## Goals
@@ -28,6 +28,21 @@ The radius check uses a scale-aware tolerance:
 This is a diagnostic tolerance, not a universal geometric guarantee. A cell with invalid indices or repeated vertex IDs is counted as degenerate by the existing audit. New diagnostics should be reviewed together with the existing geometry metrics.
 
 Regression tests cover invalid radius and non-finite coordinates, zero-length and off-radius vertices, invalid indices and repeated IDs, tolerance scaling, and deterministic coverage sampling at frequencies 2, 3, and 4 using 1,024 samples per frequency.
+
+## Phase 6 audit-hardening changes
+
+The current branch adds these review-driven checks to `src/bin/topology_geometry_check.rs`:
+
+- Unit-normalized edge-plane signed-side tests with an explicit spherical side tolerance.
+- Input guards for non-finite and zero-length point/cell coordinates.
+- One-to-one coordinate-set matching for duplicate polygon detection.
+- Runtime counts for same-direction traversals of edges used by exactly two cells.
+- Runtime vertex-link validation: each referenced mesh vertex should have a nonempty, connected link in which every link node has degree two (one cycle).
+- Regression tests for tiny cells, one-to-one coordinate matching, malformed coordinates, inconsistent orientation, disconnected vertex links, and generated frequencies 2–4.
+
+The new runtime metrics are `Inconsistent edge orientations` and `Invalid vertex links`. A clean generated mesh should report zero for both. The checks intentionally do not claim to certify arbitrary concave or hemisphere-spanning polygons.
+
+**Phase 6 local validation is pending.** The code has been pushed, but no post-change Rust test execution is claimed here.
 
 ## Local validation commands
 
