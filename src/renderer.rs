@@ -648,7 +648,6 @@ impl Renderer {
             }
         }
         if !self.planet_preview {
-        {
             let mut overlay = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Crosshair overlay pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
@@ -660,7 +659,6 @@ impl Renderer {
             overlay.draw(4..8, 0..1);
             overlay.set_vertex_buffer(0, hud_buffer.slice(..));
             overlay.draw(0..hud_vertices.len() as u32, 0..1);
-        }
         }
         self.queue.submit(Some(encoder.finish())); frame.present(); Ok(())
     }
