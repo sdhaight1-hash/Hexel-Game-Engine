@@ -1,4 +1,3 @@
-
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug)]
@@ -86,9 +85,12 @@ fn generate_cube_sphere(resolution: u32, radius: f64) -> Option<Mesh> {
 
     // Each face is defined by a fixed axis and two axes that vary from -1 to 1.
     let faces = [
-        (0, 1.0), (0, -1.0),
-        (1, 1.0), (1, -1.0),
-        (2, 1.0), (2, -1.0),
+        (0, 1.0),
+        (0, -1.0),
+        (1, 1.0),
+        (1, -1.0),
+        (2, 1.0),
+        (2, -1.0),
     ];
 
     for (axis, sign) in faces {
@@ -100,9 +102,21 @@ fn generate_cube_sphere(resolution: u32, radius: f64) -> Option<Mesh> {
                 let v = -1.0 + 2.0 * j as f64 / n as f64;
 
                 let cube_point = match axis {
-                    0 => Point3 { x: sign, y: u, z: v },
-                    1 => Point3 { x: u, y: sign, z: v },
-                    _ => Point3 { x: u, y: v, z: sign },
+                    0 => Point3 {
+                        x: sign,
+                        y: u,
+                        z: v,
+                    },
+                    1 => Point3 {
+                        x: u,
+                        y: sign,
+                        z: v,
+                    },
+                    _ => Point3 {
+                        x: u,
+                        y: v,
+                        z: sign,
+                    },
                 };
 
                 let point = cube_to_sphere(cube_point, radius);
@@ -159,15 +173,19 @@ fn spherical_polygon_area(mesh: &Mesh, cell: &[usize], radius: f64) -> f64 {
 }
 
 fn area_statistics(mesh: &Mesh, radius: f64) -> (f64, f64, f64, f64) {
-    let areas: Vec<f64> = mesh.cells.iter()
+    let areas: Vec<f64> = mesh
+        .cells
+        .iter()
         .map(|cell| spherical_polygon_area(mesh, cell, radius))
         .collect();
     let min = areas.iter().copied().fold(f64::INFINITY, f64::min);
     let max = areas.iter().copied().fold(0.0_f64, f64::max);
     let mean = areas.iter().sum::<f64>() / areas.len() as f64;
-    let variance = areas.iter()
+    let variance = areas
+        .iter()
         .map(|area| (area - mean) * (area - mean))
-        .sum::<f64>() / areas.len() as f64;
+        .sum::<f64>()
+        / areas.len() as f64;
     let coefficient_of_variation = variance.sqrt() / mean;
     (min, max, mean, coefficient_of_variation)
 }
@@ -199,7 +217,9 @@ fn main() {
 
     let boundary_edges = edges.values().filter(|&&uses| uses == 1).count();
     let non_manifold_edges = edges.values().filter(|&&uses| uses > 2).count();
-    let max_radius_error = mesh.vertices.iter()
+    let max_radius_error = mesh
+        .vertices
+        .iter()
         .map(|point| (point.norm() - radius).abs())
         .fold(0.0_f64, f64::max);
     let mean_edge_length = edge_lengths.iter().sum::<f64>() / edge_lengths.len() as f64;
@@ -226,7 +246,6 @@ fn main() {
     );
     println!("Cell area coefficient of variation: {area_cv:.6}");
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -313,7 +332,9 @@ mod tests {
     fn total_spherical_area_is_close_to_sphere_area() {
         let radius = 100.0;
         let mesh = generate_cube_sphere(4, radius).expect("valid mesh");
-        let total: f64 = mesh.cells.iter()
+        let total: f64 = mesh
+            .cells
+            .iter()
             .map(|cell| spherical_polygon_area(&mesh, cell, radius))
             .sum();
         let sphere_area = 4.0 * std::f64::consts::PI * radius * radius;

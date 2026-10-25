@@ -15,13 +15,25 @@ struct Point3 {
 
 impl Point3 {
     fn add(self, other: Self) -> Self {
-        Self { x: self.x + other.x, y: self.y + other.y, z: self.z + other.z }
+        Self {
+            x: self.x + other.x,
+            y: self.y + other.y,
+            z: self.z + other.z,
+        }
     }
     fn sub(self, other: Self) -> Self {
-        Self { x: self.x - other.x, y: self.y - other.y, z: self.z - other.z }
+        Self {
+            x: self.x - other.x,
+            y: self.y - other.y,
+            z: self.z - other.z,
+        }
     }
     fn scale(self, s: f64) -> Self {
-        Self { x: self.x * s, y: self.y * s, z: self.z * s }
+        Self {
+            x: self.x * s,
+            y: self.y * s,
+            z: self.z * s,
+        }
     }
     fn dot(self, other: Self) -> f64 {
         self.x * other.x + self.y * other.y + self.z * other.z
@@ -33,9 +45,15 @@ impl Point3 {
             z: self.x * other.y - self.y * other.x,
         }
     }
-    fn norm(self) -> f64 { self.dot(self).sqrt() }
-    fn normalized(self) -> Self { self.scale(1.0 / self.norm()) }
-    fn distance(self, other: Self) -> f64 { self.sub(other).norm() }
+    fn norm(self) -> f64 {
+        self.dot(self).sqrt()
+    }
+    fn normalized(self) -> Self {
+        self.scale(1.0 / self.norm())
+    }
+    fn distance(self, other: Self) -> f64 {
+        self.sub(other).norm()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -81,7 +99,9 @@ fn spherical_polygon_area(mesh: &MeshInput, cell: &PolygonCell) -> f64 {
         return 0.0;
     }
 
-    let points: Vec<Point3> = cell.vertices.iter()
+    let points: Vec<Point3> = cell
+        .vertices
+        .iter()
         .map(|&id| mesh.vertices[id].normalized())
         .collect();
     let anchor = points[0];
@@ -108,7 +128,9 @@ fn audit(mesh: &MeshInput) -> AuditReport {
     let mut cell_areas = Vec::new();
 
     for cell in &mesh.cells {
-        if !seen_ids.insert(cell.id) { duplicate_cell_ids += 1; }
+        if !seen_ids.insert(cell.id) {
+            duplicate_cell_ids += 1;
+        }
         *side_counts.entry(cell.vertices.len()).or_insert(0) += 1;
         if cell.vertices.len() < 3 {
             degenerate_cells += 1;
@@ -116,22 +138,26 @@ fn audit(mesh: &MeshInput) -> AuditReport {
         }
 
         let mut distinct = BTreeSet::new();
-        let invalid = cell.vertices.iter().any(|&id| {
-            id >= mesh.vertices.len() || !distinct.insert(id)
-        });
-        if invalid { degenerate_cells += 1; continue; }
+        let invalid = cell
+            .vertices
+            .iter()
+            .any(|&id| id >= mesh.vertices.len() || !distinct.insert(id));
+        if invalid {
+            degenerate_cells += 1;
+            continue;
+        }
 
         let area = spherical_polygon_area(mesh, cell);
         if area.is_finite() && area > 0.0 {
             cell_areas.push(area);
-        } else {
-            degenerate_cells += 1;
         }
 
         for i in 0..cell.vertices.len() {
             let a = cell.vertices[i];
             let b = cell.vertices[(i + 1) % cell.vertices.len()];
-            if a == b { continue; }
+            if a == b {
+                continue;
+            }
             *edge_uses.entry(edge_key(a, b)).or_insert(0) += 1;
             edge_lengths.push(mesh.vertices[a].distance(mesh.vertices[b]));
         }
@@ -139,21 +165,31 @@ fn audit(mesh: &MeshInput) -> AuditReport {
 
     let boundary_edges = edge_uses.values().filter(|&&uses| uses == 1).count();
     let non_manifold_edges = edge_uses.values().filter(|&&uses| uses > 2).count();
-    let max_radius_error = mesh.vertices.iter()
+    let max_radius_error = mesh
+        .vertices
+        .iter()
         .map(|v| (v.norm() - mesh.radius).abs())
         .fold(0.0_f64, f64::max);
     let min_edge_length = edge_lengths.iter().copied().reduce(f64::min);
     let max_edge_length = edge_lengths.iter().copied().reduce(f64::max);
-    let mean_edge_length = if edge_lengths.is_empty() { None }
-        else { Some(edge_lengths.iter().sum::<f64>() / edge_lengths.len() as f64) };
+    let mean_edge_length = if edge_lengths.is_empty() {
+        None
+    } else {
+        Some(edge_lengths.iter().sum::<f64>() / edge_lengths.len() as f64)
+    };
     let min_cell_area = cell_areas.iter().copied().reduce(f64::min);
     let max_cell_area = cell_areas.iter().copied().reduce(f64::max);
-    let mean_cell_area = if cell_areas.is_empty() { None }
-        else { Some(cell_areas.iter().sum::<f64>() / cell_areas.len() as f64) };
+    let mean_cell_area = if cell_areas.is_empty() {
+        None
+    } else {
+        Some(cell_areas.iter().sum::<f64>() / cell_areas.len() as f64)
+    };
     let cell_area_coefficient_of_variation = mean_cell_area.map(|mean| {
-        let variance = cell_areas.iter()
+        let variance = cell_areas
+            .iter()
             .map(|area| (area - mean) * (area - mean))
-            .sum::<f64>() / cell_areas.len() as f64;
+            .sum::<f64>()
+            / cell_areas.len() as f64;
         variance.sqrt() / mean
     });
 
@@ -178,10 +214,26 @@ fn audit(mesh: &MeshInput) -> AuditReport {
 }
 
 const ICOSAHEDRON_FACES: [[usize; 3]; 20] = [
-    [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
-    [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-    [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-    [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+    [0, 11, 5],
+    [0, 5, 1],
+    [0, 1, 7],
+    [0, 7, 10],
+    [0, 10, 11],
+    [1, 5, 9],
+    [5, 11, 4],
+    [11, 10, 2],
+    [10, 7, 6],
+    [7, 1, 8],
+    [3, 9, 4],
+    [3, 4, 2],
+    [3, 2, 6],
+    [3, 6, 8],
+    [3, 8, 9],
+    [4, 9, 5],
+    [2, 4, 11],
+    [6, 2, 10],
+    [8, 6, 7],
+    [9, 8, 1],
 ];
 
 /// Build an icosphere triangulation, then its spherical dual polygon mesh.
@@ -189,15 +241,71 @@ const ICOSAHEDRON_FACES: [[usize; 3]; 20] = [
 /// a shared dual vertex. Cell loops are angularly ordered in each vertex's
 /// tangent plane, giving 12 pentagons and hexagons elsewhere.
 fn generate_icosphere_dual(frequency: u32, radius: f64) -> Option<MeshInput> {
-    if frequency == 0 || !radius.is_finite() || radius <= 0.0 { return None; }
+    if frequency == 0 || !radius.is_finite() || radius <= 0.0 {
+        return None;
+    }
     let phi = (1.0 + 5.0_f64.sqrt()) / 2.0;
     let raw = [
-        Point3 { x: -1.0, y: phi, z: 0.0 }, Point3 { x: 1.0, y: phi, z: 0.0 },
-        Point3 { x: -1.0, y: -phi, z: 0.0 }, Point3 { x: 1.0, y: -phi, z: 0.0 },
-        Point3 { x: 0.0, y: -1.0, z: phi }, Point3 { x: 0.0, y: 1.0, z: phi },
-        Point3 { x: 0.0, y: -1.0, z: -phi }, Point3 { x: 0.0, y: 1.0, z: -phi },
-        Point3 { x: phi, y: 0.0, z: -1.0 }, Point3 { x: phi, y: 0.0, z: 1.0 },
-        Point3 { x: -phi, y: 0.0, z: -1.0 }, Point3 { x: -phi, y: 0.0, z: 1.0 },
+        Point3 {
+            x: -1.0,
+            y: phi,
+            z: 0.0,
+        },
+        Point3 {
+            x: 1.0,
+            y: phi,
+            z: 0.0,
+        },
+        Point3 {
+            x: -1.0,
+            y: -phi,
+            z: 0.0,
+        },
+        Point3 {
+            x: 1.0,
+            y: -phi,
+            z: 0.0,
+        },
+        Point3 {
+            x: 0.0,
+            y: -1.0,
+            z: phi,
+        },
+        Point3 {
+            x: 0.0,
+            y: 1.0,
+            z: phi,
+        },
+        Point3 {
+            x: 0.0,
+            y: -1.0,
+            z: -phi,
+        },
+        Point3 {
+            x: 0.0,
+            y: 1.0,
+            z: -phi,
+        },
+        Point3 {
+            x: phi,
+            y: 0.0,
+            z: -1.0,
+        },
+        Point3 {
+            x: phi,
+            y: 0.0,
+            z: 1.0,
+        },
+        Point3 {
+            x: -phi,
+            y: 0.0,
+            z: -1.0,
+        },
+        Point3 {
+            x: -phi,
+            y: 0.0,
+            z: 1.0,
+        },
     ];
     let base: Vec<Point3> = raw.into_iter().map(Point3::normalized).collect();
     let mut sphere_vertices = Vec::<Point3>::new();
@@ -212,8 +320,10 @@ fn generate_icosphere_dual(frequency: u32, radius: f64) -> Option<MeshInput> {
         let mut grid = vec![vec![0usize; n + 1]; n + 1];
         for (i, row) in grid.iter_mut().enumerate().take(n + 1) {
             for (j, slot) in row.iter_mut().enumerate().take(n - i + 1) {
-                let point = a.scale((n - i - j) as f64)
-                    .add(b.scale(i as f64)).add(c.scale(j as f64))
+                let point = a
+                    .scale((n - i - j) as f64)
+                    .add(b.scale(i as f64))
+                    .add(c.scale(j as f64))
                     .normalized();
                 let key = [
                     (point.x * 1_000_000_000.0).round() as i64,
@@ -241,8 +351,12 @@ fn generate_icosphere_dual(frequency: u32, radius: f64) -> Option<MeshInput> {
     let mut incident_triangles = vec![Vec::<usize>::new(); sphere_vertices.len()];
     let mut dual_vertices = Vec::with_capacity(triangles.len());
     for (triangle_id, tri) in triangles.iter().enumerate() {
-        let center = sphere_vertices[tri[0]].add(sphere_vertices[tri[1]])
-            .add(sphere_vertices[tri[2]]).scale(1.0 / 3.0).normalized().scale(radius);
+        let center = sphere_vertices[tri[0]]
+            .add(sphere_vertices[tri[1]])
+            .add(sphere_vertices[tri[2]])
+            .scale(1.0 / 3.0)
+            .normalized()
+            .scale(radius);
         dual_vertices.push(center);
         for &vertex_id in tri {
             incident_triangles[vertex_id].push(triangle_id);
@@ -251,17 +365,31 @@ fn generate_icosphere_dual(frequency: u32, radius: f64) -> Option<MeshInput> {
 
     let mut cells = Vec::with_capacity(sphere_vertices.len());
     for (cell_id, &center_dir) in sphere_vertices.iter().enumerate() {
-        let mut tangent = Point3 { x: 0.0, y: 0.0, z: 1.0 };
+        let mut tangent = Point3 {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+        };
         if center_dir.dot(tangent).abs() > 0.9 {
-            tangent = Point3 { x: 0.0, y: 1.0, z: 0.0 };
+            tangent = Point3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            };
         }
         let axis_x = tangent.cross(center_dir).normalized();
         let axis_y = center_dir.cross(axis_x).normalized();
-        let mut around: Vec<(f64, usize)> = incident_triangles[cell_id].iter().map(|&tri_id| {
-            let p = dual_vertices[tri_id].scale(1.0 / radius);
-            let angle = p.sub(center_dir).dot(axis_y).atan2(p.sub(center_dir).dot(axis_x));
-            (angle, tri_id)
-        }).collect();
+        let mut around: Vec<(f64, usize)> = incident_triangles[cell_id]
+            .iter()
+            .map(|&tri_id| {
+                let p = dual_vertices[tri_id].scale(1.0 / radius);
+                let angle = p
+                    .sub(center_dir)
+                    .dot(axis_y)
+                    .atan2(p.sub(center_dir).dot(axis_x));
+                (angle, tri_id)
+            })
+            .collect();
         around.sort_by(|a, b| a.0.total_cmp(&b.0));
         cells.push(PolygonCell {
             id: cell_id,
@@ -269,12 +397,18 @@ fn generate_icosphere_dual(frequency: u32, radius: f64) -> Option<MeshInput> {
         });
     }
 
-    Some(MeshInput { radius, vertices: dual_vertices, cells })
+    Some(MeshInput {
+        radius,
+        vertices: dual_vertices,
+        cells,
+    })
 }
 
 fn main() {
-    let frequency = std::env::args().nth(1)
-        .and_then(|s| s.parse::<u32>().ok()).unwrap_or(2);
+    let frequency = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(2);
     let radius = 100.0;
     println!("Geodesic dual polygon audit (icosphere frequency {frequency}, radius {radius})");
     match generate_icosphere_dual(frequency, radius) {
@@ -293,12 +427,18 @@ fn main() {
             println!("Degenerate cells: {}", report.degenerate_cells);
             println!("Duplicate cell IDs: {}", report.duplicate_cell_ids);
             println!("Maximum radius error: {:.12}", report.max_radius_error);
-            println!("Edge length min / mean / max: {:?} / {:?} / {:?}",
-                report.min_edge_length, report.mean_edge_length, report.max_edge_length);
-            println!("Spherical cell area min / mean / max: {:?} / {:?} / {:?}",
-                report.min_cell_area, report.mean_cell_area, report.max_cell_area);
-            println!("Cell area coefficient of variation: {:?}",
-                report.cell_area_coefficient_of_variation);
+            println!(
+                "Edge length min / mean / max: {:?} / {:?} / {:?}",
+                report.min_edge_length, report.mean_edge_length, report.max_edge_length
+            );
+            println!(
+                "Spherical cell area min / mean / max: {:?} / {:?} / {:?}",
+                report.min_cell_area, report.mean_cell_area, report.max_cell_area
+            );
+            println!(
+                "Cell area coefficient of variation: {:?}",
+                report.cell_area_coefficient_of_variation
+            );
         }
     }
 }
@@ -311,14 +451,36 @@ mod tests {
         MeshInput {
             radius: 1.0,
             vertices: vec![
-                Point3 { x: 1.0, y: 0.0, z: 0.0 },
-                Point3 { x: 0.0, y: 1.0, z: 0.0 },
-                Point3 { x: -1.0, y: 0.0, z: 0.0 },
-                Point3 { x: 0.0, y: -1.0, z: 0.0 },
+                Point3 {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                Point3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
+                Point3 {
+                    x: -1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                Point3 {
+                    x: 0.0,
+                    y: -1.0,
+                    z: 0.0,
+                },
             ],
             cells: vec![
-                PolygonCell { id: 10, vertices: vec![0, 1, 2] },
-                PolygonCell { id: 11, vertices: vec![0, 2, 3] },
+                PolygonCell {
+                    id: 10,
+                    vertices: vec![0, 1, 2],
+                },
+                PolygonCell {
+                    id: 11,
+                    vertices: vec![0, 2, 3],
+                },
             ],
         }
     }
@@ -334,7 +496,10 @@ mod tests {
     #[test]
     fn detects_non_manifold_edge_used_by_three_cells() {
         let mut mesh = square_mesh();
-        mesh.cells.push(PolygonCell { id: 12, vertices: vec![0, 2, 1] });
+        mesh.cells.push(PolygonCell {
+            id: 12,
+            vertices: vec![0, 2, 1],
+        });
         assert_eq!(audit(&mesh).non_manifold_edges, 1);
     }
 
@@ -363,7 +528,10 @@ mod tests {
     #[test]
     fn marks_cells_with_too_few_vertices_as_degenerate() {
         let mut mesh = square_mesh();
-        mesh.cells.push(PolygonCell { id: 12, vertices: vec![0, 1] });
+        mesh.cells.push(PolygonCell {
+            id: 12,
+            vertices: vec![0, 1],
+        });
         assert_eq!(audit(&mesh).degenerate_cells, 1);
     }
 
@@ -382,7 +550,12 @@ mod tests {
         assert!(report.max_radius_error < 1e-10);
         assert!(report.min_cell_area.unwrap() > 0.0);
         assert!(report.max_cell_area.unwrap() >= report.min_cell_area.unwrap());
-        assert!(report.cell_area_coefficient_of_variation.unwrap().is_finite());
+        assert!(
+            report
+                .cell_area_coefficient_of_variation
+                .unwrap()
+                .is_finite()
+        );
     }
 
     #[test]
@@ -398,7 +571,12 @@ mod tests {
         assert!(report.max_radius_error < 1e-10);
         assert!(report.min_cell_area.unwrap() > 0.0);
         assert!(report.max_cell_area.unwrap() >= report.min_cell_area.unwrap());
-        assert!(report.cell_area_coefficient_of_variation.unwrap().is_finite());
+        assert!(
+            report
+                .cell_area_coefficient_of_variation
+                .unwrap()
+                .is_finite()
+        );
     }
 
     #[test]
@@ -413,7 +591,9 @@ mod tests {
         let a = generate_icosphere_dual(2, 1.0).unwrap();
         let b = generate_icosphere_dual(2, 1.0).unwrap();
         assert_eq!(audit(&a), audit(&b));
-        assert_eq!(a.cells.iter().map(|c| &c.vertices).collect::<Vec<_>>(),
-                   b.cells.iter().map(|c| &c.vertices).collect::<Vec<_>>());
+        assert_eq!(
+            a.cells.iter().map(|c| &c.vertices).collect::<Vec<_>>(),
+            b.cells.iter().map(|c| &c.vertices).collect::<Vec<_>>()
+        );
     }
 }
