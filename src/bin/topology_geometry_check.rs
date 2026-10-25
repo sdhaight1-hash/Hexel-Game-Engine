@@ -198,11 +198,15 @@ fn spherical_cells_overlap(mesh: &MeshInput, a: &PolygonCell, b: &PolygonCell) -
         return false;
     };
 
-    // Identical vertex sets represent duplicate cell interiors, even though every
-    // vertex lies on the other polygon's boundary.
+    // Duplicate interiors may use either the same vertex IDs or distinct vertex
+    // records at the same coordinates. Compare normalized coordinate sets so the
+    // result does not depend on mesh indexing.
     let ids_a: BTreeSet<usize> = a.vertices.iter().copied().collect();
     let ids_b: BTreeSet<usize> = b.vertices.iter().copied().collect();
-    if ids_a == ids_b {
+    let same_coordinate_set = points_a.len() == points_b.len()
+        && points_a.iter().all(|pa| points_b.iter().any(|pb| pa.distance(*pb) <= 1e-8))
+        && points_b.iter().all(|pb| points_a.iter().any(|pa| pa.distance(*pb) <= 1e-8));
+    if ids_a == ids_b || same_coordinate_set {
         return true;
     }
 
@@ -243,6 +247,80 @@ fn spherical_cells_overlap(mesh: &MeshInput, a: &PolygonCell, b: &PolygonCell) -
     }
 
     false
+}
+
+/// Deterministic coverage sampling report. Samples on any cell boundary are
+/// excluded from ownership counts because strict point-in-cell predicates
+/// intentionally classify boundaries as neither inside nor outside.
+#[derive(Clone, Debug, PartialEq)]
+struct CoverageReport {
+    sample_count: usize,
+    covered_samples: usize,
+    gap_samples: usize,
+    multiply_owned_samples: usize,
+    boundary_samples: usize,
+}
+
+fn point_on_minor_arc(a: Point3, b: Point3, point: Point3) -> bool {
+    let normal = a.cross(b);
+    if normal.norm() <= 1e-12 {
+        return false;
+    }
+    normal.dot(point).abs() <= 1e-9
+        && (a.angle(point) + point.angle(b) - a.angle(b)).abs() <= 1e-8
+}
+
+fn point_on_any_cell_boundary(mesh: &MeshInput, point: Point3) -> bool {
+    mesh.cells.iter().any(|cell| {
+        let Some(points) = cell_points(mesh, cell) else {
+            return false;
+        };
+        (0..points.len()).any(|i| {
+            point_on_minor_arc(points[i], points[(i + 1) % points.len()], point)
+        })
+    })
+}
+
+/// Sample directions using a deterministic Fibonacci-sphere sequence.
+/// This is an independent coverage signal, not a formal proof of coverage.
+fn sample_spherical_coverage(mesh: &MeshInput, sample_count: usize) -> CoverageReport {
+    let mut report = CoverageReport {
+        sample_count,
+        covered_samples: 0,
+        gap_samples: 0,
+        multiply_owned_samples: 0,
+        boundary_samples: 0,
+    };
+    if sample_count == 0 {
+        return report;
+    }
+
+    let golden_angle = std::f64::consts::PI * (3.0 - 5.0_f64.sqrt());
+    for i in 0..sample_count {
+        let z = 1.0 - 2.0 * (i as f64 + 0.5) / sample_count as f64;
+        let radial = (1.0 - z * z).max(0.0).sqrt();
+        let longitude = golden_angle * i as f64;
+        let point = Point3 {
+            x: radial * longitude.cos(),
+            y: radial * longitude.sin(),
+            z,
+        };
+
+        if point_on_any_cell_boundary(mesh, point) {
+            report.boundary_samples += 1;
+            continue;
+        }
+
+        let owners = mesh.cells.iter()
+            .filter(|cell| point_strictly_inside_spherical_cell(mesh, cell, point))
+            .count();
+        match owners {
+            0 => report.gap_samples += 1,
+            1 => report.covered_samples += 1,
+            _ => report.multiply_owned_samples += 1,
+        }
+    }
+    report
 }
 
 fn audit(mesh: &MeshInput) -> AuditReport {
@@ -590,6 +668,12 @@ fn main() {
                 "Relative area coverage error: {:.8}",
                 report.relative_area_coverage_error
             );
+            let coverage = sample_spherical_coverage(&mesh, 4096);
+            println!("Spherical coverage samples: {}", coverage.sample_count);
+            println!("Samples covered by exactly one cell: {}", coverage.covered_samples);
+            println!("Sampled gaps: {}", coverage.gap_samples);
+            println!("Samples with multiple owners: {}", coverage.multiply_owned_samples);
+            println!("Boundary samples excluded: {}", coverage.boundary_samples);
         }
     }
 }
@@ -634,6 +718,33 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn tangent_point(x: f64, y: f64) -> Point3 {
+        Point3 { x, y, z: 1.0 }.normalized()
+    }
+
+    fn tangent_quad(x0: f64, x1: f64, y0: f64, y1: f64) -> Vec<Point3> {
+        vec![
+            tangent_point(x0, y0),
+            tangent_point(x1, y0),
+            tangent_point(x1, y1),
+            tangent_point(x0, y1),
+        ]
+    }
+
+    fn separate_polygon_mesh(polygons: Vec<Vec<Point3>>) -> MeshInput {
+        let mut vertices = Vec::new();
+        let mut cells = Vec::new();
+        for (id, polygon) in polygons.into_iter().enumerate() {
+            let start = vertices.len();
+            vertices.extend(polygon);
+            cells.push(PolygonCell {
+                id,
+                vertices: (start..vertices.len()).collect(),
+            });
+        }
+        MeshInput { radius: 1.0, vertices, cells }
     }
 
     fn directed_edge_uses(mesh: &MeshInput) -> BTreeMap<(usize, usize), usize> {
@@ -692,6 +803,115 @@ mod tests {
         }
 
         signed_area * mesh.radius * mesh.radius
+    }
+
+    #[test]
+    fn duplicate_polygon_with_distinct_vertex_ids_is_detected() {
+        let polygon = tangent_quad(-0.5, 0.5, -0.5, 0.5);
+        let mesh = separate_polygon_mesh(vec![polygon.clone(), polygon]);
+        assert!(spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+    }
+
+    #[test]
+    fn partial_overlap_with_crossing_edges_is_detected() {
+        let mesh = separate_polygon_mesh(vec![
+            tangent_quad(-0.8, 0.2, -0.8, 0.2),
+            tangent_quad(-0.2, 0.8, -0.2, 0.8),
+        ]);
+        assert!(spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+    }
+
+    #[test]
+    fn strict_containment_is_detected_as_overlap() {
+        let mesh = separate_polygon_mesh(vec![
+            tangent_quad(-0.8, 0.8, -0.8, 0.8),
+            tangent_quad(-0.2, 0.2, -0.2, 0.2),
+        ]);
+        assert!(spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+    }
+
+    #[test]
+    fn shared_edge_without_interior_overlap_is_not_detected_as_overlap() {
+        let vertices = vec![
+            tangent_point(-0.7, -0.6),
+            tangent_point(0.0, -0.6),
+            tangent_point(0.0, 0.6),
+            tangent_point(-0.7, 0.6),
+            tangent_point(0.7, -0.6),
+            tangent_point(0.7, 0.6),
+        ];
+        let mesh = MeshInput {
+            radius: 1.0,
+            vertices,
+            cells: vec![
+                PolygonCell { id: 0, vertices: vec![0, 1, 2, 3] },
+                PolygonCell { id: 1, vertices: vec![1, 4, 5, 2] },
+            ],
+        };
+        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+    }
+
+    #[test]
+    fn shared_vertex_without_interior_overlap_is_not_detected_as_overlap() {
+        let mesh = separate_polygon_mesh(vec![
+            tangent_quad(-0.8, 0.0, -0.8, 0.0),
+            tangent_quad(0.0, 0.8, 0.0, 0.8),
+        ]);
+        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+    }
+
+    #[test]
+    fn disjoint_polygons_are_not_detected_as_overlapping() {
+        let mesh = separate_polygon_mesh(vec![
+            tangent_quad(-0.9, -0.5, -0.2, 0.2),
+            tangent_quad(0.5, 0.9, -0.2, 0.2),
+        ]);
+        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+    }
+
+    #[test]
+    fn near_boundary_gap_is_deterministic_and_not_an_overlap() {
+        let mesh = separate_polygon_mesh(vec![
+            tangent_quad(-0.6, 0.0, -0.5, 0.5),
+            tangent_quad(1e-5, 0.6, -0.5, 0.5),
+        ]);
+        let first = spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]);
+        let second = spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]);
+        assert_eq!(first, second);
+        assert!(!first, "a positive gap should not be classified as overlap");
+    }
+
+    #[test]
+    fn deterministic_spherical_sampling_validates_generated_mesh_coverage() {
+        let mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+        let a = sample_spherical_coverage(&mesh, 4096);
+        let b = sample_spherical_coverage(&mesh, 4096);
+        assert_eq!(a, b);
+        assert_eq!(a.sample_count, 4096);
+        assert_eq!(a.gap_samples, 0, "unexpected sampled gaps: {a:?}");
+        assert_eq!(a.multiply_owned_samples, 0, "unexpected multiple ownership: {a:?}");
+        assert_eq!(a.covered_samples + a.boundary_samples, a.sample_count);
+    }
+
+    #[test]
+    fn spherical_sampling_detects_gaps_after_removing_a_cell() {
+        let mut mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+        mesh.cells.remove(0);
+        let coverage = sample_spherical_coverage(&mesh, 4096);
+        assert!(coverage.gap_samples > 0, "expected sampled gaps: {coverage:?}");
+    }
+
+    #[test]
+    fn spherical_sampling_detects_multiple_ownership_after_duplicate_cell() {
+        let mut mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+        let mut duplicate = mesh.cells[0].clone();
+        duplicate.id = mesh.cells.len();
+        mesh.cells.push(duplicate);
+        let coverage = sample_spherical_coverage(&mesh, 4096);
+        assert!(
+            coverage.multiply_owned_samples > 0,
+            "expected sampled multiple ownership: {coverage:?}"
+        );
     }
 
     #[test]
