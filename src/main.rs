@@ -149,7 +149,7 @@ impl ApplicationHandler for HexelApp {
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u32
             ^ std::process::id().rotate_left(13);
         let attributes = Window::default_attributes()
-            .with_title("Hexel Engine | WASD move | Space jump | Left remove | Right place | Esc mouse")
+            .with_title("Hexel Engine | WASD move | Space jump | Left remove | Right place | I inspect | Esc mouse")
             .with_inner_size(PhysicalSize::new(1280, 800));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
@@ -162,7 +162,7 @@ impl ApplicationHandler for HexelApp {
                 self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
                 info!(seed, "Generated streamed 16×16×16 hexel prism chunks; use this seed to identify this world");
                 println!("Hexel Engine world seed: {seed}");
-                println!("WASD move | Mouse look | Space jump | Left-click remove | Right-click place | Esc release mouse");
+                println!("WASD move | Mouse look | Space jump | Left-click remove | Right-click place | I inspect target | Esc release mouse");
                 self.window = Some(window);
                 self.renderer = Some(renderer);
                 self.lock_cursor();
@@ -185,6 +185,11 @@ impl ApplicationHandler for HexelApp {
                         if self.cursor_locked { self.unlock_cursor(); } else { self.lock_cursor(); }
                     }
                     if event.state == ElementState::Pressed {
+                        if code == KeyCode::KeyI {
+                            if let Some(renderer) = self.renderer.as_ref() {
+                                println!("{}", renderer.describe_target(self.camera.position, self.camera.forward(), 8.0));
+                            }
+                        }
                         if code == KeyCode::Space && !self.pressed.contains(&code) { self.jump_requested = true; }
                         self.pressed.insert(code);
                     } else { self.pressed.remove(&code); }
