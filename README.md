@@ -4,6 +4,13 @@ A native Rust prototype for a first-person, fully 3D world built from hexagonal-
 
 Hexel Engine's long-term goal is a **finite, spherical world** with coherent planetary geography, system-driven climate, and strict resource conservation. The current build is an early flat-world prototype; the planetary systems described below are design goals, not features claimed to be implemented.
 
+## Playable-world additions in this branch
+
+The flat prototype now renders deterministic, coordinate-stable trees in streamed terrain chunks, with several canopy silhouettes/colors chosen from a lightweight local climate proxy. Surface grass, soil, and exposed bedrock also have deterministic color variation so the ground is less visually uniform. These are presentation-level first steps: they are not yet full species-driven tree placement from planetary biomes, and the visible rock bands do not yet represent actual `RockType` strata or spawned ore deposits.
+
+**What am I looking at?** Aim at a solid block and press **I**. The console prints its current material/surface-layer description and cell coordinates. This is an initial inspection affordance, not yet an in-game Vintage Story-style HUD panel. It deliberately identifies geology and soil integration as incomplete rather than claiming that the data modules already drive the playable world.
+
+
 ## Design vision
 
 ### A real, finite globe
