@@ -529,8 +529,8 @@ fn build_target_outline(cell: CellPos) -> Vec<Vertex> {
     let color = [1.0, 0.92, 0.12];
     let mut vertices = Vec::with_capacity(36);
     let mut edge = |a: Vec3, b: Vec3| {
-        vertices.push(Vertex { position: a.to_array(), color });
-        vertices.push(Vertex { position: b.to_array(), color });
+        vertices.push(Vertex { position: a.to_array(), color, uv: [0.0, 0.0], textured: 0.0 });
+        vertices.push(Vertex { position: b.to_array(), color, uv: [0.0, 0.0], textured: 0.0 });
     };
     for i in 0..6 {
         let next = (i + 1) % 6;
@@ -821,9 +821,9 @@ fn create_foliage_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
         &pixels,
-        wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(SIZE * 4), rows_per_image: Some(SIZE) },
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(SIZE * 4), rows_per_image: Some(SIZE) },
         wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
     );
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
