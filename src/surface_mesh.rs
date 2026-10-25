@@ -107,7 +107,17 @@ mod tests {
         let expected: usize = topology.cells().iter().map(|cell| cell.boundary.len()).sum();
 
         assert_eq!(mesh.triangles.len(), expected);
-        assert_eq!(mesh.triangles.iter().filter(|t| t.cell_id.0 < 12).count(), 60);
+        assert_eq!(
+            mesh.triangles
+                .iter()
+                .filter(|triangle| {
+                    topology.cells().iter().any(|cell| {
+                        cell.id == triangle.cell_id && cell.boundary.len() == 5
+                    })
+                })
+                .count(),
+            60
+        );
         assert!(mesh.triangles.iter().all(|triangle| {
             triangle.vertices.iter().all(|vertex| {
                 vertex.position.is_finite() && vertex.sample.elevation.is_finite()
