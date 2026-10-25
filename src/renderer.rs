@@ -601,21 +601,21 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
         }
     }
     // Coordinate-hashed trees are stable across chunk reloads.
+    let vegetation_climate = Perlin::new(seed.wrapping_add(0x51ED_270B));
     for q in q_start..q_end {
         for r in r_start..r_end {
             let height = *heights.get(&(q, r)).unwrap_or(&0);
             if height < 0 || chunk.y != height.div_euclid(CHUNK_SIZE) { continue; }
             let hash = vegetation_hash(seed, q, r);
             if hash % 7 != 0 { continue; }
-            let climate = Perlin::new(seed.wrapping_add(0x51ED_270B));
-            let warmth = climate.get([q as f64 / 90.0, r as f64 / 90.0]);
-            let wetness = climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
+            let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
+            let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
             let conifer = warmth < -0.25 || wetness < -0.32;
             let center = scale.prism_center(CellPos::new(q, r, height));
             let tree_height = (if warmth > 0.38 && wetness > 0.05 { 4.8 } else if conifer { 3.0 } else { 3.6 }) * (0.78 + ((hash >> 8) % 100) as f32 / 230.0);
             let trunk = if conifer { [0.43, 0.34, 0.23] } else { [0.35, 0.22, 0.12] };
             let foliage = if warmth > 0.38 && wetness > 0.05 { [0.08, 0.36, 0.12] } else if conifer { [0.13, 0.32, 0.16] } else { [0.20, 0.49, 0.17] };
-            append_tree(&mut vertices, center, scale.hexel_height * (height + 1) as f32, scale.hex_radius * 0.17, tree_height, trunk, foliage, conifer);
+            append_tree(&mut vertices, center, scale.hexel_height * (height + 1) as f32, scale.hex_radius * 0.17, tree_height, (trunk, foliage), conifer);
         }
     }
     vertices
@@ -635,7 +635,8 @@ fn vegetation_hash(seed: u32, q: i32, r: i32) -> u32 {
     x ^= x >> 16; x = x.wrapping_mul(0x7FEB_352D); x ^= x >> 15; x = x.wrapping_mul(0x846C_A68B); x ^ (x >> 16)
 }
 
-fn append_tree(vertices: &mut Vec<Vertex>, center: Vec3, ground: f32, trunk_radius: f32, height: f32, trunk: [f32; 3], foliage: [f32; 3], conifer: bool) {
+fn append_tree(vertices: &mut Vec<Vertex>, center: Vec3, ground: f32, trunk_radius: f32, height: f32, colors: ([f32; 3], [f32; 3]), conifer: bool) {
+    let (trunk, foliage) = colors;
     let ring = |y: f32, radius: f32| -> [Vec3; 6] { std::array::from_fn(|i| { let a = (30.0_f32 + i as f32 * 60.0).to_radians(); Vec3::new(center.x + a.cos() * radius, y, center.z + a.sin() * radius) }) };
     let base = ring(ground, trunk_radius); let top = ring(ground + height * 0.62, trunk_radius * 0.7);
     for i in 0..6 { let j = (i + 1) % 6; push_triangle(vertices, Vec3::new(center.x, ground, center.z), base[i], base[j], trunk); push_triangle(vertices, base[i], top[i], top[j], trunk); push_triangle(vertices, base[i], top[j], base[j], trunk); }
