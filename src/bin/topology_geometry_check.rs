@@ -54,6 +54,9 @@ impl Point3 {
     fn distance(self, other: Self) -> f64 {
         self.sub(other).norm()
     }
+    fn angle(self, other: Self) -> f64 {
+        self.cross(other).norm().atan2(self.dot(other))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -88,6 +91,10 @@ struct AuditReport {
     max_cell_area: Option<f64>,
     mean_cell_area: Option<f64>,
     cell_area_coefficient_of_variation: Option<f64>,
+    /// Number of cell pairs with overlapping interiors under the convex spherical-cell model.
+    overlapping_cell_pairs: usize,
+    /// Relative difference between summed cell area and the full sphere area.
+    relative_area_coverage_error: f64,
 }
 
 fn edge_key(a: usize, b: usize) -> (usize, usize) {
@@ -116,6 +123,126 @@ fn spherical_polygon_area(mesh: &MeshInput, cell: &PolygonCell) -> f64 {
     }
 
     unit_area * mesh.radius * mesh.radius
+}
+
+fn cell_points(mesh: &MeshInput, cell: &PolygonCell) -> Option<Vec<Point3>> {
+    if cell.vertices.len() < 3 {
+        return None;
+    }
+
+    let mut distinct = BTreeSet::new();
+    let mut points = Vec::with_capacity(cell.vertices.len());
+    for &vertex_id in &cell.vertices {
+        if vertex_id >= mesh.vertices.len() || !distinct.insert(vertex_id) {
+            return None;
+        }
+        let point = mesh.vertices[vertex_id].normalized();
+        if !point.norm().is_finite() {
+            return None;
+        }
+        points.push(point);
+    }
+
+    Some(points)
+}
+
+/// Strict containment for a convex spherical polygon whose edges are minor great-circle arcs.
+fn point_strictly_inside_spherical_cell(
+    mesh: &MeshInput,
+    cell: &PolygonCell,
+    point: Point3,
+) -> bool {
+    let Some(points) = cell_points(mesh, cell) else {
+        return false;
+    };
+
+    let zero = Point3 { x: 0.0, y: 0.0, z: 0.0 };
+    let center_sum = points.iter().copied().fold(zero, Point3::add);
+    if center_sum.norm() <= 1e-12 {
+        return false;
+    }
+    let center = center_sum.normalized();
+
+    for i in 0..points.len() {
+        let a = points[i];
+        let b = points[(i + 1) % points.len()];
+        let edge_normal = a.cross(b);
+        if edge_normal.norm() <= 1e-12 {
+            return false;
+        }
+
+        let center_side = edge_normal.dot(center);
+        let point_side = edge_normal.dot(point);
+        if center_side.abs() <= 1e-12 || point_side * center_side <= 1e-10 {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn point_is_in_minor_arc_interior(a: Point3, b: Point3, point: Point3) -> bool {
+    let angle_ab = a.angle(b);
+    let angle_ap = a.angle(point);
+    let angle_pb = point.angle(b);
+
+    angle_ap > 1e-8
+        && angle_pb > 1e-8
+        && (angle_ap + angle_pb - angle_ab).abs() < 1e-7
+}
+
+/// Detects positive-area overlap between convex spherical polygons.
+/// Shared boundary edges and shared vertices alone are not overlaps.
+fn spherical_cells_overlap(mesh: &MeshInput, a: &PolygonCell, b: &PolygonCell) -> bool {
+    let (Some(points_a), Some(points_b)) = (cell_points(mesh, a), cell_points(mesh, b)) else {
+        return false;
+    };
+
+    // Identical vertex sets represent duplicate cell interiors, even though every
+    // vertex lies on the other polygon's boundary.
+    let ids_a: BTreeSet<usize> = a.vertices.iter().copied().collect();
+    let ids_b: BTreeSet<usize> = b.vertices.iter().copied().collect();
+    if ids_a == ids_b {
+        return true;
+    }
+
+    if points_a
+        .iter()
+        .any(|&point| point_strictly_inside_spherical_cell(mesh, b, point))
+        || points_b
+            .iter()
+            .any(|&point| point_strictly_inside_spherical_cell(mesh, a, point))
+    {
+        return true;
+    }
+
+    // If neither polygon contains a vertex of the other, overlapping boundaries
+    // must cross in the interiors of two minor arcs.
+    for i in 0..points_a.len() {
+        let a0 = points_a[i];
+        let a1 = points_a[(i + 1) % points_a.len()];
+        let normal_a = a0.cross(a1);
+        for j in 0..points_b.len() {
+            let b0 = points_b[j];
+            let b1 = points_b[(j + 1) % points_b.len()];
+            let normal_b = b0.cross(b1);
+            let intersection_axis = normal_a.cross(normal_b);
+            if intersection_axis.norm() <= 1e-10 {
+                continue;
+            }
+
+            let intersection = intersection_axis.normalized();
+            for candidate in [intersection, intersection.scale(-1.0)] {
+                if point_is_in_minor_arc_interior(a0, a1, candidate)
+                    && point_is_in_minor_arc_interior(b0, b1, candidate)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 fn audit(mesh: &MeshInput) -> AuditReport {
@@ -193,6 +320,23 @@ fn audit(mesh: &MeshInput) -> AuditReport {
         variance.sqrt() / mean
     });
 
+    let sphere_area = 4.0 * std::f64::consts::PI * mesh.radius * mesh.radius;
+    let total_cell_area: f64 = cell_areas.iter().sum();
+    let relative_area_coverage_error = if sphere_area.is_finite() && sphere_area > 0.0 {
+        (total_cell_area - sphere_area).abs() / sphere_area
+    } else {
+        f64::INFINITY
+    };
+
+    let mut overlapping_cell_pairs = 0;
+    for i in 0..mesh.cells.len() {
+        for j in i + 1..mesh.cells.len() {
+            if spherical_cells_overlap(mesh, &mesh.cells[i], &mesh.cells[j]) {
+                overlapping_cell_pairs += 1;
+            }
+        }
+    }
+
     AuditReport {
         cell_count: mesh.cells.len(),
         vertex_count: mesh.vertices.len(),
@@ -210,6 +354,8 @@ fn audit(mesh: &MeshInput) -> AuditReport {
         max_cell_area,
         mean_cell_area,
         cell_area_coefficient_of_variation,
+        overlapping_cell_pairs,
+        relative_area_coverage_error,
     }
 }
 
@@ -438,6 +584,11 @@ fn main() {
             println!(
                 "Cell area coefficient of variation: {:?}",
                 report.cell_area_coefficient_of_variation
+            );
+            println!("Overlapping cell pairs detected: {}", report.overlapping_cell_pairs);
+            println!(
+                "Relative area coverage error: {:.8}",
+                report.relative_area_coverage_error
             );
         }
     }
@@ -688,6 +839,42 @@ mod tests {
             total.is_finite() && (total - sphere_area).abs() / sphere_area < 0.01,
             "total cell area {total} differs from sphere area {sphere_area}"
         );
+    }
+
+    #[test]
+    fn generated_mesh_has_no_detectable_overlaps_and_covers_sphere_area() {
+        let mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+        let report = audit(&mesh);
+
+        assert_eq!(report.overlapping_cell_pairs, 0);
+        assert!(
+            report.relative_area_coverage_error < 0.01,
+            "relative area coverage error was {}",
+            report.relative_area_coverage_error
+        );
+    }
+
+    #[test]
+    fn removing_a_cell_is_reported_as_incomplete_coverage() {
+        let mut mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+        mesh.cells.remove(0);
+        let report = audit(&mesh);
+
+        assert!(report.boundary_edges > 0);
+        assert!(report.relative_area_coverage_error > 0.001);
+        assert_eq!(report.overlapping_cell_pairs, 0);
+    }
+
+    #[test]
+    fn duplicate_cell_is_reported_as_an_overlap() {
+        let mut mesh = generate_icosphere_dual(2, 100.0).expect("valid mesh");
+        let mut duplicate = mesh.cells[0].clone();
+        duplicate.id = mesh.cells.len() + 1;
+        mesh.cells.push(duplicate);
+
+        let report = audit(&mesh);
+        assert!(report.overlapping_cell_pairs > 0);
+        assert!(report.relative_area_coverage_error > 0.01);
     }
 
     #[test]
