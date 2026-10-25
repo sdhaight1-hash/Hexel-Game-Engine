@@ -15,15 +15,36 @@ const RENDER_DISTANCE: f32 = 110.0;
 const SHADER: &str = r#"
 struct Camera { view_proj: mat4x4<f32>, };
 @group(0) @binding(0) var<uniform> camera: Camera;
-struct VertexInput { @location(0) position: vec3<f32>, @location(1) color: vec3<f32>, };
-struct VertexOutput { @builtin(position) clip_position: vec4<f32>, @location(0) color: vec3<f32>, };
+@group(1) @binding(0) var foliage_texture: texture_2d<f32>;
+@group(1) @binding(1) var foliage_sampler: sampler;
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) color: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) textured: f32,
+};
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) textured: f32,
+};
 @vertex fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     output.clip_position = camera.view_proj * vec4<f32>(input.position, 1.0);
     output.color = input.color;
+    output.uv = input.uv;
+    output.textured = input.textured;
     return output;
 }
-@fragment fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> { return vec4<f32>(input.color, 1.0); }
+@fragment fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if input.textured > 0.5 {
+        let leaf = textureSample(foliage_texture, foliage_sampler, input.uv);
+        if leaf.a < 0.42 { discard; }
+        return vec4<f32>(input.color * leaf.rgb, 1.0);
+    }
+    return vec4<f32>(input.color, 1.0);
+}
 "#;
 
 const OVERLAY_SHADER: &str = r#"
@@ -40,9 +61,9 @@ struct VertexOutput { @builtin(position) clip_position: vec4<f32>, @location(0) 
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex { position: [f32; 3], color: [f32; 3] }
+struct Vertex { position: [f32; 3], color: [f32; 3], uv: [f32; 2], textured: f32 }
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32];
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress, step_mode: wgpu::VertexStepMode::Vertex, attributes: &Self::ATTRIBUTES }
     }
@@ -79,7 +100,7 @@ pub struct Renderer {
     outline_pipeline: wgpu::RenderPipeline, overlay_pipeline: wgpu::RenderPipeline,
     crosshair_buffer: wgpu::Buffer, target_buffer: wgpu::Buffer,
     chunks: HashMap<ChunkPos, ChunkMesh>, camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
+    camera_bind_group: wgpu::BindGroup, foliage_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
     _depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
     seed: u32, edits: HashMap<CellPos, BlockId>,
     mesh_job_tx: Sender<MeshJob>, mesh_result_rx: Receiver<MeshResult>, dirty_chunks: HashSet<ChunkPos>, edit_revision: u64,
@@ -121,7 +142,30 @@ impl Renderer {
             label: Some("Camera bind group"), layout: &camera_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: camera_buffer.as_entire_binding() }],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("Hexel pipeline layout"), bind_group_layouts: &[&camera_layout], push_constant_ranges: &[] });
+        let foliage_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Foliage texture layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None,
+                },
+            ],
+        });
+        let (foliage_texture, foliage_sampler) = create_foliage_texture(&device, &queue);
+        let foliage_view = foliage_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let foliage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Alpha-cutout foliage texture"),
+            layout: &foliage_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&foliage_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&foliage_sampler) },
+            ],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("Hexel pipeline layout"), bind_group_layouts: &[&camera_layout, &foliage_layout], push_constant_ranges: &[] });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Hexel prism pipeline"), layout: Some(&layout),
             vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: wgpu::PipelineCompilationOptions::default(), buffers: &[Vertex::layout()] },
@@ -148,14 +192,14 @@ impl Renderer {
             depth_stencil: None, multisample: wgpu::MultisampleState::default(), multiview: None, cache: None,
         });
         let crosshair_vertices = [
-            Vertex { position: [-0.018, 0.0, 0.0], color: [0.02, 0.02, 0.02] },
-            Vertex { position: [ 0.018, 0.0, 0.0], color: [0.02, 0.02, 0.02] },
-            Vertex { position: [0.0, -0.025, 0.0], color: [0.02, 0.02, 0.02] },
-            Vertex { position: [0.0,  0.025, 0.0], color: [0.02, 0.02, 0.02] },
-            Vertex { position: [-0.010, 0.0, 0.0], color: [1.0, 1.0, 1.0] },
-            Vertex { position: [ 0.010, 0.0, 0.0], color: [1.0, 1.0, 1.0] },
-            Vertex { position: [0.0, -0.015, 0.0], color: [1.0, 1.0, 1.0] },
-            Vertex { position: [0.0,  0.015, 0.0], color: [1.0, 1.0, 1.0] },
+            Vertex { position: [-0.018, 0.0, 0.0], color: [0.02, 0.02, 0.02], uv: [0.0, 0.0], textured: 0.0 },
+            Vertex { position: [ 0.018, 0.0, 0.0], color: [0.02, 0.02, 0.02], uv: [0.0, 0.0], textured: 0.0 },
+            Vertex { position: [0.0, -0.025, 0.0], color: [0.02, 0.02, 0.02], uv: [0.0, 0.0], textured: 0.0 },
+            Vertex { position: [0.0,  0.025, 0.0], color: [0.02, 0.02, 0.02], uv: [0.0, 0.0], textured: 0.0 },
+            Vertex { position: [-0.010, 0.0, 0.0], color: [1.0, 1.0, 1.0], uv: [0.0, 0.0], textured: 0.0 },
+            Vertex { position: [ 0.010, 0.0, 0.0], color: [1.0, 1.0, 1.0], uv: [0.0, 0.0], textured: 0.0 },
+            Vertex { position: [0.0, -0.015, 0.0], color: [1.0, 1.0, 1.0], uv: [0.0, 0.0], textured: 0.0 },
+            Vertex { position: [0.0,  0.015, 0.0], color: [1.0, 1.0, 1.0], uv: [0.0, 0.0], textured: 0.0 },
         ];
         let crosshair_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Centered crosshair"), contents: bytemuck::cast_slice(&crosshair_vertices), usage: wgpu::BufferUsages::VERTEX,
@@ -176,7 +220,7 @@ impl Renderer {
         }).map_err(|e| format!("Could not start mesh worker: {e}"))?;
         let mut renderer = Self {
             surface, device, queue, config, pipeline, outline_pipeline, overlay_pipeline, crosshair_buffer, target_buffer, chunks: HashMap::new(),
-            camera_buffer, camera_bind_group, size, _depth_texture: depth_texture, depth_view,
+            camera_buffer, camera_bind_group, foliage_bind_group, size, _depth_texture: depth_texture, depth_view,
             seed, edits: HashMap::new(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
             pending_mesh_chunks: VecDeque::new(), pending_mesh_count: 0, pending_mesh_revision: 0,
         };
@@ -433,6 +477,7 @@ impl Renderer {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(1, &self.foliage_bind_group, &[]);
             let view_proj = camera.view_projection(self.size);
             let forward = camera.forward();
             for chunk in self.chunks.values() {
@@ -698,13 +743,94 @@ fn append_hexel_prism(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldSca
     let top_color = [(color[0] * 1.10).min(1.0), (color[1] * 1.10).min(1.0), (color[2] * 1.10).min(1.0)];
     for i in 0..6 {
         let j = (i + 1) % 6;
-        push_triangle(vertices, Vec3::new(center.x, top, center.z), Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), top_color);
+        if wood {
+            push_triangle(vertices, Vec3::new(center.x, top, center.z), Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), top_color);
+        } else {
+            push_textured_triangle(vertices, [
+                (Vec3::new(center.x, top, center.z), [0.5, 0.5]),
+                (Vec3::new(ring[i].x, top, ring[i].z), [0.0, 0.0]),
+                (Vec3::new(ring[j].x, top, ring[j].z), [1.0, 0.0]),
+            ], top_color);
+        }
         let shade = 0.55 + i as f32 * 0.045;
         let side = [color[0] * shade, color[1] * shade, color[2] * shade];
-        push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), side);
-        push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), Vec3::new(ring[j].x, bottom, ring[j].z), side);
+        if wood {
+            push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), side);
+            push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), Vec3::new(ring[j].x, bottom, ring[j].z), side);
+        } else {
+            let a_bottom = Vec3::new(ring[i].x, bottom, ring[i].z);
+            let a_top = Vec3::new(ring[i].x, top, ring[i].z);
+            let b_bottom = Vec3::new(ring[j].x, bottom, ring[j].z);
+            let b_top = Vec3::new(ring[j].x, top, ring[j].z);
+            push_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (a_top, [0.0, 0.0]), (b_top, [1.0, 0.0])], side);
+            push_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (b_top, [1.0, 0.0]), (b_bottom, [1.0, 1.0])], side);
+        }
     }
 }
 fn push_triangle(vertices: &mut Vec<Vertex>, a: Vec3, b: Vec3, c: Vec3, color: [f32; 3]) {
-    for point in [a, b, c] { vertices.push(Vertex { position: point.to_array(), color }); }
+    for point in [a, b, c] { vertices.push(Vertex { position: point.to_array(), color, uv: [0.0, 0.0], textured: 0.0 }); }
+}
+
+fn push_textured_triangle(vertices: &mut Vec<Vertex>, points: [(Vec3, [f32; 2]); 3], color: [f32; 3]) {
+    for (point, uv) in points {
+        vertices.push(Vertex { position: point.to_array(), color, uv, textured: 1.0 });
+    }
+}
+
+fn create_foliage_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::Sampler) {
+    // A small generated RGBA atlas: opaque leaf clusters with transparent gaps.
+    // This keeps the prototype self-contained while exercising the same alpha-cutout path
+    // that imported, artist-authored foliage textures will use later.
+    const SIZE: u32 = 32;
+    let mut pixels = vec![0_u8; (SIZE * SIZE * 4) as usize];
+    let mut state = 0xA341_316C_u32;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    for _ in 0..18 {
+        let cx = (next() % SIZE) as i32;
+        let cy = (next() % SIZE) as i32;
+        let rx = 2 + (next() % 5) as i32;
+        let ry = 2 + (next() % 4) as i32;
+        let shade = (next() % 44) as i16;
+        for y in (cy - ry).max(0)..=(cy + ry).min(SIZE as i32 - 1) {
+            for x in (cx - rx).max(0)..=(cx + rx).min(SIZE as i32 - 1) {
+                let dx = x - cx;
+                let dy = y - cy;
+                let jitter = (next() % 9) as i32 - 4;
+                if dx * dx * ry * ry + dy * dy * rx * rx > rx * rx * ry * ry + jitter * rx * ry { continue; }
+                if next() % 11 == 0 { continue; }
+                let index = ((y as u32 * SIZE + x as u32) * 4) as usize;
+                pixels[index] = (48_i16 + shade).clamp(24, 105) as u8;
+                pixels[index + 1] = (100_i16 + shade * 2).clamp(65, 190) as u8;
+                pixels[index + 2] = (28_i16 + shade / 2).clamp(18, 70) as u8;
+                pixels[index + 3] = 255;
+            }
+        }
+    }
+    // Remove isolated pixels so the silhouette reads as leaf clusters, not static.
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Procedural leaf RGBA texture"),
+        size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        &pixels,
+        wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(SIZE * 4), rows_per_image: Some(SIZE) },
+        wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+    );
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Leaf alpha-cutout sampler"),
+        address_mode_u: wgpu::AddressMode::Repeat, address_mode_v: wgpu::AddressMode::Repeat, address_mode_w: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Nearest, min_filter: wgpu::FilterMode::Nearest, mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+    (texture, sampler)
 }
