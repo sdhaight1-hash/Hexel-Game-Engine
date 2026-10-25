@@ -28,6 +28,18 @@ impl Point3 {
         let dz = self.z - other.z;
         (dx * dx + dy * dy + dz * dz).sqrt()
     }
+
+    fn dot(self, other: Self) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    fn cross(self, other: Self) -> Self {
+        Self {
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -121,6 +133,45 @@ fn generate_cube_sphere(resolution: u32, radius: f64) -> Option<Mesh> {
     Some(Mesh { vertices, cells })
 }
 
+/// Approximate the area of a spherical polygon by triangulating it from its
+/// first vertex. The vertices are projected onto the requested sphere first.
+fn spherical_polygon_area(mesh: &Mesh, cell: &[usize], radius: f64) -> f64 {
+    if cell.len() < 3 {
+        return 0.0;
+    }
+
+    let points: Vec<Point3> = cell
+        .iter()
+        .map(|&id| mesh.vertices[id].normalized())
+        .collect();
+    let anchor = points[0];
+    let mut unit_area = 0.0;
+
+    for i in 1..points.len() - 1 {
+        let b = points[i];
+        let c = points[i + 1];
+        let numerator = anchor.dot(b.cross(c)).abs();
+        let denominator = 1.0 + anchor.dot(b) + b.dot(c) + c.dot(anchor);
+        unit_area += 2.0 * numerator.atan2(denominator);
+    }
+
+    unit_area * radius * radius
+}
+
+fn area_statistics(mesh: &Mesh, radius: f64) -> (f64, f64, f64, f64) {
+    let areas: Vec<f64> = mesh.cells.iter()
+        .map(|cell| spherical_polygon_area(mesh, cell, radius))
+        .collect();
+    let min = areas.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = areas.iter().copied().fold(0.0_f64, f64::max);
+    let mean = areas.iter().sum::<f64>() / areas.len() as f64;
+    let variance = areas.iter()
+        .map(|area| (area - mean) * (area - mean))
+        .sum::<f64>() / areas.len() as f64;
+    let coefficient_of_variation = variance.sqrt() / mean;
+    (min, max, mean, coefficient_of_variation)
+}
+
 fn main() {
     let resolution = std::env::args()
         .nth(1)
@@ -156,6 +207,7 @@ fn main() {
     let max_edge_length = edge_lengths.iter().copied().fold(0.0_f64, f64::max);
     let all_quads = mesh.cells.iter().all(|cell| cell.len() == 4);
     let unique_cell_count = mesh.cells.iter().collect::<BTreeSet<_>>().len();
+    let (min_area, max_area, mean_area, area_cv) = area_statistics(&mesh, radius);
 
     println!("Cube-sphere quad mesh audit (resolution {resolution}, radius {radius})");
     println!("Cells: {}", mesh.cells.len());
@@ -169,6 +221,10 @@ fn main() {
     println!(
         "Edge length min / mean / max: {min_edge_length:.6} / {mean_edge_length:.6} / {max_edge_length:.6}"
     );
+    println!(
+        "Spherical cell area min / mean / max: {min_area:.6} / {mean_area:.6} / {max_area:.6}"
+    );
+    println!("Cell area coefficient of variation: {area_cv:.6}");
 }
 
 
@@ -240,6 +296,29 @@ mod tests {
             let error = (vertex.norm() - radius).abs();
             assert!(error < 1.0e-8, "radius error was {error}");
         }
+    }
+
+    #[test]
+    fn spherical_cell_areas_are_positive_and_have_measurable_variation() {
+        let mesh = generate_cube_sphere(3, 100.0).expect("valid mesh");
+        let (min, max, mean, cv) = area_statistics(&mesh, 100.0);
+
+        assert!(min.is_finite() && min > 0.0);
+        assert!(max.is_finite() && max >= min);
+        assert!(mean.is_finite() && mean > 0.0);
+        assert!(cv.is_finite() && cv > 0.0);
+    }
+
+    #[test]
+    fn total_spherical_area_is_close_to_sphere_area() {
+        let radius = 100.0;
+        let mesh = generate_cube_sphere(4, radius).expect("valid mesh");
+        let total: f64 = mesh.cells.iter()
+            .map(|cell| spherical_polygon_area(&mesh, cell, radius))
+            .sum();
+        let sphere_area = 4.0 * std::f64::consts::PI * radius * radius;
+
+        assert!((total - sphere_area).abs() / sphere_area < 0.01);
     }
 
     #[test]
