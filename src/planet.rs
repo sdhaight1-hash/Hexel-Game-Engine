@@ -152,6 +152,24 @@ impl PlanetGenerator {
         self.config
     }
 
+    /// Sample terrain at a world-space position or direction on the sphere.
+    ///
+    /// The input is normalized, so callers can pass a topology cell center directly.
+    /// A zero or non-finite direction falls back to the positive X axis.
+    pub fn sample_direction(&self, direction: DVec3, season_phase: f64) -> PlanetSample {
+        let direction = if direction.x.is_finite()
+            && direction.y.is_finite()
+            && direction.z.is_finite()
+            && direction.length_squared() > f64::EPSILON
+        {
+            direction.normalize()
+        } else {
+            DVec3::X
+        };
+        let coord = GeoCoord::new(direction.y.clamp(-1.0, 1.0).asin(), direction.z.atan2(direction.x));
+        self.sample(coord, season_phase)
+    }
+
     /// Sample terrain and a lightweight climate estimate at a geographic location.
     ///
     /// `season_phase` is a normalized year phase in [0, 1); 0 and 1 are equivalent.
@@ -409,6 +427,38 @@ impl LocalTangentFrame {
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
+
+    #[test]
+    fn direction_sampling_matches_geographic_sampling() {
+        let generator = PlanetGenerator::new(42);
+        let topology = crate::topology::SurfaceTopology::generate(2, generator.config().radius).unwrap();
+        for cell in topology.cells() {
+            let from_direction = generator.sample_direction(cell.center, 0.25);
+            let direction = cell.center.normalize();
+            let coord = GeoCoord::new(direction.y.asin(), direction.z.atan2(direction.x));
+            let from_coord = generator.sample(coord, 0.25);
+            assert_eq!(from_direction, from_coord);
+            assert!(from_direction.elevation.is_finite());
+            assert!(from_direction.temperature_c.is_finite());
+            assert!(from_direction.moisture.is_finite());
+            assert!(from_direction.surface_position.is_finite());
+            assert_abs_diff_eq!(
+                from_direction.surface_position.length(),
+                generator.config().radius + from_direction.elevation,
+                epsilon = 1e-6
+            );
+        }
+    }
+
+    #[test]
+    fn direction_sampling_handles_invalid_directions_without_non_finite_output() {
+        let generator = PlanetGenerator::new(7);
+        let fallback = generator.sample_direction(DVec3::ZERO, 0.0);
+        let explicit = generator.sample_direction(DVec3::X, 0.0);
+        assert_eq!(fallback, explicit);
+        let non_finite = generator.sample_direction(DVec3::splat(f64::NAN), 0.0);
+        assert_eq!(non_finite, explicit);
+    }
 
     #[test]
     fn tangent_frame_round_trips_planet_positions() {
