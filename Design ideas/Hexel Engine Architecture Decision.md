@@ -9,6 +9,8 @@
 
 Record a coherent direction for Hexel Engine without treating exploratory research as a final implementation specification. Preserve the working game and validate high-impact choices with small, repeatable experiments before large refactors.
 
+**Latest topology research:** [Planetary Topology Comparative Research](Planetary%20Topology%20Comparative%20Research.md) compares the current audit with PlanetSmith's public devlogs, several open-source planetary voxel experiments, and spherical-grid references. It reinforces that the topology decision remains open: PlanetSmith is a gameplay precedent, not a verified drop-in implementation, and the exact handling of its twelve pentagons is not established by the public sources reviewed.
+
 ## Architectural principles
 
 1. **Authoritative world state:** Terrain, persistent entity state, and stored physical quantities are the source of truth. Meshes, lighting caches, surface summaries, debug views, and acceleration structures are derived and rebuildable.
