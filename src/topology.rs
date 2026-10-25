@@ -173,10 +173,12 @@ impl SurfaceTopology {
         self.cells.get(id.index()).filter(|cell| cell.id == id)
     }
 
-    /// Find the cell whose center direction is closest to a world-space direction.
+    /// Find the cell whose center direction is closest to a planet-centered position
+    /// or direction. Input magnitude is ignored; zero and non-finite inputs return `None`.
     ///
-    /// This deliberately uses a simple linear scan as the correctness baseline;
-    /// a spatial acceleration structure can be added later without changing the API.
+    /// The linear scan is the correctness reference. If scores are exactly equal,
+    /// the cell with the lowest ID wins, making boundary ties deterministic.
+    /// Near-boundary inputs are resolved by the greatest dot-product score.
     pub fn nearest_cell(&self, direction: DVec3) -> Option<&SurfaceCell> {
         if !direction.x.is_finite()
             || !direction.y.is_finite()
@@ -186,11 +188,32 @@ impl SurfaceTopology {
             return None;
         }
         let direction = direction.normalize();
-        self.cells.iter().max_by(|a, b| {
-            a.center
+        self.cells.iter().min_by(|a, b| {
+            b.center
                 .dot(direction)
-                .total_cmp(&b.center.dot(direction))
+                .total_cmp(&a.center.dot(direction))
+                .then_with(|| a.id.cmp(&b.id))
         })
+    }
+
+    /// Return the ID of the cell nearest a planet-centered position or direction.
+    pub fn cell_id_for_direction(&self, direction: DVec3) -> Option<SurfaceCellId> {
+        self.nearest_cell(direction).map(|cell| cell.id)
+    }
+
+    /// Return sorted neighbor IDs, or `None` when `id` is not in this topology.
+    pub fn neighbor_ids(&self, id: SurfaceCellId) -> Option<&[SurfaceCellId]> {
+        self.cell(id).map(|cell| cell.neighbors.as_slice())
+    }
+
+    /// Return whether two valid cells share an edge.
+    ///
+    /// Returns `None` if either ID is invalid; valid but non-adjacent cells return
+    /// `Some(false)`.
+    pub fn are_neighbors(&self, a: SurfaceCellId, b: SurfaceCellId) -> Option<bool> {
+        let cell = self.cell(a)?;
+        self.cell(b)?;
+        Some(cell.neighbors.binary_search(&b).is_ok())
     }
 
     pub fn cell_count(&self) -> usize { self.cells.len() }
@@ -328,6 +351,72 @@ mod tests {
         }
         assert!(topology.nearest_cell(DVec3::ZERO).is_none());
         assert!(topology.nearest_cell(DVec3::splat(f64::NAN)).is_none());
+    }
+
+    #[test]
+    fn direction_lookup_ignores_position_magnitude() {
+        let topology = SurfaceTopology::generate(3, 100.0).unwrap();
+        for cell in topology.cells() {
+            assert_eq!(topology.cell_id_for_direction(cell.center), Some(cell.id));
+            assert_eq!(topology.cell_id_for_direction(cell.center * 7.0), Some(cell.id));
+        }
+        assert_eq!(topology.cell_id_for_direction(DVec3::ZERO), None);
+        assert_eq!(topology.cell_id_for_direction(DVec3::splat(f64::NAN)), None);
+    }
+
+    #[test]
+    fn boundary_ties_resolve_deterministically_to_lowest_id() {
+        let topology = SurfaceTopology::generate(1, 100.0).unwrap();
+        let direction = DVec3::X;
+        let selected = topology.nearest_cell(direction).unwrap();
+        for _ in 0..10 {
+            assert_eq!(topology.nearest_cell(direction).unwrap().id, selected.id);
+        }
+
+        let tied = topology.cells().iter().filter(|cell| {
+            (cell.center.normalize().dot(direction) - selected.center.normalize().dot(direction)).abs()
+                < 1e-12
+        }).map(|cell| cell.id).min().unwrap();
+        assert_eq!(selected.id, tied);
+    }
+
+    #[test]
+    fn neighbor_queries_validate_ids_and_report_adjacency() {
+        let topology = SurfaceTopology::generate(3, 100.0).unwrap();
+        let cell = &topology.cells()[0];
+        let neighbors = topology.neighbor_ids(cell.id).unwrap();
+        assert!(!neighbors.is_empty());
+        assert!(neighbors.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(topology.are_neighbors(cell.id, neighbors[0]), Some(true));
+        assert_eq!(topology.are_neighbors(cell.id, cell.id), Some(false));
+        assert_eq!(topology.neighbor_ids(SurfaceCellId(u32::MAX)), None);
+        assert_eq!(topology.are_neighbors(cell.id, SurfaceCellId(u32::MAX)), None);
+    }
+
+    #[test]
+    fn neighbor_graph_is_reciprocal_unique_and_connected() {
+        let topology = SurfaceTopology::generate(4, 100.0).unwrap();
+        for cell in topology.cells() {
+            let neighbors = topology.neighbor_ids(cell.id).unwrap();
+            let unique = neighbors.iter().copied().collect::<BTreeSet<_>>();
+            assert_eq!(unique.len(), neighbors.len());
+            for neighbor in neighbors {
+                assert_eq!(topology.are_neighbors(*neighbor, cell.id), Some(true));
+            }
+        }
+
+        let mut visited = vec![false; topology.cell_count()];
+        let mut pending = vec![topology.cells()[0].id];
+        visited[pending[0].index()] = true;
+        while let Some(id) = pending.pop() {
+            for neighbor in topology.neighbor_ids(id).unwrap() {
+                if !visited[neighbor.index()] {
+                    visited[neighbor.index()] = true;
+                    pending.push(*neighbor);
+                }
+            }
+        }
+        assert!(visited.into_iter().all(|was_visited| was_visited));
     }
 
     #[test]
