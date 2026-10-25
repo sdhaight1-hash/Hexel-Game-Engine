@@ -1331,6 +1331,32 @@ mod tests {
     }
 
     #[test]
+    fn frequency_sweep_has_no_sampled_gaps_or_multiple_ownership() {
+        for frequency in [2, 3, 4] {
+            let mesh = generate_icosphere_dual(frequency, 100.0).expect("valid frequency");
+            let validation = validate_mesh(&mesh);
+            assert!(!validation.invalid_radius, "frequency {frequency}");
+            assert_eq!(validation.non_finite_vertices, 0, "frequency {frequency}");
+            assert_eq!(validation.zero_length_vertices, 0, "frequency {frequency}");
+            assert_eq!(validation.off_radius_vertices, 0, "frequency {frequency}");
+            assert_eq!(validation.invalid_cell_indices, 0, "frequency {frequency}");
+            assert_eq!(validation.repeated_vertex_ids, 0, "frequency {frequency}");
+
+            let coverage = sample_spherical_coverage(&mesh, 1024);
+            assert_eq!(coverage.gap_samples, 0, "frequency {frequency}: {coverage:?}");
+            assert_eq!(
+                coverage.multiply_owned_samples, 0,
+                "frequency {frequency}: {coverage:?}"
+            );
+            assert_eq!(
+                coverage.covered_samples + coverage.boundary_samples,
+                coverage.sample_count,
+                "frequency {frequency}: {coverage:?}"
+            );
+        }
+    }
+
+    #[test]
     fn generated_mesh_is_deterministic() {
         let a = generate_icosphere_dual(2, 1.0).unwrap();
         let b = generate_icosphere_dual(2, 1.0).unwrap();
