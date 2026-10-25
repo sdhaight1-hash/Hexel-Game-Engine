@@ -86,15 +86,21 @@ Terrain faces use darker side shading and lighter top faces to make the hexagona
 - First-person mouse look, walking, jumping, gravity, and basic hexel placement/removal.
 - Random per-launch world seed, printed in the terminal.
 
-## Tree generation foundation
+## Tree species and generation foundation
 
-- Deterministic tree candidates keyed by stable world placement-slot IDs and a world seed.
-- Biome- and climate-aware species selection for broadleaf, conifer, tropical, and sparse-canopy trees.
-- Trunk diameter varies from **0.25 to 1.0 hexel diameters**, with a hexagonal cross-section volume estimate for wood yield.
-- Tree instances carry a planet-relative root position and local outward normal so future rendering can orient trunks to a spherical surface.
-- Harvest state supports alive, felled, stump, and regrowing states; the one-time felling API prevents duplicate wood yield in a single persisted instance.
+The canonical starting roster is data-defined in `src/trees.rs`:
 
-This is currently a renderer-independent data foundation. Trees are **not yet visible or harvestable in the playable scene**: terrain placement-slot generation, rendering, collision, falling animation/physics, save-file persistence, and ecological regrowth simulation still need integration. Harvested state must be stored by stable tree ID in the future world save so chunk reloads do not restore trees.
+- **Common temperate trees:** Oak, Birch, Maple, Walnut, and the narrow-temperature Crimson King Maple.
+- **Cold-climate trees:** Pine and Larch.
+- **Warm and dry trees:** Mediterranean Cypress and Acacia, including the Prickly Moses variant.
+- **Wetland trees:** Bald Cypress and Willow; Willow exposes logs, flexible twigs, and medicinal bark as distinct harvest products.
+- **Tropical trees:** Kapok, Bamboo, Ebony, and rare Purpleheart.
+- **Special mountain/forest tree:** Redwood, including a giant variant.
+- **Variants:** Birch cultivars, Maple cultivars, Pine forms, swamp Bald Cypress, Kapok growth forms, Bamboo colors, old-growth Oak, and more are represented separately from base species.
+
+Each species profile records its temperature and moisture bounds, relative rarity, foliage style, expected height range, and harvest products. Placement is deterministic from the world seed and stable slot ID. Candidate trunks retain a diameter from **0.25 to 1.0 hexel diameters**, a hexagonal cross-section volume estimate, planet-relative root position, and local outward surface normal. Felling a live instance returns its trunk yield once; callers must persist state and awarded inventory by stable tree ID.
+
+**Current limitation:** these are generation/data foundations, not completed playable vegetation. The current climate sample has no river network, bog map, soil survey, or Kapok-forest depth model, so wetland and deep-forest rules are approximated using moisture, elevation, and biome proxies. Tree rendering, collision, physical falling, save-file integration, and ecological regrowth are not yet connected. The source notes about plank crafting and replanting are roster requirements to implement in later gameplay systems, not claims that those mechanics already work.
 
 ## Design roadmap
 
