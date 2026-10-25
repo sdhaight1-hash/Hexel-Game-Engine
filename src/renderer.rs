@@ -2,20 +2,15 @@ use std::{collections::{HashMap, HashSet, VecDeque}, sync::{Arc, mpsc::{self, Re
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
-use hexel_engine::{BlockId, CellPos, WorldScale, raycast_prism, terrain_height};
+use hexel_engine::{BlockId, CellPos, ChunkPos, WorldScale, raycast_prism, terrain_height};
 use noise::{NoiseFn, Perlin};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-const CHUNKS_Q: i32 = 8;
-const CHUNKS_R: i32 = 4;
 const CHUNK_SIZE: i32 = 16;
-const Q_START: i32 = -(CHUNKS_Q * CHUNK_SIZE) / 2;
-const R_START: i32 = -(CHUNKS_R * CHUNK_SIZE) / 2;
-const Q_END: i32 = Q_START + CHUNKS_Q * CHUNK_SIZE;
-const R_END: i32 = R_START + CHUNKS_R * CHUNK_SIZE;
 const MAX_EDIT_HEIGHT: i32 = 12;
-const RENDER_DISTANCE: f32 = 260.0;
+const STREAM_RADIUS_CHUNKS: i32 = 5;
+const RENDER_DISTANCE: f32 = 110.0;
 
 const SHADER: &str = r#"
 struct Camera { view_proj: mat4x4<f32>, };
@@ -70,8 +65,8 @@ impl Camera {
     }
 }
 
-struct MeshJob { revision: u64, seed: u32, edits: HashMap<CellPos, BlockId>, chunks: Vec<(usize, i32, i32)> }
-struct MeshResult { revision: u64, chunks: Vec<(usize, Vec<Vertex>)> }
+struct MeshJob { revision: u64, seed: u32, edits: HashMap<CellPos, BlockId>, chunks: Vec<ChunkPos> }
+struct MeshResult { revision: u64, chunks: Vec<(ChunkPos, Vec<Vertex>)> }
 struct ChunkMesh {
     buffer: wgpu::Buffer,
     vertex_count: u32,
@@ -83,12 +78,12 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration, pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline, overlay_pipeline: wgpu::RenderPipeline,
     crosshair_buffer: wgpu::Buffer, target_buffer: wgpu::Buffer,
-    chunks: Vec<ChunkMesh>, camera_buffer: wgpu::Buffer,
+    chunks: HashMap<ChunkPos, ChunkMesh>, camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
     _depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
-    seed: u32, edits: HashMap<CellPos, BlockId>, terrain_heights: HashMap<(i32, i32), i32>,
-    mesh_job_tx: Sender<MeshJob>, mesh_result_rx: Receiver<MeshResult>, dirty_chunks: HashSet<usize>, edit_revision: u64,
-    pending_mesh_chunks: VecDeque<(u64, usize, Vec<Vertex>)>, pending_mesh_count: usize, pending_mesh_revision: u64,
+    seed: u32, edits: HashMap<CellPos, BlockId>,
+    mesh_job_tx: Sender<MeshJob>, mesh_result_rx: Receiver<MeshResult>, dirty_chunks: HashSet<ChunkPos>, edit_revision: u64,
+    pending_mesh_chunks: VecDeque<(u64, ChunkPos, Vec<Vertex>)>, pending_mesh_count: usize, pending_mesh_revision: u64,
 }
 impl Renderer {
     pub async fn new(window: Arc<Window>, seed: u32) -> Result<Self, String> {
@@ -175,32 +170,23 @@ impl Renderer {
         thread::Builder::new().name("hexel-mesh-worker".into()).spawn(move || {
             while let Ok(mut job) = mesh_job_rx.recv() {
                 while let Ok(newer) = mesh_job_rx.try_recv() { job = newer; }
-                let chunks = job.chunks.iter().map(|(index, cq, cr)| {
-                    let qs = Q_START + cq * CHUNK_SIZE;
-                    let rs = R_START + cr * CHUNK_SIZE;
-                    (*index, build_chunk_mesh(job.seed, &job.edits, qs, qs + CHUNK_SIZE, rs, rs + CHUNK_SIZE))
-                }).collect();
+                let chunks = job.chunks.iter().map(|pos| (*pos, build_chunk_mesh(job.seed, &job.edits, *pos))).collect();
                 if mesh_result_tx.send(MeshResult { revision: job.revision, chunks }).is_err() { break; }
             }
         }).map_err(|e| format!("Could not start mesh worker: {e}"))?;
         let mut renderer = Self {
-            surface, device, queue, config, pipeline, outline_pipeline, overlay_pipeline, crosshair_buffer, target_buffer, chunks: Vec::new(),
+            surface, device, queue, config, pipeline, outline_pipeline, overlay_pipeline, crosshair_buffer, target_buffer, chunks: HashMap::new(),
             camera_buffer, camera_bind_group, size, _depth_texture: depth_texture, depth_view,
-            seed, edits: HashMap::new(), terrain_heights: (Q_START..Q_END).flat_map(|q| (R_START..R_END).map(move |r| ((q, r), terrain_height(seed, q, r)))).collect(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
+            seed, edits: HashMap::new(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
             pending_mesh_chunks: VecDeque::new(), pending_mesh_count: 0, pending_mesh_revision: 0,
         };
-        for cr in 0..CHUNKS_R {
-            for cq in 0..CHUNKS_Q {
-                let chunk = renderer.create_chunk(cq, cr);
-                renderer.chunks.push(chunk);
-            }
-        }
+        renderer.update_streaming(Vec3::ZERO);
         Ok(renderer)
     }
 
     pub fn ground_height(&self, q: i32, r: i32) -> f32 {
         let scale = WorldScale::default();
-        let terrain_top = *self.terrain_heights.get(&(q, r)).unwrap_or(&0);
+        let terrain_top = terrain_height(self.seed, q, r);
         let has_column_edits = self.edits.keys().any(|cell| cell.q == q && cell.r == r);
         if !has_column_edits {
             return (terrain_top + 1) as f32 * scale.hexel_height;
@@ -237,7 +223,7 @@ impl Renderer {
         CellPos::new(q as i32, r as i32, (position.y / scale.hexel_height).floor() as i32)
     }
     pub fn block_at(&self, cell: CellPos) -> BlockId {
-        self.edits.get(&cell).copied().unwrap_or_else(|| generated_block_from_height(cell, *self.terrain_heights.get(&(cell.q, cell.r)).unwrap_or(&0)))
+        self.edits.get(&cell).copied().unwrap_or_else(|| generated_block_from_height(cell, terrain_height(self.seed, cell.q, cell.r)))
     }
     pub fn raycast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<(CellPos, CellPos)> {
         let scale = WorldScale::default();
@@ -274,34 +260,50 @@ impl Renderer {
         None
     }
     pub fn edit_block(&mut self, cell: CellPos, block: BlockId) {
-        if cell.q < Q_START || cell.q >= Q_END || cell.r < R_START || cell.r >= R_END || cell.y < 0 || cell.y > 64 { return; }
+        if cell.y < 0 || cell.y > 255 { return; }
         if self.block_at(cell).is_indestructible() { return; }
         self.edits.insert(cell, block);
-        let cq = (cell.q - Q_START).div_euclid(CHUNK_SIZE);
-        let cr = (cell.r - R_START).div_euclid(CHUNK_SIZE);
-        let local_q = (cell.q - Q_START).rem_euclid(CHUNK_SIZE);
-        let local_r = (cell.r - R_START).rem_euclid(CHUNK_SIZE);
-        let mut q_indices = vec![cq];
-        let mut r_indices = vec![cr];
-        if local_q == 0 { q_indices.push(cq - 1); }
-        if local_q == CHUNK_SIZE - 1 { q_indices.push(cq + 1); }
-        if local_r == 0 { r_indices.push(cr - 1); }
-        if local_r == CHUNK_SIZE - 1 { r_indices.push(cr + 1); }
-        let mut affected = Vec::with_capacity(9);
-        for rr in &r_indices {
-            for qq in &q_indices {
-                if (0..CHUNKS_Q).contains(qq) && (0..CHUNKS_R).contains(rr) {
-                    affected.push((*rr * CHUNKS_Q + *qq) as usize);
+        let (chunk_pos, local) = cell.chunk_and_local();
+        let mut affected = vec![chunk_pos];
+        if local[0] == 0 { affected.push(ChunkPos { q: chunk_pos.q - 1, ..chunk_pos }); }
+        if local[0] == 15 { affected.push(ChunkPos { q: chunk_pos.q + 1, ..chunk_pos }); }
+        if local[1] == 0 { affected.push(ChunkPos { r: chunk_pos.r - 1, ..chunk_pos }); }
+        if local[1] == 15 { affected.push(ChunkPos { r: chunk_pos.r + 1, ..chunk_pos }); }
+        if local[2] == 0 { affected.push(ChunkPos { y: chunk_pos.y - 1, ..chunk_pos }); }
+        if local[2] == 15 { affected.push(ChunkPos { y: chunk_pos.y + 1, ..chunk_pos }); }
+        affected.sort_by_key(|p| (p.q, p.r, p.y));
+        affected.dedup();
+        self.dirty_chunks.extend(affected.iter().copied());
+        self.edit_revision = self.edit_revision.wrapping_add(1);
+        let chunks = affected.into_iter().filter(|p| self.chunks.contains_key(p)).collect();
+        let _ = self.mesh_job_tx.send(MeshJob { revision: self.edit_revision, seed: self.seed, edits: self.edits.clone(), chunks });
+    }
+    /// Active meshes are bounded to a moving neighborhood; edits persist separately.
+    pub fn update_streaming(&mut self, player_position: Vec3) {
+        let cell = Self::cell_from_world(player_position);
+        let center = ChunkPos {
+            q: cell.q.div_euclid(CHUNK_SIZE),
+            r: cell.r.div_euclid(CHUNK_SIZE),
+            y: cell.y.max(0).div_euclid(CHUNK_SIZE),
+        };
+        let mut wanted = HashSet::new();
+        for dq in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
+            for dr in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
+                if dq * dq + dr * dr > STREAM_RADIUS_CHUNKS * STREAM_RADIUS_CHUNKS { continue; }
+                for dy in -1..=1 {
+                    let cy = center.y + dy;
+                    if cy >= 0 { wanted.insert(ChunkPos { q: center.q + dq, r: center.r + dr, y: cy }); }
                 }
             }
         }
-        affected.sort_unstable();
-        affected.dedup();
-        self.dirty_chunks.extend(affected);
-        self.edit_revision = self.edit_revision.wrapping_add(1);
-        let chunks = self.dirty_chunks.iter().map(|index| (*index, *index as i32 % CHUNKS_Q, *index as i32 / CHUNKS_Q)).collect();
-        let _ = self.mesh_job_tx.send(MeshJob { revision: self.edit_revision, seed: self.seed, edits: self.edits.clone(), chunks });
+        self.chunks.retain(|pos, _| wanted.contains(pos));
+        let missing: Vec<_> = wanted.iter().copied().filter(|pos| !self.chunks.contains_key(pos)).collect();
+        for pos in missing {
+            let mesh = self.create_chunk(pos);
+            self.chunks.insert(pos, mesh);
+        }
     }
+
     fn poll_mesh_results(&mut self) {
         while let Ok(result) = self.mesh_result_rx.try_recv() {
             if result.revision != self.edit_revision { continue; }
@@ -336,20 +338,19 @@ impl Renderer {
                     usage: wgpu::BufferUsages::VERTEX,
                 })
             };
-            self.chunks[index].buffer = buffer;
-            self.chunks[index].vertex_count = vertex_count;
+            if let Some(chunk) = self.chunks.get_mut(&index) { chunk.buffer = buffer; chunk.vertex_count = vertex_count; }
             self.pending_mesh_count = self.pending_mesh_count.saturating_sub(1);
             if self.pending_mesh_count == 0 {
                 self.dirty_chunks.clear();
             }
         }
     }
-    fn create_chunk(&self, cq: i32, cr: i32) -> ChunkMesh {
-        let q_start = Q_START + cq * CHUNK_SIZE;
-        let r_start = R_START + cr * CHUNK_SIZE;
+    fn create_chunk(&self, pos: ChunkPos) -> ChunkMesh {
+        let q_start = pos.q * CHUNK_SIZE;
+        let r_start = pos.r * CHUNK_SIZE;
         let q_end = q_start + CHUNK_SIZE;
         let r_end = r_start + CHUNK_SIZE;
-        let vertices = build_chunk_mesh(self.seed, &self.edits, q_start, q_end, r_start, r_end);
+        let vertices = build_chunk_mesh(self.seed, &self.edits, pos);
         let vertex_count = vertices.len() as u32;
         let buffer = if vertices.is_empty() {
             self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -362,7 +363,9 @@ impl Renderer {
         };
         let scale = WorldScale::default();
         let mut min = Vec3::new(f32::INFINITY, 0.0, f32::INFINITY);
-        let mut max = Vec3::new(f32::NEG_INFINITY, 70.0 * scale.hexel_height, f32::NEG_INFINITY);
+        let y_start = pos.y * CHUNK_SIZE;
+        let y_end = y_start + CHUNK_SIZE;
+        let mut max = Vec3::new(f32::NEG_INFINITY, y_end as f32 * scale.hexel_height, f32::NEG_INFINITY);
         for q in [q_start, q_end - 1] {
             for r in [r_start, r_end - 1] {
                 let center = scale.prism_center(CellPos::new(q, r, 0));
@@ -372,6 +375,7 @@ impl Renderer {
         }
         min.x -= scale.hex_radius * 2.0; min.z -= scale.hex_radius * 2.0;
         max.x += scale.hex_radius * 2.0; max.z += scale.hex_radius * 2.0;
+        min.y = y_start as f32 * scale.hexel_height;
         ChunkMesh { buffer, vertex_count, bounds_min: min, bounds_max: max }
     }
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -405,7 +409,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             let view_proj = camera.view_projection(self.size);
             let forward = camera.forward();
-            for chunk in &self.chunks {
+            for chunk in self.chunks.values() {
                 if chunk.vertex_count == 0 || !chunk_visible(view_proj, camera.position, forward, chunk) { continue; }
                 pass.set_vertex_buffer(0, chunk.buffer.slice(..));
                 pass.draw(0..chunk.vertex_count, 0..1);
@@ -497,11 +501,17 @@ fn chunk_visible(view_proj: Mat4, camera_position: Vec3, forward: Vec3, chunk: &
         || clip.iter().all(|p| p.z < 0.0) || clip.iter().all(|p| p.z > p.w) { return false; }
     true
 }
-fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, q_start: i32, q_end: i32, r_start: i32, r_end: i32) -> Vec<Vertex> {
+fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPos) -> Vec<Vertex> {
     let scale = WorldScale::default();
+    let q_start = chunk.q * CHUNK_SIZE;
+    let r_start = chunk.r * CHUNK_SIZE;
+    let y_start = chunk.y * CHUNK_SIZE;
+    let q_end = q_start + CHUNK_SIZE;
+    let r_end = r_start + CHUNK_SIZE;
+    let y_end = y_start + CHUNK_SIZE;
     let mut vertices = Vec::with_capacity(70_000);
     let noise = Perlin::new(seed);
-    let mut heights = HashMap::with_capacity(((q_end - q_start + 2) * (r_end - r_start + 2)) as usize);
+    let mut heights = HashMap::with_capacity(((CHUNK_SIZE + 2) * (CHUNK_SIZE + 2)) as usize);
     for q in (q_start - 1)..=q_end {
         for r in (r_start - 1)..=r_end {
             let height = (8.0 + noise.get([q as f64 / 28.0, r as f64 / 28.0]) * 5.0).round() as i32;
@@ -530,8 +540,9 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, q_start: i32, 
         for r in r_start..r_end {
             let terrain_top = *heights.get(&(q, r)).unwrap_or(&0);
             let edited_top = edited_tops.get(&(q, r)).copied().unwrap_or(terrain_top);
-            let max_y = (terrain_top + MAX_EDIT_HEIGHT).max(edited_top).max(terrain_top).min(64);
-            for y in 0..=max_y {
+            let min_y = y_start.max(0);
+            let max_y = y_end.min((terrain_top + MAX_EDIT_HEIGHT).max(edited_top).max(terrain_top).min(256) + 1);
+            for y in min_y..max_y {
                 let cell = CellPos::new(q, r, y);
                 let block = block_at(cell);
                 if block == BlockId::Air { continue; }
@@ -553,8 +564,7 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, q_start: i32, 
                 for (i, (dq, dr)) in neighbors.into_iter().enumerate() {
                     let nq = q + dq;
                     let nr = r + dr;
-                    let inside_world = (Q_START..Q_END).contains(&nq) && (R_START..R_END).contains(&nr);
-                    if inside_world && block_at(CellPos::new(nq, nr, y)).is_solid() { continue; }
+                    if block_at(CellPos::new(nq, nr, y)).is_solid() { continue; }
                     let a = ring[i]; let b = ring[(i + 1) % 6];
                     let shade = 0.48 + ((i * 7 % 6) as f32) * 0.055;
                     let side = [base[0] * shade, base[1] * shade, base[2] * shade];
