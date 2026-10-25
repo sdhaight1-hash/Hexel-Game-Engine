@@ -65,6 +65,10 @@ impl HexelApp {
         }
         self.cursor_locked = false;
     }
+    fn planet_preview_active(&self) -> bool {
+        self.renderer.as_ref().is_some_and(Renderer::planet_preview_enabled)
+    }
+
     fn update_player(&mut self, dt: f32) {
         let Some(renderer) = self.renderer.as_ref() else { return; };
         let dt = dt.min(0.04);
@@ -234,6 +238,21 @@ impl ApplicationHandler for HexelApp {
                             KeyCode::Digit8 => { self.inventory.select_hotbar(7); },
                             KeyCode::Digit9 => { self.inventory.select_hotbar(8); },
                             KeyCode::KeyE => { self.inventory_open = !self.inventory_open; },
+                            KeyCode::F3 => {
+                                let preview = if let Some(renderer) = self.renderer.as_mut() {
+                                    renderer.toggle_planet_preview();
+                                    renderer.planet_preview_enabled()
+                                } else {
+                                    false
+                                };
+                                if let Some(window) = self.window.as_ref() {
+                                    window.set_title(if preview {
+                                        "Hexel Engine | Spherical planet preview | F3 to return"
+                                    } else {
+                                        "Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse"
+                                    });
+                                }
+                            }
                             _ => {}
                         }
                         if code == KeyCode::Space && !self.pressed.contains(&code) { self.jump_requested = true; }
@@ -241,9 +260,9 @@ impl ApplicationHandler for HexelApp {
                     } else { self.pressed.remove(&code); }
                 }
             }
-            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if self.cursor_locked => { self.harvest_held = true; self.harvest_target = None; self.harvest_progress = 0.0; },
+            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if self.cursor_locked && !self.planet_preview_active() => { self.harvest_held = true; self.harvest_target = None; self.harvest_progress = 0.0; },
             WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Released, .. } => { self.harvest_held = false; self.harvest_target = None; self.harvest_progress = 0.0; },
-            WindowEvent::MouseInput { button: MouseButton::Right, state: ElementState::Pressed, .. } if self.cursor_locked => self.edit_target(false),
+            WindowEvent::MouseInput { button: MouseButton::Right, state: ElementState::Pressed, .. } if self.cursor_locked && !self.planet_preview_active() => self.edit_target(false),
             WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if !self.cursor_locked => self.lock_cursor(),
             WindowEvent::RedrawRequested => {
                 let Some(renderer) = self.renderer.as_mut() else { return; };
@@ -259,7 +278,7 @@ impl ApplicationHandler for HexelApp {
         }
     }
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: winit::event::DeviceId, event: DeviceEvent) {
-        if self.cursor_locked && let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+        if self.cursor_locked && !self.planet_preview_active() && let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             let sensitivity = 0.0022;
             self.camera.yaw -= dx as f32 * sensitivity;
             self.camera.pitch = (self.camera.pitch - dy as f32 * sensitivity).clamp(-1.52, 1.52);
@@ -269,9 +288,11 @@ impl ApplicationHandler for HexelApp {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
-        self.update_player(dt);
-        self.update_harvesting(dt);
-        self.update_target_title(dt);
+        if !self.planet_preview_active() {
+            self.update_player(dt);
+            self.update_harvesting(dt);
+            self.update_target_title(dt);
+        }
         if let Some(window) = self.window.as_ref() { window.request_redraw(); }
     }
 }
