@@ -18,10 +18,26 @@ use std::{
 };
 
 const ICOSAHEDRON_FACES: [[usize; 3]; 20] = [
-    [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
-    [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-    [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-    [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+    [0, 11, 5],
+    [0, 5, 1],
+    [0, 1, 7],
+    [0, 7, 10],
+    [0, 10, 11],
+    [1, 5, 9],
+    [5, 11, 4],
+    [11, 10, 2],
+    [10, 7, 6],
+    [7, 1, 8],
+    [3, 9, 4],
+    [3, 4, 2],
+    [3, 2, 6],
+    [3, 6, 8],
+    [3, 8, 9],
+    [4, 9, 5],
+    [2, 4, 11],
+    [6, 2, 10],
+    [8, 6, 7],
+    [9, 8, 1],
 ];
 
 const MAX_FREQUENCY: u32 = 256;
@@ -31,7 +47,9 @@ const VERTEX_KEY_SCALE: f64 = 1_000_000_000.0;
 pub struct SurfaceCellId(pub u32);
 
 impl SurfaceCellId {
-    pub const fn index(self) -> usize { self.0 as usize }
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -62,7 +80,10 @@ pub enum TopologyError {
 impl fmt::Display for TopologyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidFrequency => write!(f, "icosphere frequency must be between 1 and {MAX_FREQUENCY}"),
+            Self::InvalidFrequency => write!(
+                f,
+                "icosphere frequency must be between 1 and {MAX_FREQUENCY}"
+            ),
             Self::InvalidRadius => write!(f, "planet radius must be finite and greater than zero"),
         }
     }
@@ -86,9 +107,8 @@ impl SurfaceTopology {
         let primal_vertices = icosahedron_vertices();
         let mut vertices = Vec::<DVec3>::new();
         let mut vertex_lookup = HashMap::<(i64, i64, i64), u32>::new();
-        let mut triangles = Vec::<[u32; 3]>::with_capacity(
-            20 * frequency as usize * frequency as usize,
-        );
+        let mut triangles =
+            Vec::<[u32; 3]>::with_capacity(20 * frequency as usize * frequency as usize);
 
         for face in ICOSAHEDRON_FACES {
             let a = primal_vertices[face[0]];
@@ -141,7 +161,8 @@ impl SurfaceTopology {
             add_neighbor_pair(&mut neighbors, c, a);
 
             let center = (vertices[a as usize] + vertices[b as usize] + vertices[c as usize])
-                .normalize() * radius;
+                .normalize()
+                * radius;
             dual_corners.push(center);
         }
 
@@ -158,16 +179,31 @@ impl SurfaceTopology {
                 id: SurfaceCellId(index as u32),
                 center,
                 boundary,
-                neighbors: neighbors[index].iter().copied().map(SurfaceCellId).collect(),
+                neighbors: neighbors[index]
+                    .iter()
+                    .copied()
+                    .map(SurfaceCellId)
+                    .collect(),
             });
         }
 
-        Ok(Self { radius, frequency, cells, triangle_count: triangles.len() })
+        Ok(Self {
+            radius,
+            frequency,
+            cells,
+            triangle_count: triangles.len(),
+        })
     }
 
-    pub const fn radius(&self) -> f64 { self.radius }
-    pub const fn frequency(&self) -> u32 { self.frequency }
-    pub fn cells(&self) -> &[SurfaceCell] { &self.cells }
+    pub const fn radius(&self) -> f64 {
+        self.radius
+    }
+    pub const fn frequency(&self) -> u32 {
+        self.frequency
+    }
+    pub fn cells(&self) -> &[SurfaceCell] {
+        &self.cells
+    }
 
     pub fn cell(&self, id: SurfaceCellId) -> Option<&SurfaceCell> {
         self.cells.get(id.index()).filter(|cell| cell.id == id)
@@ -216,12 +252,20 @@ impl SurfaceTopology {
         Some(cell.neighbors.binary_search(&b).is_ok())
     }
 
-    pub fn cell_count(&self) -> usize { self.cells.len() }
-    pub const fn triangle_count(&self) -> usize { self.triangle_count }
+    pub fn cell_count(&self) -> usize {
+        self.cells.len()
+    }
+    pub const fn triangle_count(&self) -> usize {
+        self.triangle_count
+    }
 
     /// Number of unique undirected edges in the primal mesh / dual cell graph.
     pub fn edge_count(&self) -> usize {
-        self.cells.iter().map(|cell| cell.neighbors.len()).sum::<usize>() / 2
+        self.cells
+            .iter()
+            .map(|cell| cell.neighbors.len())
+            .sum::<usize>()
+            / 2
     }
 
     /// Counts of cells grouped by number of sides.
@@ -235,7 +279,9 @@ impl SurfaceTopology {
 }
 
 fn add_neighbor_pair(neighbors: &mut [BTreeSet<u32>], a: u32, b: u32) {
-    if a == b { return; }
+    if a == b {
+        return;
+    }
     neighbors[a as usize].insert(b);
     neighbors[b as usize].insert(a);
 }
@@ -251,19 +297,32 @@ fn vertex_key(direction: DVec3) -> (i64, i64, i64) {
 fn icosahedron_vertices() -> [DVec3; 12] {
     let phi = (1.0 + 5.0_f64.sqrt()) * 0.5;
     [
-        DVec3::new(-1.0, phi, 0.0), DVec3::new(1.0, phi, 0.0),
-        DVec3::new(-1.0, -phi, 0.0), DVec3::new(1.0, -phi, 0.0),
-        DVec3::new(0.0, -1.0, phi), DVec3::new(0.0, 1.0, phi),
-        DVec3::new(0.0, -1.0, -phi), DVec3::new(0.0, 1.0, -phi),
-        DVec3::new(phi, 0.0, -1.0), DVec3::new(phi, 0.0, 1.0),
-        DVec3::new(-phi, 0.0, -1.0), DVec3::new(-phi, 0.0, 1.0),
-    ].map(|vertex| vertex.normalize())
+        DVec3::new(-1.0, phi, 0.0),
+        DVec3::new(1.0, phi, 0.0),
+        DVec3::new(-1.0, -phi, 0.0),
+        DVec3::new(1.0, -phi, 0.0),
+        DVec3::new(0.0, -1.0, phi),
+        DVec3::new(0.0, 1.0, phi),
+        DVec3::new(0.0, -1.0, -phi),
+        DVec3::new(0.0, 1.0, -phi),
+        DVec3::new(phi, 0.0, -1.0),
+        DVec3::new(phi, 0.0, 1.0),
+        DVec3::new(-phi, 0.0, -1.0),
+        DVec3::new(-phi, 0.0, 1.0),
+    ]
+    .map(|vertex| vertex.normalize())
 }
 
 fn sort_boundary_around(center: DVec3, boundary: &mut [DVec3]) {
-    if boundary.len() < 3 { return; }
+    if boundary.len() < 3 {
+        return;
+    }
     let normal = center.normalize();
-    let reference = if normal.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+    let reference = if normal.y.abs() < 0.9 {
+        DVec3::Y
+    } else {
+        DVec3::X
+    };
     let tangent_u = reference.cross(normal).normalize();
     let tangent_v = normal.cross(tangent_u).normalize();
 
@@ -286,7 +345,12 @@ mod tests {
         assert_eq!(topology.cell_count(), 12);
         assert_eq!(topology.triangle_count(), 20);
         assert_eq!(topology.edge_count(), 30);
-        assert!(topology.cells().iter().all(|cell| cell.neighbors.len() == 5));
+        assert!(
+            topology
+                .cells()
+                .iter()
+                .all(|cell| cell.neighbors.len() == 5)
+        );
         assert!(topology.cells().iter().all(|cell| cell.boundary.len() == 5));
     }
 
@@ -296,7 +360,10 @@ mod tests {
         assert_eq!(topology.cell_count(), 42);
         assert_eq!(topology.triangle_count(), 80);
         assert_eq!(topology.edge_count(), 120);
-        assert_eq!(topology.side_count_histogram(), std::collections::BTreeMap::from([(5, 12), (6, 30)]));
+        assert_eq!(
+            topology.side_count_histogram(),
+            std::collections::BTreeMap::from([(5, 12), (6, 30)])
+        );
     }
 
     #[test]
@@ -331,16 +398,32 @@ mod tests {
         for cell in topology.cells() {
             assert!((cell.center.length() - radius).abs() < 1e-8);
             assert!(cell.boundary.len() >= 5);
-            assert!(cell.boundary.iter().all(|corner| (corner.length() - radius).abs() < 1e-8));
+            assert!(
+                cell.boundary
+                    .iter()
+                    .all(|corner| (corner.length() - radius).abs() < 1e-8)
+            );
         }
     }
 
     #[test]
     fn invalid_inputs_are_rejected() {
-        assert_eq!(SurfaceTopology::generate(0, 100.0), Err(TopologyError::InvalidFrequency));
-        assert_eq!(SurfaceTopology::generate(MAX_FREQUENCY + 1, 100.0), Err(TopologyError::InvalidFrequency));
-        assert_eq!(SurfaceTopology::generate(2, 0.0), Err(TopologyError::InvalidRadius));
-        assert_eq!(SurfaceTopology::generate(2, f64::NAN), Err(TopologyError::InvalidRadius));
+        assert_eq!(
+            SurfaceTopology::generate(0, 100.0),
+            Err(TopologyError::InvalidFrequency)
+        );
+        assert_eq!(
+            SurfaceTopology::generate(MAX_FREQUENCY + 1, 100.0),
+            Err(TopologyError::InvalidFrequency)
+        );
+        assert_eq!(
+            SurfaceTopology::generate(2, 0.0),
+            Err(TopologyError::InvalidRadius)
+        );
+        assert_eq!(
+            SurfaceTopology::generate(2, f64::NAN),
+            Err(TopologyError::InvalidRadius)
+        );
     }
 
     #[test]
@@ -358,7 +441,10 @@ mod tests {
         let topology = SurfaceTopology::generate(3, 100.0).unwrap();
         for cell in topology.cells() {
             assert_eq!(topology.cell_id_for_direction(cell.center), Some(cell.id));
-            assert_eq!(topology.cell_id_for_direction(cell.center * 7.0), Some(cell.id));
+            assert_eq!(
+                topology.cell_id_for_direction(cell.center * 7.0),
+                Some(cell.id)
+            );
         }
         assert_eq!(topology.cell_id_for_direction(DVec3::ZERO), None);
         assert_eq!(topology.cell_id_for_direction(DVec3::splat(f64::NAN)), None);
@@ -373,10 +459,18 @@ mod tests {
             assert_eq!(topology.nearest_cell(direction).unwrap().id, selected.id);
         }
 
-        let tied = topology.cells().iter().filter(|cell| {
-            (cell.center.normalize().dot(direction) - selected.center.normalize().dot(direction)).abs()
-                < 1e-12
-        }).map(|cell| cell.id).min().unwrap();
+        let tied = topology
+            .cells()
+            .iter()
+            .filter(|cell| {
+                (cell.center.normalize().dot(direction)
+                    - selected.center.normalize().dot(direction))
+                .abs()
+                    < 1e-12
+            })
+            .map(|cell| cell.id)
+            .min()
+            .unwrap();
         assert_eq!(selected.id, tied);
     }
 
@@ -390,7 +484,10 @@ mod tests {
         assert_eq!(topology.are_neighbors(cell.id, neighbors[0]), Some(true));
         assert_eq!(topology.are_neighbors(cell.id, cell.id), Some(false));
         assert_eq!(topology.neighbor_ids(SurfaceCellId(u32::MAX)), None);
-        assert_eq!(topology.are_neighbors(cell.id, SurfaceCellId(u32::MAX)), None);
+        assert_eq!(
+            topology.are_neighbors(cell.id, SurfaceCellId(u32::MAX)),
+            None
+        );
     }
 
     #[test]
