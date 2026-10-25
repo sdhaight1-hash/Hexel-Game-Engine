@@ -66,10 +66,36 @@ struct AuditReport {
     min_edge_length: Option<f64>,
     max_edge_length: Option<f64>,
     mean_edge_length: Option<f64>,
+    min_cell_area: Option<f64>,
+    max_cell_area: Option<f64>,
+    mean_cell_area: Option<f64>,
+    cell_area_coefficient_of_variation: Option<f64>,
 }
 
 fn edge_key(a: usize, b: usize) -> (usize, usize) {
     if a < b { (a, b) } else { (b, a) }
+}
+
+fn spherical_polygon_area(mesh: &MeshInput, cell: &PolygonCell) -> f64 {
+    if cell.vertices.len() < 3 {
+        return 0.0;
+    }
+
+    let points: Vec<Point3> = cell.vertices.iter()
+        .map(|&id| mesh.vertices[id].normalized())
+        .collect();
+    let anchor = points[0];
+    let mut unit_area = 0.0;
+
+    for i in 1..points.len() - 1 {
+        let b = points[i];
+        let c = points[i + 1];
+        let numerator = anchor.dot(b.cross(c)).abs();
+        let denominator = 1.0 + anchor.dot(b) + b.dot(c) + c.dot(anchor);
+        unit_area += 2.0 * numerator.atan2(denominator);
+    }
+
+    unit_area * mesh.radius * mesh.radius
 }
 
 fn audit(mesh: &MeshInput) -> AuditReport {
@@ -79,6 +105,7 @@ fn audit(mesh: &MeshInput) -> AuditReport {
     let mut duplicate_cell_ids = 0;
     let mut degenerate_cells = 0;
     let mut edge_lengths = Vec::new();
+    let mut cell_areas = Vec::new();
 
     for cell in &mesh.cells {
         if !seen_ids.insert(cell.id) { duplicate_cell_ids += 1; }
@@ -93,6 +120,13 @@ fn audit(mesh: &MeshInput) -> AuditReport {
             id >= mesh.vertices.len() || !distinct.insert(id)
         });
         if invalid { degenerate_cells += 1; continue; }
+
+        let area = spherical_polygon_area(mesh, cell);
+        if area.is_finite() && area > 0.0 {
+            cell_areas.push(area);
+        } else {
+            degenerate_cells += 1;
+        }
 
         for i in 0..cell.vertices.len() {
             let a = cell.vertices[i];
@@ -112,6 +146,16 @@ fn audit(mesh: &MeshInput) -> AuditReport {
     let max_edge_length = edge_lengths.iter().copied().reduce(f64::max);
     let mean_edge_length = if edge_lengths.is_empty() { None }
         else { Some(edge_lengths.iter().sum::<f64>() / edge_lengths.len() as f64) };
+    let min_cell_area = cell_areas.iter().copied().reduce(f64::min);
+    let max_cell_area = cell_areas.iter().copied().reduce(f64::max);
+    let mean_cell_area = if cell_areas.is_empty() { None }
+        else { Some(cell_areas.iter().sum::<f64>() / cell_areas.len() as f64) };
+    let cell_area_coefficient_of_variation = mean_cell_area.map(|mean| {
+        let variance = cell_areas.iter()
+            .map(|area| (area - mean) * (area - mean))
+            .sum::<f64>() / cell_areas.len() as f64;
+        variance.sqrt() / mean
+    });
 
     AuditReport {
         cell_count: mesh.cells.len(),
@@ -126,6 +170,10 @@ fn audit(mesh: &MeshInput) -> AuditReport {
         min_edge_length,
         max_edge_length,
         mean_edge_length,
+        min_cell_area,
+        max_cell_area,
+        mean_cell_area,
+        cell_area_coefficient_of_variation,
     }
 }
 
@@ -247,6 +295,10 @@ fn main() {
             println!("Maximum radius error: {:.12}", report.max_radius_error);
             println!("Edge length min / mean / max: {:?} / {:?} / {:?}",
                 report.min_edge_length, report.mean_edge_length, report.max_edge_length);
+            println!("Spherical cell area min / mean / max: {:?} / {:?} / {:?}",
+                report.min_cell_area, report.mean_cell_area, report.max_cell_area);
+            println!("Cell area coefficient of variation: {:?}",
+                report.cell_area_coefficient_of_variation);
         }
     }
 }
@@ -328,6 +380,9 @@ mod tests {
         assert_eq!(report.degenerate_cells, 0);
         assert_eq!(report.duplicate_cell_ids, 0);
         assert!(report.max_radius_error < 1e-10);
+        assert!(report.min_cell_area.unwrap() > 0.0);
+        assert!(report.max_cell_area.unwrap() >= report.min_cell_area.unwrap());
+        assert!(report.cell_area_coefficient_of_variation.unwrap().is_finite());
     }
 
     #[test]
@@ -341,6 +396,9 @@ mod tests {
         assert_eq!(report.non_manifold_edges, 0);
         assert_eq!(report.degenerate_cells, 0);
         assert!(report.max_radius_error < 1e-10);
+        assert!(report.min_cell_area.unwrap() > 0.0);
+        assert!(report.max_cell_area.unwrap() >= report.min_cell_area.unwrap());
+        assert!(report.cell_area_coefficient_of_variation.unwrap().is_finite());
     }
 
     #[test]
