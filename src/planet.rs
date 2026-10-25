@@ -152,9 +152,13 @@ impl PlanetGenerator {
         self.config
     }
 
-    /// Sample terrain at a world-space position or direction on the sphere.
+    /// Sample terrain at a planet-centered position or direction.
     ///
-    /// The input is normalized, so callers can pass a topology cell center directly.
+    /// The input magnitude is ignored, so callers can pass a topology cell center
+    /// directly. The returned `surface_position` uses this generator's configured
+    /// radius plus sampled elevation; this method does not displace topology boundary
+    /// vertices or change the current renderer/gameplay height model.
+    ///
     /// A zero or non-finite direction falls back to the positive X axis.
     pub fn sample_direction(&self, direction: DVec3, season_phase: f64) -> PlanetSample {
         let direction = if direction.x.is_finite()
@@ -446,6 +450,24 @@ mod tests {
                 from_direction.surface_position.length(),
                 generator.config().radius + from_direction.elevation,
                 epsilon = 1e-6
+            );
+        }
+    }
+
+    #[test]
+    fn direction_sampling_is_deterministic_for_same_seed_and_cell() {
+        let first_generator = PlanetGenerator::new(42);
+        let second_generator = PlanetGenerator::new(42);
+        let topology = crate::topology::SurfaceTopology::generate(
+            2,
+            first_generator.config().radius,
+        )
+        .unwrap();
+
+        for cell in topology.cells() {
+            assert_eq!(
+                first_generator.sample_direction(cell.center, 0.25),
+                second_generator.sample_direction(cell.center, 0.25),
             );
         }
     }
