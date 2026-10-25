@@ -713,21 +713,70 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
     }
     let crown_start = (height_layers as f32 * if species == 2 || species == 6 { 0.30 } else { 0.48 }) as i32;
     let crown_layers = (height_layers - crown_start).max(2);
+
+    // Structural branches radiate from the trunk before leaf clusters are added.
+    // Direction vectors use the six neighbors of the hex grid, keeping branch
+    // placement aligned with the engine's hexagonal-prism world.
+    let directions = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];
+    let branch_levels = if species == 2 { 5 } else if species == 4 || species == 5 { 3 } else { 4 };
+    for level in 0..branch_levels {
+        let y = crown_start + crown_layers * (level + 1) / (branch_levels + 1);
+        let dir_index = (vegetation_hash(seed_hash, root.q + level * 13, root.r - level * 7) as usize) % directions.len();
+        let (dq, dr) = directions[dir_index];
+        let length = if species == 2 { (crown_radius - level / 2).max(1) } else { (crown_radius - 1).max(1) };
+        for step in 1..=length {
+            let branch_cell = CellPos::new(root.q + dq * step, root.r + dr * step, root.y + y + step / 3);
+            append_hexel_prism(vertices, branch_cell, scale, [trunk_color[0] * 0.94, trunk_color[1] * 0.94, trunk_color[2] * 0.94], true);
+        }
+    }
+
     for cy in 0..crown_layers {
         if cy % 2 != 0 { continue; }
         let progress = cy as f32 / crown_layers as f32;
         let radius = if species == 2 { ((crown_radius as f32) * (1.0 - progress * 0.88)).ceil() as i32 }
             else if species == 6 { ((crown_radius as f32) * (1.0 - progress * 0.72)).ceil() as i32 }
-            else { ((crown_radius as f32) * (0.55 + (1.0 - progress) * 0.45)).ceil() as i32 };
+            else if species == 4 || species == 5 { ((crown_radius as f32) * (0.55 + (1.0 - progress) * 0.45)).ceil() as i32 }
+            else { ((crown_radius as f32) * (0.72 + (1.0 - progress) * 0.28)).ceil() as i32 };
         for dq in -radius..=radius {
             for dr in -radius..=radius {
                 let distance = (dq.abs() + dr.abs() + (dq + dr).abs()) / 2;
                 let irregular = vegetation_hash(seed_hash, root.q + dq + cy * 17, root.r + dr - cy * 11) % 100;
-                let keep = distance <= radius && if species == 2 { irregular > 8 } else { distance < radius || irregular > 24 };
+                let edge_noise = if species == 2 { 8 } else { 34 };
+                let keep = distance <= radius && (distance < radius || irregular > edge_noise);
                 if !keep || (cy < crown_layers / 3 && dq == 0 && dr == 0) { continue; }
-                append_hexel_prism(vertices, CellPos::new(root.q + dq, root.r + dr, root.y + crown_start + cy), scale, leaf_color, false);
+                // Avoid a solid voxel-like leaf mass: only a deterministic subset of
+                // canopy cells receives a textured, crossed leaf cluster. This gives
+                // branches and sky gaps room to read through the silhouette.
+                if irregular % if species == 2 { 4 } else { 3 } == 0 || distance == radius {
+                    let cluster_cell = CellPos::new(root.q + dq, root.r + dr, root.y + crown_start + cy);
+                    append_foliage_cluster(vertices, cluster_cell, scale, leaf_color, seed_hash ^ irregular as u32);
+                }
             }
         }
+    }
+}
+
+fn append_foliage_cluster(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldScale, color: [f32; 3], seed: u32) {
+    let center = scale.prism_center(cell);
+    let bottom = cell.y as f32 * scale.hexel_height + scale.hexel_height * 0.12;
+    let top = (cell.y + 1) as f32 * scale.hexel_height + scale.hexel_height * 0.82;
+    let half_width = scale.hex_radius * (0.95 + (seed % 23) as f32 * 0.012);
+    // Three intersecting planes provide volume from multiple viewing angles while
+    // each plane uses the same alpha-cutout texture and preserves transparent gaps.
+    for angle_deg in [0.0_f32, 60.0, 120.0] {
+        let angle = angle_deg.to_radians();
+        let axis = Vec3::new(angle.cos(), 0.0, angle.sin());
+        let a = Vec3::new(center.x, bottom, center.z) - axis * half_width;
+        let b = Vec3::new(center.x, bottom, center.z) + axis * half_width;
+        let c = Vec3::new(center.x, top, center.z) + axis * half_width * 0.82;
+        let d = Vec3::new(center.x, top, center.z) - axis * half_width * 0.82;
+        let tint = [color[0] * (0.88 + angle_deg / 600.0), color[1], color[2] * (1.08 - angle_deg / 900.0)];
+        push_textured_triangle(vertices, [(a, [0.0, 1.0]), (b, [1.0, 1.0]), (c, [1.0, 0.0])], tint);
+        push_textured_triangle(vertices, [(a, [0.0, 1.0]), (c, [1.0, 0.0]), (d, [0.0, 0.0])], tint);
+        // Reverse winding makes the card visible from its back side without
+        // relying on a double-sided material setting.
+        push_textured_triangle(vertices, [(b, [1.0, 1.0]), (a, [0.0, 1.0]), (d, [0.0, 0.0])], tint);
+        push_textured_triangle(vertices, [(b, [1.0, 1.0]), (d, [0.0, 0.0]), (c, [1.0, 0.0])], tint);
     }
 }
 
