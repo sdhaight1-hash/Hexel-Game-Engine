@@ -127,3 +127,18 @@ cargo run --bin topology_geometry_check -- 3
 Inspect the final audit output for `Overlapping cell pairs detected` and `Relative area coverage error`. Investigate failures rather than changing tolerances merely to make tests pass.
 
 **Decision at this checkpoint:** keep the work diagnostic-only. Do not change playable-world topology until independent coverage validation, adversarial overlap checks, prism-boundary tests, and the pure-hexagonal-prism compatibility question have adequate evidence.
+
+## Phase 6 — audit hardening implemented; local validation pending
+
+A focused hardening pass has been pushed to `src/bin/topology_geometry_check.rs`. This is still offline diagnostic code; gameplay topology and rendering are unchanged.
+
+- **Containment tolerance:** edge-plane normals are normalized before signed-side tests. The predicate now compares signed sides and uses a fixed angular-distance tolerance on the unit sphere rather than multiplying unnormalized side values, avoiding edge-length-dependent thresholds. Non-finite and zero-length query directions are rejected.
+- **Duplicate-coordinate comparison:** duplicate polygon coordinate sets are matched one-to-one; a coordinate in one polygon cannot be reused to satisfy multiple vertices in the other.
+- **Runtime orientation:** the audit reports shared edges used twice with the same directed traversal.
+- **Runtime vertex neighborhoods:** the audit constructs each vertex's link graph and reports vertices whose link is not one connected cycle. This is a local manifold check; it complements, rather than replaces, edge-incidence checks.
+- **Adversarial regressions:** new tests cover tiny spherical polygons, one-to-one coordinate matching, malformed non-finite coordinates, same-direction shared edges, disconnected vertex links, and valid generated meshes at frequencies 2–4.
+- The runtime audit now prints `Inconsistent edge orientations` and `Invalid vertex links`.
+
+**Validation status:** implementation and regression tests are committed, but the updated Rust code has not yet been compiled or run locally after this push. Do not treat Phase 6 as validated until the user runs the commands in `docs/TOPOLOGY_AUDIT_PHASE_5_PLAN.md` and shares the output.
+
+The containment predicate and vertex-link check assume valid convex spherical cells with minor great-circle edges. Finite coverage sampling remains a diagnostic, not a proof of full coverage.
