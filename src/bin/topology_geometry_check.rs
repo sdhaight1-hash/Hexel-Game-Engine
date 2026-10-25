@@ -89,6 +89,8 @@ struct AuditReport {
     off_radius_vertices: usize,
     invalid_cell_indices: usize,
     repeated_vertex_ids: usize,
+    inconsistent_edge_orientations: usize,
+    invalid_vertex_links: usize,
     max_radius_error: f64,
     min_edge_length: Option<f64>,
     max_edge_length: Option<f64>,
@@ -202,15 +204,24 @@ fn cell_points(mesh: &MeshInput, cell: &PolygonCell) -> Option<Vec<Point3>> {
         if vertex_id >= mesh.vertices.len() || !distinct.insert(vertex_id) {
             return None;
         }
-        let point = mesh.vertices[vertex_id].normalized();
-        if !point.norm().is_finite() {
+        let raw = mesh.vertices[vertex_id];
+        if !raw.x.is_finite() || !raw.y.is_finite() || !raw.z.is_finite() {
             return None;
         }
+        let norm = raw.norm();
+        if !norm.is_finite() || norm <= 1e-12 {
+            return None;
+        }
+        let point = raw.scale(1.0 / norm);
         points.push(point);
     }
 
     Some(points)
 }
+
+/// Absolute tolerance for signed distance to a great-circle plane, after its normal
+/// has been normalized. This is independent of polygon edge length.
+const SPHERICAL_SIDE_TOLERANCE: f64 = 1e-12;
 
 /// Strict containment for a convex spherical polygon whose edges are minor great-circle arcs.
 fn point_strictly_inside_spherical_cell(
@@ -232,14 +243,21 @@ fn point_strictly_inside_spherical_cell(
     for i in 0..points.len() {
         let a = points[i];
         let b = points[(i + 1) % points.len()];
-        let edge_normal = a.cross(b);
-        if edge_normal.norm() <= 1e-12 {
+        let raw_normal = a.cross(b);
+        let normal_length = raw_normal.norm();
+        if !normal_length.is_finite() || normal_length <= 1e-15 {
             return false;
         }
+        let edge_normal = raw_normal.scale(1.0 / normal_length);
 
         let center_side = edge_normal.dot(center);
         let point_side = edge_normal.dot(point);
-        if center_side.abs() <= 1e-12 || point_side * center_side <= 1e-10 {
+        if !center_side.is_finite()
+            || !point_side.is_finite()
+            || center_side.abs() <= SPHERICAL_SIDE_TOLERANCE
+            || point_side.abs() <= SPHERICAL_SIDE_TOLERANCE
+            || center_side.is_sign_positive() != point_side.is_sign_positive()
+        {
             return false;
         }
     }
@@ -264,14 +282,28 @@ fn spherical_cells_overlap(mesh: &MeshInput, a: &PolygonCell, b: &PolygonCell) -
         return false;
     };
 
-    // Duplicate interiors may use either the same vertex IDs or distinct vertex
-    // records at the same coordinates. Compare normalized coordinate sets so the
-    // result does not depend on mesh indexing.
+    // Duplicate interiors may use the same IDs or distinct vertex records at the
+    // same coordinates. Match coordinates one-to-one so one vertex cannot satisfy
+    // multiple matches in the other polygon.
     let ids_a: BTreeSet<usize> = a.vertices.iter().copied().collect();
     let ids_b: BTreeSet<usize> = b.vertices.iter().copied().collect();
-    let same_coordinate_set = points_a.len() == points_b.len()
-        && points_a.iter().all(|pa| points_b.iter().any(|pb| pa.distance(*pb) <= 1e-8))
-        && points_b.iter().all(|pb| points_a.iter().any(|pa| pa.distance(*pb) <= 1e-8));
+    let same_coordinate_set = if points_a.len() == points_b.len() {
+        let mut matched_b = vec![false; points_b.len()];
+        let mut all_matched = true;
+        for pa in &points_a {
+            if let Some(index) = points_b.iter().enumerate().find_map(|(index, pb)| {
+                (!matched_b[index] && pa.distance(*pb) <= 1e-8).then_some(index)
+            }) {
+                matched_b[index] = true;
+            } else {
+                all_matched = false;
+                break;
+            }
+        }
+        all_matched && matched_b.iter().all(|matched| *matched)
+    } else {
+        false
+    };
     if ids_a == ids_b || same_coordinate_set {
         return true;
     }
@@ -389,8 +421,82 @@ fn sample_spherical_coverage(mesh: &MeshInput, sample_count: usize) -> CoverageR
     report
 }
 
+
+#[derive(Clone, Debug, PartialEq)]
+struct TopologyValidation {
+    /// Edges used by exactly two cells whose directed traversals are not opposite.
+    inconsistent_edge_orientations: usize,
+    /// Vertices whose incident-cell link is not one connected cycle.
+    invalid_vertex_links: usize,
+}
+
+/// Check orientation and local vertex-manifold structure independently of coverage.
+fn validate_topology(mesh: &MeshInput) -> TopologyValidation {
+    let mut directed_uses: BTreeMap<(usize, usize), Vec<(usize, usize)>> = BTreeMap::new();
+    // For each vertex, record the link graph induced by its incident cells.
+    let mut link_adjacency: Vec<BTreeMap<usize, BTreeSet<usize>>> =
+        vec![BTreeMap::new(); mesh.vertices.len()];
+    let mut link_degrees: Vec<BTreeMap<usize, usize>> =
+        vec![BTreeMap::new(); mesh.vertices.len()];
+
+    for cell in &mesh.cells {
+        if cell.vertices.len() < 3 {
+            continue;
+        }
+        let mut unique = BTreeSet::new();
+        if cell.vertices.iter().any(|&id| id >= mesh.vertices.len() || !unique.insert(id)) {
+            continue;
+        }
+
+        for i in 0..cell.vertices.len() {
+            let a = cell.vertices[i];
+            let b = cell.vertices[(i + 1) % cell.vertices.len()];
+            directed_uses.entry(edge_key(a, b)).or_default().push((a, b));
+
+            let previous = cell.vertices[(i + cell.vertices.len() - 1) % cell.vertices.len()];
+            let next = b;
+            link_adjacency[a].entry(previous).or_default().insert(next);
+            link_adjacency[a].entry(next).or_default().insert(previous);
+            *link_degrees[a].entry(previous).or_insert(0) += 1;
+            *link_degrees[a].entry(next).or_insert(0) += 1;
+        }
+    }
+
+    let inconsistent_edge_orientations = directed_uses.values().filter(|uses| {
+        uses.len() == 2 && !(uses[0].0 == uses[1].1 && uses[0].1 == uses[1].0)
+    }).count();
+
+    let mut invalid_vertex_links = 0;
+    for vertex_id in 0..mesh.vertices.len() {
+        let adjacency = &link_adjacency[vertex_id];
+        let degrees = &link_degrees[vertex_id];
+        if adjacency.is_empty() || degrees.values().any(|&degree| degree != 2) {
+            invalid_vertex_links += 1;
+            continue;
+        }
+
+        let start = *adjacency.keys().next().expect("non-empty link adjacency");
+        let mut visited = BTreeSet::new();
+        let mut stack = vec![start];
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            if let Some(neighbors) = adjacency.get(&current) {
+                stack.extend(neighbors.iter().copied().filter(|neighbor| !visited.contains(neighbor)));
+            }
+        }
+        if visited.len() != adjacency.len() {
+            invalid_vertex_links += 1;
+        }
+    }
+
+    TopologyValidation { inconsistent_edge_orientations, invalid_vertex_links }
+}
+
 fn audit(mesh: &MeshInput) -> AuditReport {
     let validation = validate_mesh(mesh);
+    let topology_validation = validate_topology(mesh);
     let mut edge_uses: BTreeMap<(usize, usize), usize> = BTreeMap::new();
     let mut side_counts = BTreeMap::new();
     let mut seen_ids = BTreeSet::new();
@@ -500,6 +606,8 @@ fn audit(mesh: &MeshInput) -> AuditReport {
         off_radius_vertices: validation.off_radius_vertices,
         invalid_cell_indices: validation.invalid_cell_indices,
         repeated_vertex_ids: validation.repeated_vertex_ids,
+        inconsistent_edge_orientations: topology_validation.inconsistent_edge_orientations,
+        invalid_vertex_links: topology_validation.invalid_vertex_links,
         max_radius_error,
         min_edge_length,
         max_edge_length,
@@ -732,6 +840,8 @@ fn main() {
             println!("Off-radius vertices: {}", report.off_radius_vertices);
             println!("Invalid cell indices: {}", report.invalid_cell_indices);
             println!("Repeated vertex IDs: {}", report.repeated_vertex_ids);
+            println!("Inconsistent edge orientations: {}", report.inconsistent_edge_orientations);
+            println!("Invalid vertex links: {}", report.invalid_vertex_links);
             println!("Maximum radius error: {:.12}", report.max_radius_error);
             println!(
                 "Edge length min / mean / max: {:?} / {:?} / {:?}",
@@ -885,6 +995,81 @@ mod tests {
         }
 
         signed_area * mesh.radius * mesh.radius
+    }
+
+
+    #[test]
+    fn point_in_cell_uses_normalized_edge_sides_for_tiny_polygons() {
+        let mesh = separate_polygon_mesh(vec![tangent_quad(-1e-5, 1e-5, -1e-5, 1e-5)]);
+        let cell_center = mesh.cells[0].vertices.iter()
+            .map(|&id| mesh.vertices[id])
+            .fold(Point3 { x: 0.0, y: 0.0, z: 0.0 }, Point3::add)
+            .normalized();
+        assert!(
+            point_strictly_inside_spherical_cell(&mesh, &mesh.cells[0], cell_center),
+            "the center of a tiny valid spherical polygon must be inside"
+        );
+    }
+
+    #[test]
+    fn duplicate_coordinate_matching_is_one_to_one() {
+        let polygon_a = tangent_quad(-0.5, 0.5, -0.5, 0.5);
+        // Three coordinates are deliberately clustered near one coordinate from A;
+        // a non-bijective any-match comparison could reuse one match incorrectly.
+        let polygon_b = vec![
+            polygon_a[0],
+            tangent_point(-0.5 + 5e-9, -0.5),
+            tangent_point(-0.5 + 8e-9, -0.5),
+            polygon_a[2],
+        ];
+        let mesh = separate_polygon_mesh(vec![polygon_a, polygon_b]);
+        assert!(
+            !spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]),
+            "near-duplicate coordinate sets must not be called identical solely by reusing matches"
+        );
+    }
+
+    #[test]
+    fn malformed_coordinates_are_rejected_without_panicking() {
+        let mut mesh = square_mesh();
+        mesh.vertices[0] = Point3 { x: f64::NAN, y: 0.0, z: 1.0 };
+        assert!(cell_points(&mesh, &mesh.cells[0]).is_none());
+        let report = audit(&mesh);
+        assert_eq!(report.non_finite_vertices, 1);
+        assert!(report.invalid_vertex_links > 0);
+    }
+
+    #[test]
+    fn runtime_topology_validation_detects_same_direction_shared_edge() {
+        let mut mesh = square_mesh();
+        // Both cells traverse edge 0-2 as 0 -> 2.
+        mesh.cells[1].vertices = vec![0, 2, 3];
+        let topology = validate_topology(&mesh);
+        assert!(topology.inconsistent_edge_orientations > 0);
+    }
+
+    #[test]
+    fn runtime_topology_validation_detects_disconnected_vertex_link() {
+        let mut mesh = square_mesh();
+        // Add a second fan around vertex 0, disconnected from the original fan.
+        let start = mesh.vertices.len();
+        mesh.vertices.extend([
+            Point3 { x: 0.0, y: 0.0, z: 1.0 },
+            Point3 { x: 0.0, y: 0.0, z: -1.0 },
+        ]);
+        mesh.cells.push(PolygonCell { id: 12, vertices: vec![0, start, start + 1] });
+        let topology = validate_topology(&mesh);
+        assert!(topology.invalid_vertex_links > 0);
+    }
+
+    #[test]
+    fn generated_mesh_has_consistent_orientation_and_vertex_links() {
+        for frequency in [2, 3, 4] {
+            let mesh = generate_icosphere_dual(frequency, 100.0).unwrap();
+            let topology = validate_topology(&mesh);
+            assert_eq!(topology.inconsistent_edge_orientations, 0, "frequency {frequency}");
+            assert_eq!(topology.invalid_vertex_links, 0, "frequency {frequency}");
+        }
     }
 
     #[test]
