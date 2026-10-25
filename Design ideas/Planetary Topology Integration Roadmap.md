@@ -1,6 +1,6 @@
 # Planetary Topology Integration Roadmap
 
-**Status:** Phase 1 complete; Phase 2 lookup/neighbor API implemented and locally verified, with gameplay integration still pending  
+**Status:** Phase 1 complete; Phase 2 lookup/neighbor APIs verified; opt-in navigation adapter committed, adapter verification pending  
 **Target:** Integrate the geodesic dual-cell topology into Hexel Engine incrementally without regressing existing gameplay.  
 **Primary implementation:** `src/topology.rs`  
 **Current verification:** Developer-reported `cargo test` after pulling the Phase 2 changes passed **107 tests, 0 failed** (61 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no tests).
