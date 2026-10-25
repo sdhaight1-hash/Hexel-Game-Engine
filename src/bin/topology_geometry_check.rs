@@ -83,6 +83,12 @@ struct AuditReport {
     non_manifold_edges: usize,
     degenerate_cells: usize,
     duplicate_cell_ids: usize,
+    invalid_radius: bool,
+    non_finite_vertices: usize,
+    zero_length_vertices: usize,
+    off_radius_vertices: usize,
+    invalid_cell_indices: usize,
+    repeated_vertex_ids: usize,
     max_radius_error: f64,
     min_edge_length: Option<f64>,
     max_edge_length: Option<f64>,
@@ -95,6 +101,66 @@ struct AuditReport {
     overlapping_cell_pairs: usize,
     /// Relative difference between summed cell area and the full sphere area.
     relative_area_coverage_error: f64,
+}
+
+/// Relative radius tolerance used by the audit for vertex-on-sphere checks.
+const RADIUS_RELATIVE_TOLERANCE: f64 = 1e-8;
+/// Absolute floor prevents an unrealistically strict tolerance for small radii.
+const RADIUS_ABSOLUTE_TOLERANCE: f64 = 1e-10;
+
+#[derive(Clone, Debug, PartialEq)]
+struct MeshValidation {
+    invalid_radius: bool,
+    non_finite_vertices: usize,
+    zero_length_vertices: usize,
+    off_radius_vertices: usize,
+    invalid_cell_indices: usize,
+    repeated_vertex_ids: usize,
+}
+
+fn validate_mesh(mesh: &MeshInput) -> MeshValidation {
+    let invalid_radius = !mesh.radius.is_finite() || mesh.radius <= 0.0;
+    let mut non_finite_vertices = 0;
+    let mut zero_length_vertices = 0;
+    let mut off_radius_vertices = 0;
+
+    for vertex in &mesh.vertices {
+        let finite_components = vertex.x.is_finite() && vertex.y.is_finite() && vertex.z.is_finite();
+        let norm = vertex.norm();
+        if !finite_components || !norm.is_finite() {
+            non_finite_vertices += 1;
+        } else if norm <= 1e-12 {
+            zero_length_vertices += 1;
+        } else if !invalid_radius {
+            let tolerance = RADIUS_ABSOLUTE_TOLERANCE
+                .max(mesh.radius.abs() * RADIUS_RELATIVE_TOLERANCE);
+            if (norm - mesh.radius).abs() > tolerance {
+                off_radius_vertices += 1;
+            }
+        }
+    }
+
+    let mut invalid_cell_indices = 0;
+    let mut repeated_vertex_ids = 0;
+    for cell in &mesh.cells {
+        let mut seen = BTreeSet::new();
+        for &id in &cell.vertices {
+            if id >= mesh.vertices.len() {
+                invalid_cell_indices += 1;
+            } else if !seen.insert(id) {
+                repeated_vertex_ids += 1;
+            }
+        }
+    }
+
+    MeshValidation {
+        invalid_radius,
+        non_finite_vertices,
+        zero_length_vertices,
+        off_radius_vertices,
+        invalid_cell_indices,
+        repeated_vertex_ids,
+    }
 }
 
 fn edge_key(a: usize, b: usize) -> (usize, usize) {
@@ -324,6 +390,7 @@ fn sample_spherical_coverage(mesh: &MeshInput, sample_count: usize) -> CoverageR
 }
 
 fn audit(mesh: &MeshInput) -> AuditReport {
+    let validation = validate_mesh(mesh);
     let mut edge_uses: BTreeMap<(usize, usize), usize> = BTreeMap::new();
     let mut side_counts = BTreeMap::new();
     let mut seen_ids = BTreeSet::new();
@@ -370,11 +437,14 @@ fn audit(mesh: &MeshInput) -> AuditReport {
 
     let boundary_edges = edge_uses.values().filter(|&&uses| uses == 1).count();
     let non_manifold_edges = edge_uses.values().filter(|&&uses| uses > 2).count();
-    let max_radius_error = mesh
-        .vertices
-        .iter()
-        .map(|v| (v.norm() - mesh.radius).abs())
-        .fold(0.0_f64, f64::max);
+    let max_radius_error = if validation.invalid_radius || validation.non_finite_vertices > 0 {
+        f64::INFINITY
+    } else {
+        mesh.vertices
+            .iter()
+            .map(|v| (v.norm() - mesh.radius).abs())
+            .fold(0.0_f64, f64::max)
+    };
     let min_edge_length = edge_lengths.iter().copied().reduce(f64::min);
     let max_edge_length = edge_lengths.iter().copied().reduce(f64::max);
     let mean_edge_length = if edge_lengths.is_empty() {
@@ -424,6 +494,12 @@ fn audit(mesh: &MeshInput) -> AuditReport {
         non_manifold_edges,
         degenerate_cells,
         duplicate_cell_ids,
+        invalid_radius: validation.invalid_radius,
+        non_finite_vertices: validation.non_finite_vertices,
+        zero_length_vertices: validation.zero_length_vertices,
+        off_radius_vertices: validation.off_radius_vertices,
+        invalid_cell_indices: validation.invalid_cell_indices,
+        repeated_vertex_ids: validation.repeated_vertex_ids,
         max_radius_error,
         min_edge_length,
         max_edge_length,
@@ -650,6 +726,12 @@ fn main() {
             println!("Non-manifold edges: {}", report.non_manifold_edges);
             println!("Degenerate cells: {}", report.degenerate_cells);
             println!("Duplicate cell IDs: {}", report.duplicate_cell_ids);
+            println!("Invalid radius: {}", report.invalid_radius);
+            println!("Non-finite vertices: {}", report.non_finite_vertices);
+            println!("Zero-length vertices: {}", report.zero_length_vertices);
+            println!("Off-radius vertices: {}", report.off_radius_vertices);
+            println!("Invalid cell indices: {}", report.invalid_cell_indices);
+            println!("Repeated vertex IDs: {}", report.repeated_vertex_ids);
             println!("Maximum radius error: {:.12}", report.max_radius_error);
             println!(
                 "Edge length min / mean / max: {:?} / {:?} / {:?}",
@@ -803,6 +885,56 @@ mod tests {
         }
 
         signed_area * mesh.radius * mesh.radius
+    }
+
+    #[test]
+    fn validation_reports_invalid_radius_and_non_finite_vertices_without_panicking() {
+        let mut mesh = square_mesh();
+        mesh.radius = f64::NAN;
+        mesh.vertices[0].x = f64::INFINITY;
+        let validation = validate_mesh(&mesh);
+        assert!(validation.invalid_radius);
+        assert_eq!(validation.non_finite_vertices, 1);
+        let report = audit(&mesh);
+        assert!(report.invalid_radius);
+        assert_eq!(report.non_finite_vertices, 1);
+        assert!(report.max_radius_error.is_infinite());
+    }
+
+    #[test]
+    fn validation_reports_zero_length_and_off_radius_vertices() {
+        let mut mesh = square_mesh();
+        mesh.vertices[0] = Point3 { x: 0.0, y: 0.0, z: 0.0 };
+        mesh.vertices[1] = Point3 { x: 0.0, y: 2.0, z: 0.0 };
+        let validation = validate_mesh(&mesh);
+        assert_eq!(validation.zero_length_vertices, 1);
+        assert_eq!(validation.off_radius_vertices, 1);
+    }
+
+    #[test]
+    fn validation_reports_invalid_indices_and_repeated_vertex_ids() {
+        let mut mesh = square_mesh();
+        mesh.cells.push(PolygonCell { id: 12, vertices: vec![0, 1, 99, 1] });
+        let validation = validate_mesh(&mesh);
+        assert_eq!(validation.invalid_cell_indices, 1);
+        assert_eq!(validation.repeated_vertex_ids, 1);
+        let report = audit(&mesh);
+        assert_eq!(report.invalid_cell_indices, 1);
+        assert_eq!(report.repeated_vertex_ids, 1);
+    }
+
+    #[test]
+    fn radius_tolerance_is_scale_aware() {
+        let mut mesh = square_mesh();
+        mesh.radius = 1_000_000.0;
+        mesh.vertices = vec![
+            Point3 { x: 1_000_000.001, y: 0.0, z: 0.0 },
+        ];
+        mesh.cells.clear();
+        let validation = validate_mesh(&mesh);
+        assert_eq!(validation.off_radius_vertices, 0);
+        mesh.vertices[0].x = 1_000_001.0;
+        assert_eq!(validate_mesh(&mesh).off_radius_vertices, 1);
     }
 
     #[test]
