@@ -106,9 +106,13 @@ mod tests {
         let cell = navigator.topology().cell(current).unwrap();
         let radial = cell.center.normalize();
         let expected = navigator.neighbors(current).unwrap()[0];
-        let neighbor_radial = navigator.topology().cell(expected).unwrap().center.normalize();
-        let toward_neighbor =
-            neighbor_radial - radial * neighbor_radial.dot(radial);
+        let neighbor_radial = navigator
+            .topology()
+            .cell(expected)
+            .unwrap()
+            .center
+            .normalize();
+        let toward_neighbor = neighbor_radial - radial * neighbor_radial.dot(radial);
 
         assert_eq!(
             navigator.next_cell_toward(current, toward_neighbor),
@@ -120,7 +124,12 @@ mod tests {
     fn movement_rejects_invalid_ids_and_non_tangent_directions() {
         let navigator = SurfaceNavigator::new(2, 100.0).unwrap();
         let current = navigator.topology().cells()[0].id;
-        let radial = navigator.topology().cell(current).unwrap().center.normalize();
+        let radial = navigator
+            .topology()
+            .cell(current)
+            .unwrap()
+            .center
+            .normalize();
 
         assert_eq!(navigator.next_cell_toward(current, DVec3::ZERO), None);
         assert_eq!(navigator.next_cell_toward(current, radial * 5.0), None);
