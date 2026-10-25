@@ -131,15 +131,34 @@ The renderer-independent geology rules live in `src/geology.rs`; soil and nutrie
 
 ## Design roadmap
 
-1. **Define planetary geometry and scale:** choose the planet radius and a spherical surface partition compatible with pure hexagonal prisms.
-2. **Establish planet-relative coordinates:** make latitude, longitude, spherical distance, region identity, and chunk addressing consistent across the engine.
-3. **Unify geometry queries:** ensure rendering, raycasting, placement, and collision agree on hexel geometry and cell identity.
-4. **Create persistent world data:** separate deterministic generated terrain from saved edits and depleted resource inventories.
-5. **Build climate and hydrology foundations:** derive baseline climate from latitude and seasons, then add the effects of elevation, continents, winds, rainfall, and water circulation in stages.
-6. **Add finite geology and ecosystems:** define material deposits, water inventories, soil nutrients, biomass, and explicit renewal rules.
-7. **Scale simulation by distance:** keep nearby chunks detailed while representing distant and untouched regions compactly.
+The roadmap prioritizes shared foundations before broad content. The current renderer is still a flat-world prototype, so gameplay features below are planned unless explicitly listed as implemented elsewhere in this README.
 
-This roadmap describes direction, not completed functionality.
+### Near-term: make the local world coherent and interactive
+
+1. **Unify geometry queries:** make rendering, raycasting, placement, collision, targeting, and cell identity agree on the same hexel geometry.
+2. **Establish persistent world state:** separate deterministic generation from player edits, harvested flora, depleted deposits, and inventory rewards. Unloading or reloading a chunk must not restore removed resources.
+3. **Build a general procedural flora system:** treat trees as one kind of flora, not as a separate hard-coded gameplay system. Define shared species profiles, deterministic placement, lifecycle/state, interaction, and resource-yield rules that can support ground cover, herbs, ferns, shrubs, vines, crops, aquatic plants, and trees.
+4. **Deliver one end-to-end flora vertical slice:** implement grass or ground cover, a resource-producing shrub, and a tree through the same species/instance/state architecture, while allowing each form its own suitable representation. Validate harvesting, persistence, targeting, and regrowth rules before expanding the roster.
+5. **Make flora physically and visually legible:** derive collision and interaction from authoritative flora instances; support aiming at individual harvestable parts, clear per-hexel selection feedback where appropriate, and consistent mesh/collision updates when parts are removed. Reduce over-dense placement and improve canopy readability, trunk taper, and bark continuity without coupling gameplay data to placeholder textures.
+
+### Flora system: planned capabilities
+
+- **Species definitions:** form, habitat envelope, climate and moisture tolerance, soil needs, growth form, mature size, seasonal behavior, reproduction, and harvestable products.
+- **Deterministic ecological placement:** use the world seed and stable IDs alongside biome, climate, elevation, slope, soil, water proximity, and local competition. Similar conditions should produce coherent communities, not uniform scatter or trees everywhere.
+- **Lifecycle and persistent instances:** track growth stage, age, health, seasonal state, harvested parts, seeds, and other state only where needed. Stable IDs must survive chunk streaming so harvesting and regrowth remain consistent.
+- **Different representations, shared rules:** detailed hexel parts can represent trunks, branches, roots, or other gameplay-relevant structures; lightweight geometry can represent grass, flowers, and fine foliage. Rendering detail must not dictate resource accounting or plant identity.
+- **Resource and ecology loops:** make yields finite per instance, define regrowth and propagation conditions, and account for soil nutrients, moisture, seasons, decomposition, and disturbance as those systems arrive.
+- **Vintage Story as a design reference:** study its breadth of useful wild plants, environmental requirements, growth stages, seasons, farming, fruiting, and resource uses. Use it as inspiration for systemic depth, not as a direct content or implementation copy.
+
+### Planet and world simulation
+
+6. **Define planetary geometry and scale:** choose the planet radius and a spherical surface partition compatible with pure hexagonal prisms.
+7. **Establish planet-relative coordinates:** make latitude, longitude, spherical distance, region identity, and chunk addressing consistent across the engine.
+8. **Build climate and hydrology in stages:** start from latitude and seasons, then incorporate elevation, continents, winds, rainfall, rivers, groundwater, and water circulation as supported by the simulation.
+9. **Connect finite geology and soil to playable terrain:** generate regionally plausible strata and host-rock deposits; make mining deplete persistent finite quantities; connect soil nutrients and water availability to flora and farming.
+10. **Scale simulation by distance:** keep nearby chunks detailed while representing distant and untouched regions compactly, without changing the world's underlying finite resource accounting.
+
+This roadmap describes direction, not completed functionality. In particular, the current tree roster and tree-block gameplay model are foundations rather than a fully integrated flora system; do not treat flora collision, per-part targeting/harvesting, persistent plant state, seasonal growth, or regrowth as complete until they are connected end to end and tested.
 
 ## Requirements
 
