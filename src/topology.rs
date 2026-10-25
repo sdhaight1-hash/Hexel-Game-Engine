@@ -182,12 +182,12 @@ impl SurfaceTopology {
     }
 
     /// Counts of cells grouped by number of sides.
-    pub fn side_count_histogram(&self) -> BTreeSet<(usize, usize)> {
+    pub fn side_count_histogram(&self) -> std::collections::BTreeMap<usize, usize> {
         let mut counts = std::collections::BTreeMap::<usize, usize>::new();
         for cell in &self.cells {
             *counts.entry(cell.boundary.len()).or_default() += 1;
         }
-        counts.into_iter().collect()
+        counts
     }
 }
 
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(topology.cell_count(), 42);
         assert_eq!(topology.triangle_count(), 80);
         assert_eq!(topology.edge_count(), 120);
-        assert_eq!(topology.side_count_histogram(), BTreeSet::from([(5, 12), (6, 30)]));
+        assert_eq!(topology.side_count_histogram(), std::collections::BTreeMap::from([(5, 12), (6, 30)]));
     }
 
     #[test]
