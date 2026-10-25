@@ -2,6 +2,7 @@
 //! Rendering and interactive controls are added in later implementation stages.
 
 pub mod planet;
+pub mod trees;
 
 use glam::Vec3;
 use noise::{NoiseFn, Perlin};
