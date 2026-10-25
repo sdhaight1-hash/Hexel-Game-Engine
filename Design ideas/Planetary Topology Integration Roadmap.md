@@ -29,18 +29,20 @@ This document is the working implementation roadmap. Update the phase status, de
 
 ## Phase 1 — Integrate topology with planetary terrain
 
+**Status:** In progress — direction-based sampling API and regression tests committed; local test run pending.
+
 **Goal:** Let terrain systems consume geodesic surface cells without removing the current terrain path.
 
 ### Work
 
 - [ ] Audit current planet/terrain APIs and identify the smallest seam where a surface-cell identity and center direction can be introduced.
-- [ ] Define a terrain-sampling interface that accepts a world seed and a stable surface coordinate/direction, and returns existing terrain attributes without coupling terrain generation to rendering.
-- [ ] Add an adapter from a `SurfaceCell` (or its normalized center direction) to the existing planet terrain sampler.
+- [x] Define a terrain-sampling interface that accepts a stable surface direction and returns existing terrain attributes without coupling terrain generation to rendering.
+- [x] Add `PlanetGenerator::sample_direction`, allowing a `SurfaceCell.center` to be sampled directly without making topology depend on terrain.
 - [ ] Decide and document how cell elevation affects the cell's rendered surface and gameplay height; do not silently change the meaning of existing radius/height values.
 - [ ] Preserve seed determinism: the same seed and same logical surface location must produce the same terrain sample.
 - [ ] Keep the existing latitude/longitude and local axial-hex path working during the transition. Do not make geodesic topology the default until integration tests demonstrate parity for required gameplay.
-- [ ] Add tests for finite samples, deterministic samples, radius/elevation behavior, and representative locations near poles and the date line where applicable.
-- [ ] Run focused planet/topology tests, then `cargo test`.
+- [x] Add tests for topology-cell direction sampling, finite outputs, invalid-direction fallback, and radius/elevation behavior. Broader pole/date-line regression coverage remains covered by existing planet tests.
+- [ ] Run focused planet/topology tests, then `cargo test` (pending local verification).
 
 ### Exit criteria
 
@@ -147,6 +149,14 @@ This document is the working implementation roadmap. Update the phase status, de
 - Exposes cell centers, ordered boundary corners, adjacency, side-count histogram, and nearest-cell lookup.
 - The topology module is not yet wired into rendering, movement, terrain prisms, raycasting, or persistence.
 - Developer-reported local test result after pulling: **138 passed, 0 failed**.
+
+### Phase 1 — direction-based terrain sampling
+
+- Commit: [5d8ea6d](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/5d8ea6d8618d2c250838e669372c85387f57555e).
+- Added `PlanetGenerator::sample_direction`, which accepts a world-space direction or topology cell center and reuses the existing deterministic terrain sampler.
+- Zero and non-finite directions safely fall back to the positive X axis. Existing geographic sampling remains unchanged.
+- Added regression tests across frequency-2 topology cells for equivalence with geographic sampling, finite terrain output, and radial surface-position consistency, plus invalid-direction fallback.
+- Verification status: code and tests are committed; tests have **not yet been run locally**. Do not mark Phase 1 complete until the developer runs focused tests and `cargo test` successfully.
 
 ### Implementation notes
 
