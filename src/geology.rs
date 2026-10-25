@@ -45,7 +45,7 @@ pub fn rock_at_depth(strata: &[Stratum], depth_m: u32) -> Option<RockType> {
 pub enum OreType { NativeCopper, Malachite, Cassiterite, Sphalerite, Bismuthinite, NativeSilver, NativeGold, Galena, Limonite, Hematite, Magnetite, MeteoricIron, Diamond }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MiningTier { HandPickable, Stone, Copper, Bronze }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OreProfile { pub ore: OreType, pub tier: MiningTier, pub hosts: &'static [RockType], pub rarity_weight: f64, pub min_quantity: u32, pub max_quantity: u32, pub surface_nugget_allowed: bool }
 
 const SED: &[RockType] = &[RockType::Chert, RockType::Claystone, RockType::Conglomerate, RockType::Limestone, RockType::Sandstone, RockType::Shale, RockType::Chalk];
