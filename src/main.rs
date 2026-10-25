@@ -32,6 +32,10 @@ struct HexelApp {
     jump_requested: bool,
     last_frame: Instant,
     cursor_locked: bool,
+    harvest_held: bool,
+    harvest_target: Option<hexel_engine::CellPos>,
+    harvest_progress: f32,
+    target_ui_tick: f32,
 }
 impl Default for HexelApp {
     fn default() -> Self {
@@ -39,6 +43,7 @@ impl Default for HexelApp {
             window: None, renderer: None, camera: Camera::default(),
             player_feet: Vec3::ZERO, vertical_velocity: 0.0, grounded: false,
             pressed: HashSet::new(), jump_requested: false, last_frame: Instant::now(), cursor_locked: false,
+            harvest_held: false, harvest_target: None, harvest_progress: 0.0, target_ui_tick: 0.0,
         }
     }
 }
@@ -131,6 +136,30 @@ impl HexelApp {
             renderer.update_streaming(self.player_feet);
         }
     }
+    fn update_harvesting(&mut self, dt: f32) {
+        let Some(renderer) = self.renderer.as_mut() else { return; };
+        let hit = renderer.raycast(self.camera.position, self.camera.forward(), 8.0).map(|(cell, _)| cell);
+        if !self.harvest_held { self.harvest_target = None; self.harvest_progress = 0.0; return; }
+        if hit != self.harvest_target { self.harvest_target = hit; self.harvest_progress = 0.0; }
+        let Some(target) = hit else { self.harvest_progress = 0.0; return; };
+        let block = renderer.block_at(target);
+        if !block.is_solid() || block.is_indestructible() { self.harvest_progress = 0.0; return; }
+        let seconds = match block { BlockId::Grass => 0.55, BlockId::Dirt => 0.8, BlockId::Stone => 1.8, BlockId::Foundation | BlockId::Air => { self.harvest_progress = 0.0; return; } };
+        self.harvest_progress += dt.max(0.0);
+        if self.harvest_progress >= seconds { renderer.edit_block(target, BlockId::Air); self.harvest_held = false; self.harvest_target = None; self.harvest_progress = 0.0; }
+    }
+
+    fn update_target_title(&mut self, dt: f32) {
+        self.target_ui_tick += dt; if self.target_ui_tick < 0.12 { return; } self.target_ui_tick = 0.0;
+        let Some(window) = self.window.as_ref() else { return; }; let Some(renderer) = self.renderer.as_ref() else { return; };
+        let message = if let Some((cell, _)) = renderer.raycast(self.camera.position, self.camera.forward(), 8.0) {
+            let block = renderer.block_at(cell);
+            let name = match block { BlockId::Grass => "Grass", BlockId::Dirt => "Dirt", BlockId::Stone => "Stone", BlockId::Foundation => "Foundation (unbreakable)", BlockId::Air => "Air" };
+            let progress = if self.harvest_held && self.harvest_target == Some(cell) { format!(" | Breaking: {:.0}%", (self.harvest_progress / 1.8 * 100.0).min(100.0)) } else { String::new() };
+            format!("Hexel Engine | Looking at: {name} [{}, {}, {}]{progress} | Hold LMB: break | RMB: place | E: inventory (coming soon)", cell.q, cell.r, cell.y)
+        } else { "Hexel Engine | Looking at: nothing | Hold LMB: break | RMB: place | E: inventory (coming soon)".to_string() };
+        window.set_title(&message);
+    }
     fn edit_target(&mut self, remove: bool) {
         let Some(renderer) = self.renderer.as_mut() else { return; };
         let Some((hit, placement)) = renderer.raycast(self.camera.position, self.camera.forward(), 8.0) else { return; };
@@ -150,7 +179,7 @@ impl ApplicationHandler for HexelApp {
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u32
             ^ std::process::id().rotate_left(13);
         let attributes = Window::default_attributes()
-            .with_title("Hexel Engine | WASD move | Space jump | Left remove | Right place | I inspect | Esc mouse")
+            .with_title("Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse")
             .with_inner_size(PhysicalSize::new(1280, 800));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
@@ -163,7 +192,7 @@ impl ApplicationHandler for HexelApp {
                 self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
                 info!(seed, "Generated streamed 16×16×16 hexel prism chunks; use this seed to identify this world");
                 println!("Hexel Engine world seed: {seed}");
-                println!("WASD move | Mouse look | Space jump | Left-click remove | Right-click place | I inspect target | Esc release mouse");
+                println!("WASD move | Mouse look | Space jump | Hold left mouse to break terrain | Right-click place | Esc release mouse");
                 self.window = Some(window);
                 self.renderer = Some(renderer);
                 self.lock_cursor();
@@ -186,17 +215,13 @@ impl ApplicationHandler for HexelApp {
                         if self.cursor_locked { self.unlock_cursor(); } else { self.lock_cursor(); }
                     }
                     if event.state == ElementState::Pressed {
-                        if code == KeyCode::KeyI {
-                            if let Some(renderer) = self.renderer.as_ref() {
-                                println!("{}", renderer.describe_target(self.camera.position, self.camera.forward(), 8.0));
-                            }
-                        }
                         if code == KeyCode::Space && !self.pressed.contains(&code) { self.jump_requested = true; }
                         self.pressed.insert(code);
                     } else { self.pressed.remove(&code); }
                 }
             }
-            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if self.cursor_locked => self.edit_target(true),
+            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if self.cursor_locked => { self.harvest_held = true; self.harvest_target = None; self.harvest_progress = 0.0; },
+            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Released, .. } => { self.harvest_held = false; self.harvest_target = None; self.harvest_progress = 0.0; },
             WindowEvent::MouseInput { button: MouseButton::Right, state: ElementState::Pressed, .. } if self.cursor_locked => self.edit_target(false),
             WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if !self.cursor_locked => self.lock_cursor(),
             WindowEvent::RedrawRequested => {
@@ -223,6 +248,8 @@ impl ApplicationHandler for HexelApp {
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
         self.update_player(dt);
+        self.update_harvesting(dt);
+        self.update_target_title(dt);
         if let Some(window) = self.window.as_ref() { window.request_redraw(); }
     }
 }
