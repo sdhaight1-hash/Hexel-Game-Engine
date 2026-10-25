@@ -6,6 +6,7 @@ pub mod geology;
 pub mod planet;
 pub mod soil;
 pub mod trees;
+pub mod tree_blocks;
 
 use glam::Vec3;
 use noise::{NoiseFn, Perlin};
