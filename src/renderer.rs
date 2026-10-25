@@ -1,8 +1,13 @@
 use std::{collections::{HashMap, HashSet, VecDeque}, sync::{Arc, mpsc::{self, Receiver, Sender}}, thread};
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
-use hexel_engine::{BlockId, CellPos, ChunkPos, WorldScale, raycast_prism, terrain_height};
+use glam::{DVec3, Mat4, Vec3};
+use hexel_engine::{
+    BlockId, CellPos, ChunkPos, WorldScale, raycast_prism, terrain_height,
+    planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
+    surface_mesh::SurfaceMesh,
+    topology::SurfaceTopology,
+};
 use noise::{NoiseFn, Perlin};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -92,6 +97,13 @@ impl Camera {
     }
 }
 
+fn planet_preview_view_projection(size: PhysicalSize<u32>) -> Mat4 {
+    let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
+    let eye = Vec3::new(0.0, 0.0, 105.0);
+    Mat4::perspective_rh(55.0_f32.to_radians(), aspect, 0.1, 900.0)
+        * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y)
+}
+
 struct MeshJob { revision: u64, seed: u32, edits: HashMap<CellPos, BlockId>, chunks: Vec<ChunkPos> }
 struct MeshResult { revision: u64, chunks: Vec<(ChunkPos, Vec<Vertex>)> }
 struct ChunkMesh {
@@ -105,6 +117,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration, pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline, overlay_pipeline: wgpu::RenderPipeline,
     crosshair_buffer: wgpu::Buffer, target_buffer: wgpu::Buffer,
+    planet_vertex_buffer: wgpu::Buffer, planet_vertex_count: u32, planet_preview: bool,
     chunks: HashMap<ChunkPos, ChunkMesh>, camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup, foliage_bind_group: wgpu::BindGroup, size: PhysicalSize<u32>,
     _depth_texture: wgpu::Texture, depth_view: wgpu::TextureView,
@@ -217,6 +230,31 @@ impl Renderer {
             label: Some("Targeted voxel outline"), size: (36 * std::mem::size_of::<Vertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
         });
+
+        let planet_config = PlanetConfig {
+            radius: 36.0,
+            elevation_scale: 3.0,
+            axial_tilt_degrees: 23.5,
+        };
+        let topology = SurfaceTopology::generate(8, planet_config.radius)
+            .map_err(|error| format!("Could not generate planet preview topology: {error:?}"))?;
+        let terrain = PlanetGenerator::with_config(seed, planet_config);
+        let planet_mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
+        let planet_vertices = planet_mesh.triangles.into_iter()
+            .flat_map(|triangle| triangle.vertices.into_iter().map(|vertex| Vertex {
+                position: vertex.position.as_vec3().to_array(),
+                color: planet_vertex_color(vertex.sample),
+                uv: [0.0, 0.0],
+                textured: 0.0,
+            }))
+            .collect::<Vec<_>>();
+        let planet_vertex_count = planet_vertices.len() as u32;
+        let planet_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Procedural spherical planet preview"),
+            contents: bytemuck::cast_slice(&planet_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
         let (mesh_job_tx, mesh_job_rx) = mpsc::channel::<MeshJob>();
         let (mesh_result_tx, mesh_result_rx) = mpsc::channel::<MeshResult>();
@@ -228,7 +266,8 @@ impl Renderer {
             }
         }).map_err(|e| format!("Could not start mesh worker: {e}"))?;
         let mut renderer = Self {
-            surface, device, queue, config, pipeline, outline_pipeline, overlay_pipeline, crosshair_buffer, target_buffer, chunks: HashMap::new(),
+            surface, device, queue, config, pipeline, outline_pipeline, overlay_pipeline, crosshair_buffer, target_buffer,
+            planet_vertex_buffer, planet_vertex_count, planet_preview: false, chunks: HashMap::new(),
             camera_buffer, camera_bind_group, foliage_bind_group, size, _depth_texture: depth_texture, depth_view,
             seed, edits: HashMap::new(), mesh_job_tx, mesh_result_rx, dirty_chunks: HashSet::new(), edit_revision: 0,
             pending_mesh_chunks: VecDeque::new(), pending_mesh_count: 0, pending_mesh_revision: 0,
@@ -511,6 +550,14 @@ impl Renderer {
         min.y = y_start as f32 * scale.hexel_height;
         ChunkMesh { buffer, vertex_count, bounds_min: min, bounds_max: max }
     }
+    pub fn toggle_planet_preview(&mut self) {
+        self.planet_preview = !self.planet_preview;
+    }
+
+    pub fn planet_preview_enabled(&self) -> bool {
+        self.planet_preview
+    }
+
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 { return; }
         self.size = size; self.config.width = size.width; self.config.height = size.height;
@@ -521,9 +568,20 @@ impl Renderer {
     }
     pub fn render(&mut self, camera: &Camera, selected_slot: usize, inventory_open: bool, item_counts: [u16; 36]) -> Result<(), wgpu::SurfaceError> {
         self.poll_mesh_results();
-        let uniform = CameraUniform { view_proj: camera.view_projection(self.size).to_cols_array_2d() };
+        let view_proj = if self.planet_preview {
+            planet_preview_view_projection(self.size)
+        } else {
+            camera.view_projection(self.size)
+        };
+        let uniform = CameraUniform { view_proj: view_proj.to_cols_array_2d() };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
-        let target_vertices = self.raycast(camera.position, camera.forward(), 8.0).map(|(cell, _)| build_target_outline(cell)).unwrap_or_default();
+        let target_vertices = if self.planet_preview {
+            Vec::new()
+        } else {
+            self.raycast(camera.position, camera.forward(), 8.0)
+                .map(|(cell, _)| build_target_outline(cell))
+                .unwrap_or_default()
+        };
         if !target_vertices.is_empty() { self.queue.write_buffer(&self.target_buffer, 0, bytemuck::cast_slice(&target_vertices)); }
         let mut hud_vertices: Vec<Vertex> = Vec::with_capacity(600);
         let aspect = self.size.width.max(1) as f32 / self.size.height.max(1) as f32;
@@ -558,7 +616,11 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Hexel world pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, resolve_target: None, ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.52, g: 0.72, b: 0.88, a: 1.0 }), store: wgpu::StoreOp::Store,
+                    load: wgpu::LoadOp::Clear(if self.planet_preview {
+                        wgpu::Color { r: 0.008, g: 0.012, b: 0.035, a: 1.0 }
+                    } else {
+                        wgpu::Color { r: 0.52, g: 0.72, b: 0.88, a: 1.0 }
+                    }), store: wgpu::StoreOp::Store,
                 } })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.depth_view, depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store,
@@ -567,20 +629,25 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.foliage_bind_group, &[]);
-            let view_proj = camera.view_projection(self.size);
-            let forward = camera.forward();
-            for chunk in self.chunks.values() {
-                if chunk.vertex_count == 0 || !chunk_visible(view_proj, camera.position, forward, chunk) { continue; }
-                pass.set_vertex_buffer(0, chunk.buffer.slice(..));
-                pass.draw(0..chunk.vertex_count, 0..1);
-            }
-            if !target_vertices.is_empty() {
-                pass.set_pipeline(&self.outline_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.target_buffer.slice(..));
-                pass.draw(0..target_vertices.len() as u32, 0..1);
+            if self.planet_preview {
+                pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
+                pass.draw(0..self.planet_vertex_count, 0..1);
+            } else {
+                let forward = camera.forward();
+                for chunk in self.chunks.values() {
+                    if chunk.vertex_count == 0 || !chunk_visible(view_proj, camera.position, forward, chunk) { continue; }
+                    pass.set_vertex_buffer(0, chunk.buffer.slice(..));
+                    pass.draw(0..chunk.vertex_count, 0..1);
+                }
+                if !target_vertices.is_empty() {
+                    pass.set_pipeline(&self.outline_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.target_buffer.slice(..));
+                    pass.draw(0..target_vertices.len() as u32, 0..1);
+                }
             }
         }
+        if !self.planet_preview {
         {
             let mut overlay = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Crosshair overlay pass"),
@@ -594,10 +661,27 @@ impl Renderer {
             overlay.set_vertex_buffer(0, hud_buffer.slice(..));
             overlay.draw(0..hud_vertices.len() as u32, 0..1);
         }
+        }
         self.queue.submit(Some(encoder.finish())); frame.present(); Ok(())
     }
 }
 
+
+fn planet_vertex_color(sample: PlanetSample) -> [f32; 3] {
+    match sample.biome {
+        Biome::DeepOcean => [0.025, 0.10, 0.32],
+        Biome::ShallowOcean => [0.06, 0.30, 0.56],
+        Biome::PolarIce => [0.88, 0.93, 0.96],
+        Biome::Tundra => [0.54, 0.62, 0.53],
+        Biome::BorealForest => [0.12, 0.32, 0.19],
+        Biome::TemperateForest => [0.12, 0.48, 0.24],
+        Biome::Grassland => [0.48, 0.65, 0.28],
+        Biome::Desert => [0.78, 0.63, 0.35],
+        Biome::Savanna => [0.69, 0.61, 0.28],
+        Biome::TropicalForest => [0.04, 0.38, 0.17],
+        Biome::Mountain => [0.47, 0.46, 0.43],
+    }
+}
 
 fn generated_block_from_height(cell: CellPos, height: i32) -> BlockId {
     if cell.y < 0 { BlockId::Foundation }
