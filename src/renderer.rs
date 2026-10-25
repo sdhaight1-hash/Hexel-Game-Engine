@@ -391,7 +391,7 @@ impl Renderer {
         let mut min = Vec3::new(f32::INFINITY, 0.0, f32::INFINITY);
         let y_start = pos.y * CHUNK_SIZE;
         let y_end = y_start + CHUNK_SIZE;
-        let mut max = Vec3::new(f32::NEG_INFINITY, y_end as f32 * scale.hexel_height, f32::NEG_INFINITY);
+        let mut max = Vec3::new(f32::NEG_INFINITY, if pos.y == 0 { (y_end as f32 * scale.hexel_height).max(105.0) } else { y_end as f32 * scale.hexel_height }, f32::NEG_INFINITY);
         for q in [q_start, q_end - 1] {
             for r in [r_start, r_end - 1] {
                 let center = scale.prism_center(CellPos::new(q, r, 0));
@@ -611,11 +611,29 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
             let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
             let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
             let conifer = warmth < -0.25 || wetness < -0.32;
-            let center = scale.prism_center(CellPos::new(q, r, height));
-            let tree_height = (if warmth > 0.38 && wetness > 0.05 { 4.8 } else if conifer { 3.0 } else { 3.6 }) * (0.78 + ((hash >> 8) % 100) as f32 / 230.0);
-            let trunk = if conifer { [0.43, 0.34, 0.23] } else { [0.35, 0.22, 0.12] };
-            let foliage = if warmth > 0.38 && wetness > 0.05 { [0.08, 0.36, 0.12] } else if conifer { [0.13, 0.32, 0.16] } else { [0.20, 0.49, 0.17] };
-            append_tree(&mut vertices, center, scale.hexel_height * (height + 1) as f32, scale.hex_radius * 0.17, tree_height, (trunk, foliage), conifer);
+            let tropical = warmth > 0.38 && wetness > 0.05;
+            let roll = (hash >> 16) % 1000;
+            // Adult height ranges are metres, converted to hexel layers below.
+            let (species, min_m, max_m, trunk_radius, crown_radius, giant) = if tropical {
+                if roll < 22 { (4_u8, 55.0_f32, 95.0, 2, 4, true) }
+                else if roll < 105 { (5, 25.0, 45.0, 1, 3, false) }
+                else { (3, 16.0, 32.0, 1, 3, false) }
+            } else if conifer {
+                if roll < 8 { (4, 55.0_f32, 95.0, 2, 4, true) }
+                else if roll < 570 { (2, 18.0, 38.0, 1, 2, false) }
+                else { (1, 10.0, 24.0, 1, 2, false) }
+            } else if wetness > 0.25 {
+                if roll < 9 { (4, 55.0_f32, 95.0, 2, 4, true) }
+                else if roll < 590 { (0, 18.0, 32.0, 1, 3, false) }
+                else { (1, 10.0, 24.0, 1, 2, false) }
+            } else { (6, 6.0, 16.0, 1, 2, false) };
+            let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
+            let mut height_m = min_m + (max_m - min_m) * variance;
+            if giant && (hash >> 28) % 4 != 0 { height_m = min_m * 0.55; }
+            let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
+            let trunk = if species == 1 { [0.78, 0.75, 0.65] } else { [0.38, 0.25, 0.14] };
+            let foliage = match species { 1 => [0.24, 0.40, 0.19], 2 => [0.12, 0.30, 0.15], 4 => [0.07, 0.31, 0.11], 5 => [0.10, 0.39, 0.13], 6 => [0.30, 0.39, 0.17], _ => [0.18, 0.46, 0.15] };
+            append_hexel_tree(&mut vertices, CellPos::new(q, r, height + 1), layers, trunk_radius, crown_radius, (trunk, foliage), species, hash, scale);
         }
     }
     vertices
@@ -635,18 +653,55 @@ fn vegetation_hash(seed: u32, q: i32, r: i32) -> u32 {
     x ^= x >> 16; x = x.wrapping_mul(0x7FEB_352D); x ^= x >> 15; x = x.wrapping_mul(0x846C_A68B); x ^ (x >> 16)
 }
 
-fn append_tree(vertices: &mut Vec<Vertex>, center: Vec3, ground: f32, trunk_radius: f32, height: f32, colors: ([f32; 3], [f32; 3]), conifer: bool) {
-    let (trunk, foliage) = colors;
-    let ring = |y: f32, radius: f32| -> [Vec3; 6] { std::array::from_fn(|i| { let a = (30.0_f32 + i as f32 * 60.0).to_radians(); Vec3::new(center.x + a.cos() * radius, y, center.z + a.sin() * radius) }) };
-    let base = ring(ground, trunk_radius); let top = ring(ground + height * 0.62, trunk_radius * 0.7);
-    for i in 0..6 { let j = (i + 1) % 6; push_triangle(vertices, Vec3::new(center.x, ground, center.z), base[i], base[j], trunk); push_triangle(vertices, base[i], top[i], top[j], trunk); push_triangle(vertices, base[i], top[j], base[j], trunk); }
-    let tiers = if conifer { 4 } else { 2 };
-    for tier in 0..tiers {
-        let low = ground + height * (0.35 + tier as f32 * 0.65 / tiers as f32);
-        let high = ground + height * (0.35 + (tier + 1) as f32 * 0.65 / tiers as f32);
-        let radius = height * 0.28 * (1.0 - tier as f32 / (tiers as f32 + 0.2));
-        let lower = ring(low, radius); let upper = ring(high, radius * 0.08);
-        for i in 0..6 { let j = (i + 1) % 6; push_triangle(vertices, Vec3::new(center.x, low, center.z), lower[i], lower[j], foliage); push_triangle(vertices, lower[i], upper[i], upper[j], foliage); push_triangle(vertices, lower[i], upper[j], lower[j], foliage); }
+fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i32, trunk_radius: i32, crown_radius: i32, colors: ([f32; 3], [f32; 3]), species: u8, seed_hash: u32, scale: WorldScale) {
+    let (trunk_color, leaf_color) = colors;
+    let trunk_top = height_layers * if species == 4 { 3 } else { 2 } / 3;
+    for y in 0..trunk_top {
+        let radius = if trunk_radius > 1 && y > trunk_top * 2 / 3 { 1 } else { trunk_radius };
+        for dq in -(radius - 1)..=radius - 1 {
+            for dr in -(radius - 1)..=radius - 1 {
+                if radius == 1 || (dq.abs() + dr.abs() + (dq + dr).abs()) / 2 < radius {
+                    append_hexel_prism(vertices, CellPos::new(root.q + dq, root.r + dr, root.y + y), scale, trunk_color, true);
+                }
+            }
+        }
+    }
+    let crown_start = (height_layers as f32 * if species == 2 || species == 6 { 0.30 } else { 0.48 }) as i32;
+    let crown_layers = (height_layers - crown_start).max(2);
+    for cy in 0..crown_layers {
+        let progress = cy as f32 / crown_layers as f32;
+        let radius = if species == 2 { ((crown_radius as f32) * (1.0 - progress * 0.88)).ceil() as i32 }
+            else if species == 6 { ((crown_radius as f32) * (1.0 - progress * 0.72)).ceil() as i32 }
+            else { ((crown_radius as f32) * (0.55 + (1.0 - progress) * 0.45)).ceil() as i32 };
+        for dq in -radius..=radius {
+            for dr in -radius..=radius {
+                let distance = (dq.abs() + dr.abs() + (dq + dr).abs()) / 2;
+                let irregular = vegetation_hash(seed_hash, root.q + dq + cy * 17, root.r + dr - cy * 11) % 100;
+                let keep = distance <= radius && if species == 2 { irregular > 8 } else { distance < radius || irregular > 24 };
+                if !keep || (cy < crown_layers / 3 && dq == 0 && dr == 0) { continue; }
+                append_hexel_prism(vertices, CellPos::new(root.q + dq, root.r + dr, root.y + crown_start + cy), scale, leaf_color, false);
+            }
+        }
+    }
+}
+
+fn append_hexel_prism(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldScale, color: [f32; 3], wood: bool) {
+    let center = scale.prism_center(cell);
+    let bottom = cell.y as f32 * scale.hexel_height;
+    let top = (cell.y + 1) as f32 * scale.hexel_height;
+    let radius = scale.hex_radius * if wood { 0.42 } else { 0.50 };
+    let ring: [Vec3; 6] = std::array::from_fn(|i| {
+        let angle = (30.0_f32 + i as f32 * 60.0).to_radians();
+        Vec3::new(center.x + angle.cos() * radius, center.y, center.z + angle.sin() * radius)
+    });
+    let top_color = [(color[0] * 1.10).min(1.0), (color[1] * 1.10).min(1.0), (color[2] * 1.10).min(1.0)];
+    for i in 0..6 {
+        let j = (i + 1) % 6;
+        push_triangle(vertices, Vec3::new(center.x, top, center.z), Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), top_color);
+        let shade = 0.55 + i as f32 * 0.045;
+        let side = [color[0] * shade, color[1] * shade, color[2] * shade];
+        push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), side);
+        push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), Vec3::new(ring[j].x, bottom, ring[j].z), side);
     }
 }
 fn push_triangle(vertices: &mut Vec<Vertex>, a: Vec3, b: Vec3, c: Vec3, color: [f32; 3]) {
