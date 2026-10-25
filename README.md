@@ -58,7 +58,7 @@ These are compatible gameplay layers, not mutually exclusive world-size options.
 
 ## Current playable prototype
 
-The current build generates **32 terrain chunks (8 × 4 chunks, each 16 × 16 hexel columns)** from a random seed and opens a native first-person sandbox. The seed is printed to the terminal at startup so you can record a particular world.
+The current build streams a bounded neighborhood of **16 × 16 × 16 hexel-prism chunks (Q × R × Y)** around the player from a random seed. Chunk edits are kept separately from active meshes so unloading a chunk does not itself erase edits. The world renderer and player are still in the flat-world prototype stage; the spherical planet generator has not yet been connected to playable terrain. The seed is printed to the terminal at startup so you can record a particular world.
 
 ### Controls
 
