@@ -65,7 +65,6 @@ impl MonthlyClimateNormals {
         let annual_temp = t.iter().sum::<f64>() / 12.0;
         let annual_precip = p.iter().map(|v| v.max(0.0)).sum::<f64>();
         let driest = p.iter().copied().fold(f64::INFINITY, f64::min).max(0.0);
-        let wettest = p.iter().copied().fold(f64::NEG_INFINITY, f64::max).max(0.0);
         // Approximate summer half-year from the warmer six monthly means.
         let mut sorted: Vec<(f64, f64)> = t.iter().copied().zip(p.iter().copied()).collect();
         sorted.sort_by(|a, b| b.0.total_cmp(&a.0));
