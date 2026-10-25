@@ -227,7 +227,6 @@ impl PlanetGenerator {
             * elevation_drying;
         let moisture = moisture.clamp(0.0, 1.0);
 
-        let biome = classify_biome(elevation, temperature_c, moisture, self.config.elevation_scale);
         // Build twelve deterministic monthly normals. Temperature uses axial-tilt seasonality;
         // precipitation is a broad circulation/ocean proxy with a seasonal rainfall cycle.
         // These are explicit estimates, not a calibrated weather/climate simulation.
