@@ -661,7 +661,7 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
             let height = *heights.get(&(q, r)).unwrap_or(&0);
             if height < 0 || chunk.y != height.div_euclid(CHUNK_SIZE) { continue; }
             let hash = vegetation_hash(seed, q, r);
-            if hash % 11 != 0 { continue; }
+            if hash % 29 != 0 { continue; } // Reduced baseline density; biome patches are tuned below.
             let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
             let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
             let conifer = warmth < -0.25 || wetness < -0.32;
@@ -723,7 +723,8 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
     let (trunk_color, leaf_color) = colors;
     let trunk_top = height_layers * if species == 4 { 3 } else { 2 } / 3;
     for y in 0..trunk_top {
-        let radius = if trunk_radius > 1 && y > trunk_top * 2 / 3 { 1 } else { trunk_radius };
+        let taper = y as f32 / trunk_top.max(1) as f32;
+        let radius = if trunk_radius > 1 && taper > 0.42 { 1 } else { trunk_radius };
         for dq in -(radius - 1)..=radius - 1 {
             for dr in -(radius - 1)..=radius - 1 {
                 if radius == 1 || (dq.abs() + dr.abs() + (dq + dr).abs()) / 2 < radius {
@@ -829,8 +830,8 @@ fn append_hexel_prism(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldSca
             let a_top = Vec3::new(ring[i].x, top, ring[i].z);
             let b_bottom = Vec3::new(ring[j].x, bottom, ring[j].z);
             let b_top = Vec3::new(ring[j].x, top, ring[j].z);
-            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (a_top, [0.0, 0.0]), (b_top, [1.0, 0.0])], side, texture_layer);
-            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (b_top, [1.0, 0.0]), (b_bottom, [1.0, 1.0])], side, texture_layer);
+            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, cell.y as f32 * 0.35 + 1.0]), (a_top, [0.0, cell.y as f32 * 0.35]), (b_top, [1.0, cell.y as f32 * 0.35])], side, texture_layer);
+            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, cell.y as f32 * 0.35 + 1.0]), (b_top, [1.0, cell.y as f32 * 0.35]), (b_bottom, [1.0, cell.y as f32 * 0.35 + 1.0])], side, texture_layer);
         } else {
             let a_bottom = Vec3::new(ring[i].x, bottom, ring[i].z);
             let a_top = Vec3::new(ring[i].x, top, ring[i].z);
