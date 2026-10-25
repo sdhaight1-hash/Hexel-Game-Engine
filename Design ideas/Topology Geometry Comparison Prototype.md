@@ -60,3 +60,41 @@ A candidate is not ready to replace the current world until:
 ## Decision rule
 
 Do not select a winner from adjacency tests alone. First produce boundary polygons and shared-edge validation, then compare geometry metrics and chunk/indexing complexity. Keep the playable terrain on its current implementation until a candidate passes those tests and a rendering integration experiment.
+
+## Current prototype measurements
+
+These are structural-audit results from the standalone geometry-check binaries, not production-mesh or performance benchmarks. The two prototypes use different cell constructions, so their raw counts are not a like-for-like resolution comparison.
+
+### Cube-sphere quad grid
+
+The cube-sphere checker radially projects six cube-face grids onto the requested sphere and welds shared vertices using a quantized key.
+
+| Resolution | Cells | Unique vertices | Unique edges | Cell sides | Boundary edges | Non-manifold edges | Maximum radius error |
+|---:|---:|---:|---:|---|---:|---:|---:|
+| 2 | 24 | 26 | 48 | 24 quads | 0 | 0 | 0 |
+| 3 | 54 | 56 | 108 | 54 quads | 0 | 0 | 0 |
+
+At radius 100, measured edge-length minimum / mean / maximum were 60.581089 / 68.558888 / 76.536686 at resolution 2, and 38.164735 / 46.932339 / 60.302269 at resolution 3. The spread confirms that this radial cube projection has non-uniform edge lengths. The checker currently validates mesh counts, shared-edge use, unique quad loops, radius, and invalid inputs; it does not yet validate polygon overlap, winding, area distortion, or compatibility with six-sided hexel neighborhoods.
+
+### Geodesic triangle-centroid dual candidate
+
+The geodesic geometry checker constructs a triangle-centroid dual candidate from a subdivided icosahedron. This is a useful pentagon/hexagon boundary prototype, but it is not yet a true Voronoi mesh or a production prism surface.
+
+| Frequency | Cells | Dual vertices | Unique edges | Side distribution | Boundary edges | Non-manifold edges | Degenerate cells | Duplicate IDs | Maximum radius error |
+|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| 2 | 42 | 80 | 120 | 12 pentagons, 30 hexagons | 0 | 0 | 0 | 0 | 0 |
+| 3 | 92 | 180 | 270 | 12 pentagons, 80 hexagons | 0 | 0 | 0 | 0 | 0 |
+
+The geodesic checker also has tests for deterministic generation, invalid parameters, side-count reporting, shared-edge counting, duplicate IDs, non-manifold edges, and degenerate cells.
+
+### Verification status
+
+At the time these measurements were recorded, local verification passed:
+
+- `cargo test`: 62 tests passed (46 engine, 6 cube-sphere, 10 geodesic); no failures.
+- `cargo clippy --all-targets -- -D warnings`: passed with warnings treated as errors.
+
+### What these results do and do not establish
+
+Both prototypes pass their current structural checks at the tested settings. The cube-sphere result is a closed quad grid, while the geodesic result is a closed pentagon/hexagon dual candidate. They are not yet equivalent candidates for Hexel Engine's hexagonal-prism terrain. Remaining work includes comparing at similar cell counts, measuring cell-area variation and broader geometric distortion, validating polygon winding/overlap and adjacency-to-edge agreement, and testing whether the resulting boundaries can form gap-free prism side walls. No topology decision is made by these measurements.
+
