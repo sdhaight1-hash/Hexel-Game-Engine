@@ -78,17 +78,17 @@ The user ran `cargo test` twice: **71 passed, 0 failed** on both runs. The comma
 
 **Important limitations:** the overlap check is designed for convex spherical polygons bounded by minor great-circle arcs. It is a practical diagnostic, not a formal proof for arbitrary, malformed, concave, or hemisphere-spanning polygons. The summed-area metric cannot by itself locate or prove the absence of gaps. Passing the current tests must not be described as a mathematical guarantee of full coverage.
 
-## Phase 4 — next validation design
+## Phase 4 — implementation committed; local validation pending
 
-The next phase is specified in `docs/TOPOLOGY_AUDIT_PHASE_4_PLAN.md`. Its priorities are:
+Phase 4 implementation has been committed to `src/bin/topology_geometry_check.rs`; it is awaiting local compilation and execution by the user. The implementation adds:
 
-1. Add adversarial overlap fixtures with distinct vertex IDs/sets and crossing boundaries.
-2. Prove shared edges, shared vertices, and disjoint neighbors do not create overlap false positives.
-3. Add an independent coverage check that does not merely compare summed area with sphere area.
-4. Keep all work in offline diagnostics; do not alter gameplay topology.
-5. Record the exact test commands and observed output before calling Phase 4 validated.
+1. Coordinate-set duplicate detection for coincident cells with different vertex IDs.
+2. Direct synthetic tests for duplicate interiors, crossing/partial overlap, strict containment, shared-edge-only contact, shared-vertex-only contact, disjoint polygons, and a small positive gap.
+3. Deterministic Fibonacci-sphere coverage sampling with 4,096 sample directions in the runtime audit.
+4. Separate counts for samples owned by exactly one cell, sampled gaps, multiple ownership, and boundary samples excluded from ownership counts.
+5. Regression tests for generated coverage, a removed cell, and a duplicated cell.
 
-Phase 4 should not be considered complete until the tests are implemented, run locally, and their limitations documented.
+**Validation status:** code is committed, but these Phase 4 tests have not yet been compiled or run locally. Do not report Phase 4 as passing until the user runs the commands below and shares the output. Finite sampling is evidence, not proof, and the overlap predicates remain scoped to convex spherical polygons bounded by minor great-circle arcs.
 
 ## Remaining design questions
 
