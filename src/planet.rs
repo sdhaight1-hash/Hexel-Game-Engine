@@ -44,7 +44,11 @@ pub struct GeoCoord {
 impl GeoCoord {
     pub fn new(latitude: f64, longitude: f64) -> Self {
         Self {
-            latitude: latitude.clamp(-HALF_PI, HALF_PI),
+            latitude: if latitude.is_finite() {
+                latitude.clamp(-HALF_PI, HALF_PI)
+            } else {
+                0.0
+            },
             longitude: normalize_longitude(longitude),
         }
     }
@@ -55,11 +59,19 @@ impl GeoCoord {
 
     /// Unit-sphere direction. Longitude is naturally periodic, with no special seam.
     pub fn direction(self) -> DVec3 {
-        let cos_lat = self.latitude.cos();
+        // Public fields allow direct construction, so normalize again here to keep
+        // malformed coordinates from poisoning terrain samples with NaNs.
+        let latitude = if self.latitude.is_finite() {
+            self.latitude.clamp(-HALF_PI, HALF_PI)
+        } else {
+            0.0
+        };
+        let longitude = normalize_longitude(self.longitude);
+        let cos_lat = latitude.cos();
         DVec3::new(
-            cos_lat * self.longitude.cos(),
-            self.latitude.sin(),
-            cos_lat * self.longitude.sin(),
+            cos_lat * longitude.cos(),
+            latitude.sin(),
+            cos_lat * longitude.sin(),
         )
     }
 }
@@ -137,6 +149,9 @@ impl PlanetGenerator {
     /// This is intentionally inexpensive and deterministic. It does not claim to be a
     /// full atmospheric, ocean-current, or hydrology simulation.
     pub fn sample(&self, coord: GeoCoord, season_phase: f64) -> PlanetSample {
+        // Sanitize the coordinate once because latitude is also used by the climate
+        // model, not only by the sphere-direction conversion.
+        let coord = GeoCoord::new(coord.latitude, coord.longitude);
         let direction = coord.direction();
         let continentalness = self.continents.get([
             direction.x * 2.15,
@@ -167,7 +182,12 @@ impl PlanetGenerator {
                 + detail * self.config.elevation_scale * 0.012
         };
 
-        let season = (season_phase.rem_euclid(1.0) * TAU).sin();
+        let normalized_season = if season_phase.is_finite() {
+            season_phase.rem_euclid(1.0)
+        } else {
+            0.0
+        };
+        let season = (normalized_season * TAU).sin();
         let axial_tilt = self.config.axial_tilt_degrees.to_radians();
         let subsolar_latitude = axial_tilt * season;
         let latitude_distance = (coord.latitude - subsolar_latitude).abs();
@@ -318,5 +338,36 @@ mod tests {
         assert!(sample.surface_position.length() > generator.config().radius * 0.98);
         assert!(sample.surface_position.length() < generator.config().radius * 1.02);
         assert!((0.0..=1.0).contains(&sample.moisture));
+    }
+
+    #[test]
+    fn pole_samples_are_independent_of_longitude() {
+        let generator = PlanetGenerator::new(13);
+        let a = generator.sample(GeoCoord::from_degrees(90.0, -170.0), 0.2);
+        let b = generator.sample(GeoCoord::from_degrees(90.0, 75.0), 0.2);
+        assert_abs_diff_eq!(a.elevation, b.elevation, epsilon = 1e-8);
+        assert_abs_diff_eq!(a.moisture, b.moisture, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn non_finite_inputs_fall_back_to_finite_samples() {
+        let generator = PlanetGenerator::new(19);
+        let coord = GeoCoord::new(f64::NAN, f64::INFINITY);
+        let sample = generator.sample(coord, f64::NAN);
+        assert!(sample.direction.is_finite());
+        assert!(sample.surface_position.is_finite());
+        assert!(sample.elevation.is_finite());
+        assert!(sample.temperature_c.is_finite());
+        assert!(sample.moisture.is_finite());
+    }
+
+    #[test]
+    fn season_phase_wraps_across_year_boundary() {
+        let generator = PlanetGenerator::new(23);
+        let coord = GeoCoord::from_degrees(48.0, 9.0);
+        let a = generator.sample(coord, 0.15);
+        let b = generator.sample(coord, 1.15);
+        assert_abs_diff_eq!(a.temperature_c, b.temperature_c, epsilon = 1e-8);
+        assert_abs_diff_eq!(a.moisture, b.moisture, epsilon = 1e-8);
     }
 }
