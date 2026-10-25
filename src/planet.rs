@@ -378,7 +378,7 @@ mod tests {
     fn tangent_frame_round_trips_planet_positions() {
         let coord = GeoCoord::from_degrees(37.0, -122.0);
         let frame = LocalTangentFrame::at(coord, 6_371_000.0, 120.0);
-        let planet_point = frame.origin() + DVec3::new(12.0, -4.0, 2.0);
+        let planet_point = frame.to_planet(DVec3::new(12.0, -4.0, 2.0));
         let local = frame.to_local(planet_point);
         let reconstructed = frame.to_planet(local);
         assert!(reconstructed.distance(planet_point) < 1e-8);
