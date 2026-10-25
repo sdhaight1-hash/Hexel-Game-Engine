@@ -1,6 +1,6 @@
 # Planetary Topology Integration Roadmap
 
-**Status:** Phase 1 implementation committed; final local verification of the latest determinism test is pending  
+**Status:** Phase 1 complete — implementation committed; developer reports latest full test suite passed  
 **Target:** Integrate the geodesic dual-cell topology into Hexel Engine incrementally without regressing existing gameplay.  
 **Primary implementation:** `src/topology.rs`  
 **Current verification:** After pulling the direction-sampling change, the developer-reported `cargo test` run passed all 102 tests: 56 library, 8 cube-sphere geometry, and 38 topology geometry tests; main and doc-test targets had zero tests and no failures.
@@ -29,7 +29,7 @@ This document is the working implementation roadmap. Update the phase status, de
 
 ## Phase 1 — Integrate topology with planetary terrain
 
-**Status:** Implementation complete; latest added determinism test awaits local verification before closing Phase 1.
+**Status:** Complete — implementation and regression tests are committed; developer verified the latest full test suite.
 
 **Goal:** Let terrain systems consume geodesic surface cells without removing the current terrain path.
 
@@ -42,7 +42,7 @@ This document is the working implementation roadmap. Update the phase status, de
 - [x] Preserve seed determinism: added a test comparing samples across every frequency-2 topology cell for two generators with the same seed.
 - [ ] Keep the existing latitude/longitude and local axial-hex path working during the transition. Do not make geodesic topology the default until integration tests demonstrate parity for required gameplay.
 - [x] Add tests for topology-cell direction sampling, finite outputs, invalid-direction fallback, and radius/elevation behavior. Broader pole/date-line regression coverage remains covered by existing planet tests.
-- [ ] Re-run `cargo test` after the latest determinism regression test (previous developer run: 102 passed, 0 failed; latest test not yet verified locally).
+- [x] Re-run `cargo test` after the latest determinism regression test; developer reports 103 passed, 0 failed (57 library, 8 cube-sphere geometry, 38 topology geometry; main/doc targets had no tests).
 
 ### Exit criteria
 
@@ -156,7 +156,7 @@ This document is the working implementation roadmap. Update the phase status, de
 - Added `PlanetGenerator::sample_direction`, which accepts a world-space direction or topology cell center and reuses the existing deterministic terrain sampler.
 - Zero and non-finite directions safely fall back to the positive X axis. Existing geographic sampling remains unchanged.
 - Added regression tests across frequency-2 topology cells for equivalence with geographic sampling, finite terrain output, and radial surface-position consistency, plus invalid-direction fallback.
-- Verification status before the latest commit: developer ran `cargo test`; **102 passed, 0 failed**. The direction-sampling tests passed, and the main binary launched successfully. A further same-seed/same-cell determinism test and explicit height-semantics documentation were added in commit [22ff075](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/22ff075a754329a71be9924c5f188201f996515d); rerun the suite before closing Phase 1.
+- Verification: developer ran `cargo test` after pulling commit [22ff075](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/22ff075a754329a71be9924c5f188201f996515d): **103 passed, 0 failed** (57 library, 8 cube-sphere geometry, 38 topology geometry; main/doc targets had no tests). Developer also confirmed `cargo run --bin hexel-engine` launches and prints the gameplay controls. Phase 1 exit criteria are satisfied for the terrain sampling seam; this does not mean topology is connected to live rendering/gameplay.
 
 ### Verification update — 2026-10-25
 
@@ -174,6 +174,13 @@ This document is the working implementation roadmap. Update the phase status, de
 - Clarified that `sample_direction` ignores input magnitude and returns `surface_position` at the generator's configured radius plus sampled elevation. It does not move topology boundary vertices or alter current renderer/gameplay height behavior.
 - Added a regression test asserting same-seed generators produce identical terrain samples for every cell in a frequency-2 topology.
 - Verification pending: run `cargo test` after pulling this commit; only then mark Phase 1 complete.
+
+### Phase 1 verification — 2026-10-25
+
+- Developer pulled the latest commit and ran `cargo test`: **103 passed, 0 failed**.
+- The new same-seed/same-cell determinism regression test passed.
+- Developer previously confirmed `cargo run --bin hexel-engine` launches successfully.
+- Phase 1 is closed for the sampler/height-contract scope. Renderer, movement, collision, persistence, and live gameplay integration remain explicitly out of scope and must be handled in later phases.
 
 ### Implementation notes
 
