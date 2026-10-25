@@ -86,6 +86,16 @@ Terrain faces use darker side shading and lighter top faces to make the hexagona
 - First-person mouse look, walking, jumping, gravity, and basic hexel placement/removal.
 - Random per-launch world seed, printed in the terminal.
 
+## Tree generation foundation
+
+- Deterministic tree candidates keyed by stable world placement-slot IDs and a world seed.
+- Biome- and climate-aware species selection for broadleaf, conifer, tropical, and sparse-canopy trees.
+- Trunk diameter varies from **0.25 to 1.0 hexel diameters**, with a hexagonal cross-section volume estimate for wood yield.
+- Tree instances carry a planet-relative root position and local outward normal so future rendering can orient trunks to a spherical surface.
+- Harvest state supports alive, felled, stump, and regrowing states; the one-time felling API prevents duplicate wood yield in a single persisted instance.
+
+This is currently a renderer-independent data foundation. Trees are **not yet visible or harvestable in the playable scene**: terrain placement-slot generation, rendering, collision, falling animation/physics, save-file persistence, and ecological regrowth simulation still need integration. Harvested state must be stored by stable tree ID in the future world save so chunk reloads do not restore trees.
+
 ## Design roadmap
 
 1. **Define planetary geometry and scale:** choose the planet radius and a spherical surface partition compatible with pure hexagonal prisms.
