@@ -234,7 +234,7 @@ fn icosahedron_vertices() -> [DVec3; 12] {
         DVec3::new(0.0, -1.0, -phi), DVec3::new(0.0, 1.0, -phi),
         DVec3::new(phi, 0.0, -1.0), DVec3::new(phi, 0.0, 1.0),
         DVec3::new(-phi, 0.0, -1.0), DVec3::new(-phi, 0.0, 1.0),
-    ].map(DVec3::normalize)
+    ].map(|vertex| vertex.normalize())
 }
 
 fn sort_boundary_around(center: DVec3, boundary: &mut [DVec3]) {
