@@ -93,8 +93,9 @@ impl HexelApp {
                 let sample = Renderer::cell_from_world(candidate + Vec3::new(*ox, 0.01, *oz));
                 renderer.ground_height(sample.q, sample.r) > current_ground + 0.65
             });
-            (!blocked_by_step && next_ground <= current_ground + 0.65)
-                || self.player_feet.y > next_ground + 0.1
+            let blocked_by_tree = renderer.tree_blocks_player(candidate, PLAYER_RADIUS, PLAYER_HEIGHT);
+            !blocked_by_tree && ((!blocked_by_step && next_ground <= current_ground + 0.65)
+                || self.player_feet.y > next_ground + 0.1)
         };
         if can_move_to(proposed.x, proposed.z) {
             self.player_feet.x = proposed.x;
