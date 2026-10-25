@@ -1,13 +1,13 @@
 # Topology Audit — Phase 4 Validation Plan
 
-**Status:** Design ready; implementation and local execution pending.  
+**Status:** Initial implementation committed; local execution pending.  
 **Scope:** Offline geometry diagnostics only. This phase must not change the playable world's topology, cell coordinates, rendering, or gameplay behavior.
 
 ## Objective
 
 Increase confidence in the spherical overlap and coverage diagnostics before using the topology comparison to make design decisions. Phase 3 passes its current regression tests, but the existing detector assumes convex spherical polygons bounded by minor great-circle arcs and has only limited adversarial coverage.
 
-Phase 4 should prioritize independent, falsifiable tests over simply adding more assertions around the same area-sum metric.
+Phase 4 prioritizes independent, falsifiable tests over simply adding more assertions around the same area-sum metric. The first implementation is in `src/bin/topology_geometry_check.rs`: coordinate-based duplicate detection, adversarial pair fixtures, and deterministic Fibonacci-sphere sampling with 4,096 runtime samples. The implementation is not considered validated until the local commands below pass.
 
 ## Workstream A — Adversarial overlap fixtures
 
@@ -66,13 +66,11 @@ A failing adversarial test is useful evidence: fix the predicate or narrow/docum
 
 ## Suggested implementation order
 
-1. Add pair-level synthetic fixtures and direct tests.
-2. Run `cargo test --bin topology_geometry_check`; fix any false positives/negatives before proceeding.
-3. Implement deterministic spherical sampling as an independent coverage signal.
-4. Add generated, missing-cell, duplicate-cell, and partial-overlap coverage tests.
-5. Run the focused checkers and full test suite.
-6. Run `cargo run --bin topology_geometry_check -- 3` and record the output.
-7. Update `docs/TOPOLOGY_AUDIT_PHASE_2.md` with actual results, not expected results.
+1. Pull the committed implementation and run the focused topology tests.
+2. Fix any compile errors, false positives, or false negatives revealed by the tests; do not weaken fixtures merely to make them pass.
+3. Run the cube-sphere checker and full test suite.
+4. Run `cargo run --bin topology_geometry_check -- 3` and inspect all coverage sample counts.
+5. Share the actual output so the findings document can be updated with measured results, not expected results.
 
 ## Local validation commands
 
