@@ -551,7 +551,6 @@ impl Renderer {
         drop(hud_line);
         let hud_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("HUD overlay"), contents: bytemuck::cast_slice(&hud_vertices), usage: wgpu::BufferUsages::VERTEX });
         let frame = self.surface.get_current_texture()?;
-        let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Hexel frame encoder") });
         {
