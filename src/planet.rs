@@ -234,8 +234,10 @@ impl PlanetGenerator {
         let annual_mean_temperature = 31.0 - coord.latitude.abs() * 39.0
             - elevation.max(0.0) * 0.0065
             + self.detail.get([direction.x * 3.5 + 19.1, direction.y * 3.5 - 7.7, direction.z * 3.5 + 2.3]) * 4.0;
+        // Seasonal contrast increases toward the poles; retain a smaller tropical
+        // seasonal cycle rather than incorrectly making equatorial temperatures static.
         let seasonal_amplitude = self.config.axial_tilt_degrees.to_radians().sin()
-            * coord.latitude.cos().abs() * 22.0;
+            * (0.35 + 0.65 * coord.latitude.sin().abs()) * 30.0;
         let mut monthly_temperature = [0.0; 12];
         let mut monthly_precipitation = [0.0; 12];
         for month in 0..12 {
