@@ -173,6 +173,26 @@ impl SurfaceTopology {
         self.cells.get(id.index()).filter(|cell| cell.id == id)
     }
 
+    /// Find the cell whose center direction is closest to a world-space direction.
+    ///
+    /// This deliberately uses a simple linear scan as the correctness baseline;
+    /// a spatial acceleration structure can be added later without changing the API.
+    pub fn nearest_cell(&self, direction: DVec3) -> Option<&SurfaceCell> {
+        if !direction.x.is_finite()
+            || !direction.y.is_finite()
+            || !direction.z.is_finite()
+            || direction.length_squared() <= f64::EPSILON
+        {
+            return None;
+        }
+        let direction = direction.normalize();
+        self.cells.iter().max_by(|a, b| {
+            a.center
+                .dot(direction)
+                .total_cmp(&b.center.dot(direction))
+        })
+    }
+
     pub fn cell_count(&self) -> usize { self.cells.len() }
     pub const fn triangle_count(&self) -> usize { self.triangle_count }
 
@@ -298,6 +318,16 @@ mod tests {
         assert_eq!(SurfaceTopology::generate(MAX_FREQUENCY + 1, 100.0), Err(TopologyError::InvalidFrequency));
         assert_eq!(SurfaceTopology::generate(2, 0.0), Err(TopologyError::InvalidRadius));
         assert_eq!(SurfaceTopology::generate(2, f64::NAN), Err(TopologyError::InvalidRadius));
+    }
+
+    #[test]
+    fn nearest_cell_resolves_cell_center_direction() {
+        let topology = SurfaceTopology::generate(3, 100.0).unwrap();
+        for cell in topology.cells() {
+            assert_eq!(topology.nearest_cell(cell.center), Some(cell));
+        }
+        assert!(topology.nearest_cell(DVec3::ZERO).is_none());
+        assert!(topology.nearest_cell(DVec3::splat(f64::NAN)).is_none());
     }
 
     #[test]
