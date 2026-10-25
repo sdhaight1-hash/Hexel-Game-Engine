@@ -65,7 +65,9 @@ This document is the working implementation roadmap. Update the phase status, de
 - [x] Add tests for reciprocal adjacency, valid IDs, sorted unique neighbors, and whole-graph connectivity.
 - [x] Define deterministic exact-tie behavior (lowest cell ID); non-tied near-boundary inputs use the greatest dot-product score.
 - [x] Add tests for center lookup with scaled position vectors, symmetric tie resolution, invalid directions/IDs, neighbor queries, and connected traversal across the sphere.
-- [ ] Introduce gameplay/movement integration through an adapter rather than replacing movement or collision in one change.
+- [x] Add an opt-in `SurfaceNavigator` adapter for planet-centered position lookup, neighbor access, and choosing an adjacent cell from a tangent-plane travel direction.
+- [x] Leave the existing flat-world movement and collision path unchanged; it is not yet compatible with spherical coordinates.
+- [ ] Run the new adapter tests and full `cargo test` after pulling the adapter commits.
 - [x] Run focused lookup/traversal tests as part of the full `cargo test` run after pulling commit [2831ad2](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/2831ad2a031bc47a702ff7b373bf74c73068a6d3); developer reports 107 passed, 0 failed (61 library, 8 cube-sphere geometry, 38 topology geometry).
 
 ### Exit criteria
