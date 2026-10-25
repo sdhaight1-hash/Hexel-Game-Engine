@@ -47,7 +47,13 @@ impl TreeBlock {
         durability: u16,
         wood_yield: u8,
     ) -> Self {
-        Self { position, kind, species, durability, wood_yield }
+        Self {
+            position,
+            kind,
+            species,
+            durability,
+            wood_yield,
+        }
     }
 }
 
@@ -71,15 +77,24 @@ impl TreeInstance {
             .filter(|block| block.species == species)
             .map(|block| (block.position, block))
             .collect();
-        Self { id, species, blocks, removed: BTreeSet::new() }
+        Self {
+            id,
+            species,
+            blocks,
+            removed: BTreeSet::new(),
+        }
     }
 
     pub fn block_at(&self, position: CellPos) -> Option<&TreeBlock> {
-        self.blocks.get(&position).filter(|_| !self.removed.contains(&position))
+        self.blocks
+            .get(&position)
+            .filter(|_| !self.removed.contains(&position))
     }
 
     pub fn blocks(&self) -> impl Iterator<Item = &TreeBlock> {
-        self.blocks.values().filter(|block| !self.removed.contains(&block.position))
+        self.blocks
+            .values()
+            .filter(|block| !self.removed.contains(&block.position))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -87,7 +102,9 @@ impl TreeInstance {
     }
 
     pub fn remaining_block_count(&self) -> usize {
-        self.blocks().filter(|block| !self.removed.contains(&block.position)).count()
+        self.blocks()
+            .filter(|block| !self.removed.contains(&block.position))
+            .count()
     }
 
     /// Harvest a wood hexel exactly once. Repeated calls return None.
@@ -114,17 +131,42 @@ mod tests {
     use super::*;
 
     fn sample_tree() -> TreeInstance {
-        TreeInstance::new(7, TreeSpecies::Oak, [
-            TreeBlock::new(CellPos::new(2, 3, 4), WoodKind::Trunk, TreeSpecies::Oak, 10, 2),
-            TreeBlock::new(CellPos::new(2, 3, 5), WoodKind::Trunk, TreeSpecies::Oak, 10, 2),
-            TreeBlock::new(CellPos::new(3, 3, 6), WoodKind::Branch, TreeSpecies::Oak, 5, 1),
-        ])
+        TreeInstance::new(
+            7,
+            TreeSpecies::Oak,
+            [
+                TreeBlock::new(
+                    CellPos::new(2, 3, 4),
+                    WoodKind::Trunk,
+                    TreeSpecies::Oak,
+                    10,
+                    2,
+                ),
+                TreeBlock::new(
+                    CellPos::new(2, 3, 5),
+                    WoodKind::Trunk,
+                    TreeSpecies::Oak,
+                    10,
+                    2,
+                ),
+                TreeBlock::new(
+                    CellPos::new(3, 3, 6),
+                    WoodKind::Branch,
+                    TreeSpecies::Oak,
+                    5,
+                    1,
+                ),
+            ],
+        )
     }
 
     #[test]
     fn blocks_are_addressable_by_world_cell() {
         let tree = sample_tree();
-        assert_eq!(tree.block_at(CellPos::new(2, 3, 4)).unwrap().kind, WoodKind::Trunk);
+        assert_eq!(
+            tree.block_at(CellPos::new(2, 3, 4)).unwrap().kind,
+            WoodKind::Trunk
+        );
         assert!(tree.block_at(CellPos::new(99, 99, 99)).is_none());
     }
 
@@ -144,13 +186,19 @@ mod tests {
         let mut tree = sample_tree();
         let position = CellPos::new(3, 3, 6);
         tree.harvest(position);
-        assert_eq!(tree.removed_positions().copied().collect::<Vec<_>>(), vec![position]);
+        assert_eq!(
+            tree.removed_positions().copied().collect::<Vec<_>>(),
+            vec![position]
+        );
     }
 
     #[test]
     fn tree_becomes_empty_after_all_blocks_are_removed() {
         let mut tree = sample_tree();
-        let positions = tree.blocks().map(|block| block.position).collect::<Vec<_>>();
+        let positions = tree
+            .blocks()
+            .map(|block| block.position)
+            .collect::<Vec<_>>();
         for position in positions {
             assert!(tree.harvest(position).is_some());
         }

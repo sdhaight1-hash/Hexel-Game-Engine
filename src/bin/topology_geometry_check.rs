@@ -127,15 +127,16 @@ fn validate_mesh(mesh: &MeshInput) -> MeshValidation {
     let mut off_radius_vertices = 0;
 
     for vertex in &mesh.vertices {
-        let finite_components = vertex.x.is_finite() && vertex.y.is_finite() && vertex.z.is_finite();
+        let finite_components =
+            vertex.x.is_finite() && vertex.y.is_finite() && vertex.z.is_finite();
         let norm = vertex.norm();
         if !finite_components || !norm.is_finite() {
             non_finite_vertices += 1;
         } else if norm <= 1e-12 {
             zero_length_vertices += 1;
         } else if !invalid_radius {
-            let tolerance = RADIUS_ABSOLUTE_TOLERANCE
-                .max(mesh.radius.abs() * RADIUS_RELATIVE_TOLERANCE);
+            let tolerance =
+                RADIUS_ABSOLUTE_TOLERANCE.max(mesh.radius.abs() * RADIUS_RELATIVE_TOLERANCE);
             if (norm - mesh.radius).abs() > tolerance {
                 off_radius_vertices += 1;
             }
@@ -241,7 +242,11 @@ fn point_strictly_inside_spherical_cell(
     }
     let point = point.scale(1.0 / point_norm);
 
-    let zero = Point3 { x: 0.0, y: 0.0, z: 0.0 };
+    let zero = Point3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
     let center_sum = points.iter().copied().fold(zero, Point3::add);
     if center_sum.norm() <= 1e-12 {
         return false;
@@ -278,12 +283,14 @@ fn point_is_in_minor_arc_interior(a: Point3, b: Point3, point: Point3) -> bool {
     let angle_ap = a.angle(point);
     let angle_pb = point.angle(b);
 
-    angle_ap > 1e-8
-        && angle_pb > 1e-8
-        && (angle_ap + angle_pb - angle_ab).abs() < 1e-7
+    angle_ap > 1e-8 && angle_pb > 1e-8 && (angle_ap + angle_pb - angle_ab).abs() < 1e-7
 }
 
-fn coordinate_sets_match_one_to_one(points_a: &[Point3], points_b: &[Point3], tolerance: f64) -> bool {
+fn coordinate_sets_match_one_to_one(
+    points_a: &[Point3],
+    points_b: &[Point3],
+    tolerance: f64,
+) -> bool {
     if points_a.len() != points_b.len() {
         return false;
     }
@@ -372,8 +379,7 @@ fn point_on_minor_arc(a: Point3, b: Point3, point: Point3) -> bool {
     if normal.norm() <= 1e-12 {
         return false;
     }
-    normal.dot(point).abs() <= 1e-9
-        && (a.angle(point) + point.angle(b) - a.angle(b)).abs() <= 1e-8
+    normal.dot(point).abs() <= 1e-9 && (a.angle(point) + point.angle(b) - a.angle(b)).abs() <= 1e-8
 }
 
 fn point_on_any_cell_boundary(mesh: &MeshInput, point: Point3) -> bool {
@@ -381,9 +387,8 @@ fn point_on_any_cell_boundary(mesh: &MeshInput, point: Point3) -> bool {
         let Some(points) = cell_points(mesh, cell) else {
             return false;
         };
-        (0..points.len()).any(|i| {
-            point_on_minor_arc(points[i], points[(i + 1) % points.len()], point)
-        })
+        (0..points.len())
+            .any(|i| point_on_minor_arc(points[i], points[(i + 1) % points.len()], point))
     })
 }
 
@@ -417,7 +422,9 @@ fn sample_spherical_coverage(mesh: &MeshInput, sample_count: usize) -> CoverageR
             continue;
         }
 
-        let owners = mesh.cells.iter()
+        let owners = mesh
+            .cells
+            .iter()
             .filter(|cell| point_strictly_inside_spherical_cell(mesh, cell, point))
             .count();
         match owners {
@@ -428,7 +435,6 @@ fn sample_spherical_coverage(mesh: &MeshInput, sample_count: usize) -> CoverageR
     }
     report
 }
-
 
 #[derive(Clone, Debug, PartialEq)]
 struct TopologyValidation {
@@ -444,22 +450,28 @@ fn validate_topology(mesh: &MeshInput) -> TopologyValidation {
     // For each vertex, record the link graph induced by its incident cells.
     let mut link_adjacency: Vec<BTreeMap<usize, BTreeSet<usize>>> =
         vec![BTreeMap::new(); mesh.vertices.len()];
-    let mut link_degrees: Vec<BTreeMap<usize, usize>> =
-        vec![BTreeMap::new(); mesh.vertices.len()];
+    let mut link_degrees: Vec<BTreeMap<usize, usize>> = vec![BTreeMap::new(); mesh.vertices.len()];
 
     for cell in &mesh.cells {
         if cell.vertices.len() < 3 {
             continue;
         }
         let mut unique = BTreeSet::new();
-        if cell.vertices.iter().any(|&id| id >= mesh.vertices.len() || !unique.insert(id)) {
+        if cell
+            .vertices
+            .iter()
+            .any(|&id| id >= mesh.vertices.len() || !unique.insert(id))
+        {
             continue;
         }
 
         for i in 0..cell.vertices.len() {
             let a = cell.vertices[i];
             let b = cell.vertices[(i + 1) % cell.vertices.len()];
-            directed_uses.entry(edge_key(a, b)).or_default().push((a, b));
+            directed_uses
+                .entry(edge_key(a, b))
+                .or_default()
+                .push((a, b));
 
             let previous = cell.vertices[(i + cell.vertices.len() - 1) % cell.vertices.len()];
             let next = b;
@@ -470,9 +482,10 @@ fn validate_topology(mesh: &MeshInput) -> TopologyValidation {
         }
     }
 
-    let inconsistent_edge_orientations = directed_uses.values().filter(|uses| {
-        uses.len() == 2 && !(uses[0].0 == uses[1].1 && uses[0].1 == uses[1].0)
-    }).count();
+    let inconsistent_edge_orientations = directed_uses
+        .values()
+        .filter(|uses| uses.len() == 2 && !(uses[0].0 == uses[1].1 && uses[0].1 == uses[1].0))
+        .count();
 
     let mut invalid_vertex_links = 0;
     for vertex_id in 0..mesh.vertices.len() {
@@ -491,7 +504,12 @@ fn validate_topology(mesh: &MeshInput) -> TopologyValidation {
                 continue;
             }
             if let Some(neighbors) = adjacency.get(&current) {
-                stack.extend(neighbors.iter().copied().filter(|neighbor| !visited.contains(neighbor)));
+                stack.extend(
+                    neighbors
+                        .iter()
+                        .copied()
+                        .filter(|neighbor| !visited.contains(neighbor)),
+                );
             }
         }
         if visited.len() != adjacency.len() {
@@ -499,7 +517,10 @@ fn validate_topology(mesh: &MeshInput) -> TopologyValidation {
         }
     }
 
-    TopologyValidation { inconsistent_edge_orientations, invalid_vertex_links }
+    TopologyValidation {
+        inconsistent_edge_orientations,
+        invalid_vertex_links,
+    }
 }
 
 fn audit(mesh: &MeshInput) -> AuditReport {
@@ -848,7 +869,10 @@ fn main() {
             println!("Off-radius vertices: {}", report.off_radius_vertices);
             println!("Invalid cell indices: {}", report.invalid_cell_indices);
             println!("Repeated vertex IDs: {}", report.repeated_vertex_ids);
-            println!("Inconsistent edge orientations: {}", report.inconsistent_edge_orientations);
+            println!(
+                "Inconsistent edge orientations: {}",
+                report.inconsistent_edge_orientations
+            );
             println!("Invalid vertex links: {}", report.invalid_vertex_links);
             println!("Maximum radius error: {:.12}", report.max_radius_error);
             println!(
@@ -863,16 +887,25 @@ fn main() {
                 "Cell area coefficient of variation: {:?}",
                 report.cell_area_coefficient_of_variation
             );
-            println!("Overlapping cell pairs detected: {}", report.overlapping_cell_pairs);
+            println!(
+                "Overlapping cell pairs detected: {}",
+                report.overlapping_cell_pairs
+            );
             println!(
                 "Relative area coverage error: {:.8}",
                 report.relative_area_coverage_error
             );
             let coverage = sample_spherical_coverage(&mesh, 4096);
             println!("Spherical coverage samples: {}", coverage.sample_count);
-            println!("Samples covered by exactly one cell: {}", coverage.covered_samples);
+            println!(
+                "Samples covered by exactly one cell: {}",
+                coverage.covered_samples
+            );
             println!("Sampled gaps: {}", coverage.gap_samples);
-            println!("Samples with multiple owners: {}", coverage.multiply_owned_samples);
+            println!(
+                "Samples with multiple owners: {}",
+                coverage.multiply_owned_samples
+            );
             println!("Boundary samples excluded: {}", coverage.boundary_samples);
         }
     }
@@ -944,7 +977,11 @@ mod tests {
                 vertices: (start..vertices.len()).collect(),
             });
         }
-        MeshInput { radius: 1.0, vertices, cells }
+        MeshInput {
+            radius: 1.0,
+            vertices,
+            cells,
+        }
     }
 
     fn directed_edge_uses(mesh: &MeshInput) -> BTreeMap<(usize, usize), usize> {
@@ -1005,13 +1042,21 @@ mod tests {
         signed_area * mesh.radius * mesh.radius
     }
 
-
     #[test]
     fn point_in_cell_uses_normalized_edge_sides_for_tiny_polygons() {
         let mesh = separate_polygon_mesh(vec![tangent_quad(-1e-5, 1e-5, -1e-5, 1e-5)]);
-        let cell_center = mesh.cells[0].vertices.iter()
+        let cell_center = mesh.cells[0]
+            .vertices
+            .iter()
             .map(|&id| mesh.vertices[id])
-            .fold(Point3 { x: 0.0, y: 0.0, z: 0.0 }, Point3::add)
+            .fold(
+                Point3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                Point3::add,
+            )
             .normalized();
         assert!(
             point_strictly_inside_spherical_cell(&mesh, &mesh.cells[0], cell_center),
@@ -1043,11 +1088,19 @@ mod tests {
     #[test]
     fn malformed_coordinates_are_rejected_without_panicking() {
         let mut mesh = square_mesh();
-        mesh.vertices[0] = Point3 { x: f64::NAN, y: 0.0, z: 1.0 };
+        mesh.vertices[0] = Point3 {
+            x: f64::NAN,
+            y: 0.0,
+            z: 1.0,
+        };
         assert!(cell_points(&mesh, &mesh.cells[0]).is_none());
         let report = audit(&mesh);
         assert_eq!(report.non_finite_vertices, 1);
-        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+        assert!(!spherical_cells_overlap(
+            &mesh,
+            &mesh.cells[0],
+            &mesh.cells[1]
+        ));
     }
 
     #[test]
@@ -1065,11 +1118,22 @@ mod tests {
         // Add a second fan around vertex 0, disconnected from the original closed link.
         let start = mesh.vertices.len();
         mesh.vertices.extend([
-            Point3 { x: 0.0, y: 0.0, z: 1.0 },
-            Point3 { x: 0.0, y: 0.0, z: -1.0 },
+            Point3 {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+            },
+            Point3 {
+                x: 0.0,
+                y: 0.0,
+                z: -1.0,
+            },
         ]);
         let cell_id = mesh.cells.len();
-        mesh.cells.push(PolygonCell { id: cell_id, vertices: vec![0, start, start + 1] });
+        mesh.cells.push(PolygonCell {
+            id: cell_id,
+            vertices: vec![0, start, start + 1],
+        });
         let topology = validate_topology(&mesh);
         assert!(topology.invalid_vertex_links > 0);
     }
@@ -1079,7 +1143,10 @@ mod tests {
         for frequency in [2, 3, 4] {
             let mesh = generate_icosphere_dual(frequency, 100.0).unwrap();
             let topology = validate_topology(&mesh);
-            assert_eq!(topology.inconsistent_edge_orientations, 0, "frequency {frequency}");
+            assert_eq!(
+                topology.inconsistent_edge_orientations, 0,
+                "frequency {frequency}"
+            );
             assert_eq!(topology.invalid_vertex_links, 0, "frequency {frequency}");
         }
     }
@@ -1101,8 +1168,16 @@ mod tests {
     #[test]
     fn validation_reports_zero_length_and_off_radius_vertices() {
         let mut mesh = square_mesh();
-        mesh.vertices[0] = Point3 { x: 0.0, y: 0.0, z: 0.0 };
-        mesh.vertices[1] = Point3 { x: 0.0, y: 2.0, z: 0.0 };
+        mesh.vertices[0] = Point3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        mesh.vertices[1] = Point3 {
+            x: 0.0,
+            y: 2.0,
+            z: 0.0,
+        };
         let validation = validate_mesh(&mesh);
         assert_eq!(validation.zero_length_vertices, 1);
         assert_eq!(validation.off_radius_vertices, 1);
@@ -1111,7 +1186,10 @@ mod tests {
     #[test]
     fn validation_reports_invalid_indices_and_repeated_vertex_ids() {
         let mut mesh = square_mesh();
-        mesh.cells.push(PolygonCell { id: 12, vertices: vec![0, 1, 99, 1] });
+        mesh.cells.push(PolygonCell {
+            id: 12,
+            vertices: vec![0, 1, 99, 1],
+        });
         let validation = validate_mesh(&mesh);
         assert_eq!(validation.invalid_cell_indices, 1);
         assert_eq!(validation.repeated_vertex_ids, 1);
@@ -1124,9 +1202,11 @@ mod tests {
     fn radius_tolerance_is_scale_aware() {
         let mut mesh = square_mesh();
         mesh.radius = 1_000_000.0;
-        mesh.vertices = vec![
-            Point3 { x: 1_000_000.001, y: 0.0, z: 0.0 },
-        ];
+        mesh.vertices = vec![Point3 {
+            x: 1_000_000.001,
+            y: 0.0,
+            z: 0.0,
+        }];
         mesh.cells.clear();
         let validation = validate_mesh(&mesh);
         assert_eq!(validation.off_radius_vertices, 0);
@@ -1138,7 +1218,11 @@ mod tests {
     fn duplicate_polygon_with_distinct_vertex_ids_is_detected() {
         let polygon = tangent_quad(-0.5, 0.5, -0.5, 0.5);
         let mesh = separate_polygon_mesh(vec![polygon.clone(), polygon]);
-        assert!(spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+        assert!(spherical_cells_overlap(
+            &mesh,
+            &mesh.cells[0],
+            &mesh.cells[1]
+        ));
     }
 
     #[test]
@@ -1147,7 +1231,11 @@ mod tests {
             tangent_quad(-0.8, 0.2, -0.8, 0.2),
             tangent_quad(-0.2, 0.8, -0.2, 0.8),
         ]);
-        assert!(spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+        assert!(spherical_cells_overlap(
+            &mesh,
+            &mesh.cells[0],
+            &mesh.cells[1]
+        ));
     }
 
     #[test]
@@ -1156,7 +1244,11 @@ mod tests {
             tangent_quad(-0.8, 0.8, -0.8, 0.8),
             tangent_quad(-0.2, 0.2, -0.2, 0.2),
         ]);
-        assert!(spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+        assert!(spherical_cells_overlap(
+            &mesh,
+            &mesh.cells[0],
+            &mesh.cells[1]
+        ));
     }
 
     #[test]
@@ -1173,11 +1265,21 @@ mod tests {
             radius: 1.0,
             vertices,
             cells: vec![
-                PolygonCell { id: 0, vertices: vec![0, 1, 2, 3] },
-                PolygonCell { id: 1, vertices: vec![1, 4, 5, 2] },
+                PolygonCell {
+                    id: 0,
+                    vertices: vec![0, 1, 2, 3],
+                },
+                PolygonCell {
+                    id: 1,
+                    vertices: vec![1, 4, 5, 2],
+                },
             ],
         };
-        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+        assert!(!spherical_cells_overlap(
+            &mesh,
+            &mesh.cells[0],
+            &mesh.cells[1]
+        ));
     }
 
     #[test]
@@ -1186,7 +1288,11 @@ mod tests {
             tangent_quad(-0.8, 0.0, -0.8, 0.0),
             tangent_quad(0.0, 0.8, 0.0, 0.8),
         ]);
-        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+        assert!(!spherical_cells_overlap(
+            &mesh,
+            &mesh.cells[0],
+            &mesh.cells[1]
+        ));
     }
 
     #[test]
@@ -1195,7 +1301,11 @@ mod tests {
             tangent_quad(-0.9, -0.5, -0.2, 0.2),
             tangent_quad(0.5, 0.9, -0.2, 0.2),
         ]);
-        assert!(!spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]));
+        assert!(!spherical_cells_overlap(
+            &mesh,
+            &mesh.cells[0],
+            &mesh.cells[1]
+        ));
     }
 
     #[test]
@@ -1218,7 +1328,10 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a.sample_count, 4096);
         assert_eq!(a.gap_samples, 0, "unexpected sampled gaps: {a:?}");
-        assert_eq!(a.multiply_owned_samples, 0, "unexpected multiple ownership: {a:?}");
+        assert_eq!(
+            a.multiply_owned_samples, 0,
+            "unexpected multiple ownership: {a:?}"
+        );
         assert_eq!(a.covered_samples + a.boundary_samples, a.sample_count);
     }
 
@@ -1227,7 +1340,10 @@ mod tests {
         let mut mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
         mesh.cells.remove(0);
         let coverage = sample_spherical_coverage(&mesh, 4096);
-        assert!(coverage.gap_samples > 0, "expected sampled gaps: {coverage:?}");
+        assert!(
+            coverage.gap_samples > 0,
+            "expected sampled gaps: {coverage:?}"
+        );
     }
 
     #[test]
@@ -1540,7 +1656,10 @@ mod tests {
             assert_eq!(validation.repeated_vertex_ids, 0, "frequency {frequency}");
 
             let coverage = sample_spherical_coverage(&mesh, 1024);
-            assert_eq!(coverage.gap_samples, 0, "frequency {frequency}: {coverage:?}");
+            assert_eq!(
+                coverage.gap_samples, 0,
+                "frequency {frequency}: {coverage:?}"
+            );
             assert_eq!(
                 coverage.multiply_owned_samples, 0,
                 "frequency {frequency}: {coverage:?}"

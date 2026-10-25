@@ -4,36 +4,89 @@
 //! Persist changed TreeState and resource inventories by stable TreeId; never regenerate
 //! harvested trees as alive when a chunk is loaded again.
 
-use glam::DVec3;
-use crate::planet::{Biome, PlanetSample};
 use crate::climate::KoppenClass;
+use crate::planet::{Biome, PlanetSample};
+use glam::DVec3;
 
 pub type TreeId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TreeSpecies {
-    Acacia, BaldCypress, Birch, CrimsonKingMaple, Ebony, MediterraneanCypress,
-    Kapok, Larch, Maple, Oak, Pine, Purpleheart, Redwood, Walnut, Bamboo, Willow,
+    Acacia,
+    BaldCypress,
+    Birch,
+    CrimsonKingMaple,
+    Ebony,
+    MediterraneanCypress,
+    Kapok,
+    Larch,
+    Maple,
+    Oak,
+    Pine,
+    Purpleheart,
+    Redwood,
+    Walnut,
+    Bamboo,
+    Willow,
     // Transitional species retained for old callers/saves while the roster is adopted.
-    Spruce, Jungle, Scrub,
+    Spruce,
+    Jungle,
+    Scrub,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TreeVariant {
-    Standard, PricklyMoses, Swamp, SilverBirch, HimalayanBirch, RiverBirch, DwarfBirch,
-    NorwayMaple, MountainMaple, JapaneseMaple, SugarMaple, MountainPine, ScotsPine,
-    Fir, Bristlecone, Massive, OldGrowth, Giant, Viney, Shrub, GreenBamboo, BrownBamboo,
-    RiverWillow, BogWillow,
+    Standard,
+    PricklyMoses,
+    Swamp,
+    SilverBirch,
+    HimalayanBirch,
+    RiverBirch,
+    DwarfBirch,
+    NorwayMaple,
+    MountainMaple,
+    JapaneseMaple,
+    SugarMaple,
+    MountainPine,
+    ScotsPine,
+    Fir,
+    Bristlecone,
+    Massive,
+    OldGrowth,
+    Giant,
+    Viney,
+    Shrub,
+    GreenBamboo,
+    BrownBamboo,
+    RiverWillow,
+    BogWillow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FoliageStyle { Broadleaf, Conifer, Tropical, SparseCanopy, Bamboo }
+pub enum FoliageStyle {
+    Broadleaf,
+    Conifer,
+    Tropical,
+    SparseCanopy,
+    Bamboo,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TreeState { Alive, Felled, Stump, Regrowing }
+pub enum TreeState {
+    Alive,
+    Felled,
+    Stump,
+    Regrowing,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HarvestProduct { Logs, Resin, FlexibleTwigs, MedicinalBark, BambooCulm }
+pub enum HarvestProduct {
+    Logs,
+    Resin,
+    FlexibleTwigs,
+    MedicinalBark,
+    BambooCulm,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpeciesProfile {
@@ -53,22 +106,202 @@ pub struct SpeciesProfile {
 /// Canonical starting roster. River/bog/swamp and deep-forest constraints are
 /// represented by moisture/elevation/biome proxies until hydrology exists.
 pub const SPECIES_PROFILES: &[SpeciesProfile] = &[
-    SpeciesProfile { species: TreeSpecies::Acacia, min_temperature_c: 28.0, max_temperature_c: 40.0, rarity_weight: 0.75, min_moisture: 0.05, max_moisture: 0.75, foliage: FoliageStyle::SparseCanopy, base_height_hexels: 5.0, height_variation_hexels: 4.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::BaldCypress, min_temperature_c: 15.0, max_temperature_c: 24.0, rarity_weight: 0.45, min_moisture: 0.68, max_moisture: 1.0, foliage: FoliageStyle::Broadleaf, base_height_hexels: 6.0, height_variation_hexels: 4.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Birch, min_temperature_c: 0.0, max_temperature_c: 22.0, rarity_weight: 1.0, min_moisture: 0.15, max_moisture: 1.0, foliage: FoliageStyle::Broadleaf, base_height_hexels: 5.0, height_variation_hexels: 5.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::CrimsonKingMaple, min_temperature_c: 8.0, max_temperature_c: 9.0, rarity_weight: 0.2, min_moisture: 0.42, max_moisture: 1.0, foliage: FoliageStyle::Broadleaf, base_height_hexels: 6.0, height_variation_hexels: 4.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Ebony, min_temperature_c: 28.0, max_temperature_c: 40.0, rarity_weight: 0.025, min_moisture: 0.35, max_moisture: 1.0, foliage: FoliageStyle::Tropical, base_height_hexels: 7.0, height_variation_hexels: 5.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::MediterraneanCypress, min_temperature_c: 8.0, max_temperature_c: 22.0, rarity_weight: 0.55, min_moisture: 0.0, max_moisture: 0.5, foliage: FoliageStyle::Conifer, base_height_hexels: 7.0, height_variation_hexels: 5.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Kapok, min_temperature_c: 25.0, max_temperature_c: 40.0, rarity_weight: 0.7, min_moisture: 0.58, max_moisture: 1.0, foliage: FoliageStyle::Tropical, base_height_hexels: 9.0, height_variation_hexels: 9.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Larch, min_temperature_c: -17.0, max_temperature_c: -3.0, rarity_weight: 0.65, min_moisture: 0.1, max_moisture: 0.8, foliage: FoliageStyle::Conifer, base_height_hexels: 5.0, height_variation_hexels: 4.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Maple, min_temperature_c: 0.0, max_temperature_c: 23.0, rarity_weight: 0.9, min_moisture: 0.25, max_moisture: 1.0, foliage: FoliageStyle::Broadleaf, base_height_hexels: 5.0, height_variation_hexels: 5.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Oak, min_temperature_c: 2.0, max_temperature_c: 22.0, rarity_weight: 1.0, min_moisture: 0.2, max_moisture: 0.95, foliage: FoliageStyle::Broadleaf, base_height_hexels: 5.0, height_variation_hexels: 6.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Pine, min_temperature_c: -18.0, max_temperature_c: 40.0, rarity_weight: 0.9, min_moisture: 0.0, max_moisture: 0.85, foliage: FoliageStyle::Conifer, base_height_hexels: 6.0, height_variation_hexels: 7.0, products: &[HarvestProduct::Logs, HarvestProduct::Resin] },
-    SpeciesProfile { species: TreeSpecies::Purpleheart, min_temperature_c: 27.0, max_temperature_c: 40.0, rarity_weight: 0.008, min_moisture: 0.68, max_moisture: 1.0, foliage: FoliageStyle::Tropical, base_height_hexels: 7.0, height_variation_hexels: 5.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Redwood, min_temperature_c: 14.0, max_temperature_c: 18.0, rarity_weight: 0.16, min_moisture: 0.35, max_moisture: 1.0, foliage: FoliageStyle::Conifer, base_height_hexels: 16.0, height_variation_hexels: 18.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Walnut, min_temperature_c: 6.0, max_temperature_c: 22.0, rarity_weight: 0.55, min_moisture: 0.25, max_moisture: 0.85, foliage: FoliageStyle::Broadleaf, base_height_hexels: 5.0, height_variation_hexels: 5.0, products: &[HarvestProduct::Logs] },
-    SpeciesProfile { species: TreeSpecies::Bamboo, min_temperature_c: 25.0, max_temperature_c: 40.0, rarity_weight: 0.5, min_moisture: 0.35, max_moisture: 1.0, foliage: FoliageStyle::Bamboo, base_height_hexels: 5.0, height_variation_hexels: 8.0, products: &[HarvestProduct::BambooCulm] },
-    SpeciesProfile { species: TreeSpecies::Willow, min_temperature_c: 2.0, max_temperature_c: 20.0, rarity_weight: 0.6, min_moisture: 0.72, max_moisture: 1.0, foliage: FoliageStyle::Broadleaf, base_height_hexels: 4.0, height_variation_hexels: 4.0, products: &[HarvestProduct::Logs, HarvestProduct::FlexibleTwigs, HarvestProduct::MedicinalBark] },
+    SpeciesProfile {
+        species: TreeSpecies::Acacia,
+        min_temperature_c: 28.0,
+        max_temperature_c: 40.0,
+        rarity_weight: 0.75,
+        min_moisture: 0.05,
+        max_moisture: 0.75,
+        foliage: FoliageStyle::SparseCanopy,
+        base_height_hexels: 5.0,
+        height_variation_hexels: 4.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::BaldCypress,
+        min_temperature_c: 15.0,
+        max_temperature_c: 24.0,
+        rarity_weight: 0.45,
+        min_moisture: 0.68,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Broadleaf,
+        base_height_hexels: 6.0,
+        height_variation_hexels: 4.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Birch,
+        min_temperature_c: 0.0,
+        max_temperature_c: 22.0,
+        rarity_weight: 1.0,
+        min_moisture: 0.15,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Broadleaf,
+        base_height_hexels: 5.0,
+        height_variation_hexels: 5.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::CrimsonKingMaple,
+        min_temperature_c: 8.0,
+        max_temperature_c: 9.0,
+        rarity_weight: 0.2,
+        min_moisture: 0.42,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Broadleaf,
+        base_height_hexels: 6.0,
+        height_variation_hexels: 4.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Ebony,
+        min_temperature_c: 28.0,
+        max_temperature_c: 40.0,
+        rarity_weight: 0.025,
+        min_moisture: 0.35,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Tropical,
+        base_height_hexels: 7.0,
+        height_variation_hexels: 5.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::MediterraneanCypress,
+        min_temperature_c: 8.0,
+        max_temperature_c: 22.0,
+        rarity_weight: 0.55,
+        min_moisture: 0.0,
+        max_moisture: 0.5,
+        foliage: FoliageStyle::Conifer,
+        base_height_hexels: 7.0,
+        height_variation_hexels: 5.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Kapok,
+        min_temperature_c: 25.0,
+        max_temperature_c: 40.0,
+        rarity_weight: 0.7,
+        min_moisture: 0.58,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Tropical,
+        base_height_hexels: 9.0,
+        height_variation_hexels: 9.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Larch,
+        min_temperature_c: -17.0,
+        max_temperature_c: -3.0,
+        rarity_weight: 0.65,
+        min_moisture: 0.1,
+        max_moisture: 0.8,
+        foliage: FoliageStyle::Conifer,
+        base_height_hexels: 5.0,
+        height_variation_hexels: 4.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Maple,
+        min_temperature_c: 0.0,
+        max_temperature_c: 23.0,
+        rarity_weight: 0.9,
+        min_moisture: 0.25,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Broadleaf,
+        base_height_hexels: 5.0,
+        height_variation_hexels: 5.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Oak,
+        min_temperature_c: 2.0,
+        max_temperature_c: 22.0,
+        rarity_weight: 1.0,
+        min_moisture: 0.2,
+        max_moisture: 0.95,
+        foliage: FoliageStyle::Broadleaf,
+        base_height_hexels: 5.0,
+        height_variation_hexels: 6.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Pine,
+        min_temperature_c: -18.0,
+        max_temperature_c: 40.0,
+        rarity_weight: 0.9,
+        min_moisture: 0.0,
+        max_moisture: 0.85,
+        foliage: FoliageStyle::Conifer,
+        base_height_hexels: 6.0,
+        height_variation_hexels: 7.0,
+        products: &[HarvestProduct::Logs, HarvestProduct::Resin],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Purpleheart,
+        min_temperature_c: 27.0,
+        max_temperature_c: 40.0,
+        rarity_weight: 0.008,
+        min_moisture: 0.68,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Tropical,
+        base_height_hexels: 7.0,
+        height_variation_hexels: 5.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Redwood,
+        min_temperature_c: 14.0,
+        max_temperature_c: 18.0,
+        rarity_weight: 0.16,
+        min_moisture: 0.35,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Conifer,
+        base_height_hexels: 16.0,
+        height_variation_hexels: 18.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Walnut,
+        min_temperature_c: 6.0,
+        max_temperature_c: 22.0,
+        rarity_weight: 0.55,
+        min_moisture: 0.25,
+        max_moisture: 0.85,
+        foliage: FoliageStyle::Broadleaf,
+        base_height_hexels: 5.0,
+        height_variation_hexels: 5.0,
+        products: &[HarvestProduct::Logs],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Bamboo,
+        min_temperature_c: 25.0,
+        max_temperature_c: 40.0,
+        rarity_weight: 0.5,
+        min_moisture: 0.35,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Bamboo,
+        base_height_hexels: 5.0,
+        height_variation_hexels: 8.0,
+        products: &[HarvestProduct::BambooCulm],
+    },
+    SpeciesProfile {
+        species: TreeSpecies::Willow,
+        min_temperature_c: 2.0,
+        max_temperature_c: 20.0,
+        rarity_weight: 0.6,
+        min_moisture: 0.72,
+        max_moisture: 1.0,
+        foliage: FoliageStyle::Broadleaf,
+        base_height_hexels: 4.0,
+        height_variation_hexels: 4.0,
+        products: &[
+            HarvestProduct::Logs,
+            HarvestProduct::FlexibleTwigs,
+            HarvestProduct::MedicinalBark,
+        ],
+    },
 ];
 
 impl TreeSpecies {
@@ -99,13 +332,17 @@ impl TreeInstance {
 
     /// Yield the usable trunk volume once. Persist this state and awarded inventory.
     pub fn fell(&mut self) -> f64 {
-        if self.state != TreeState::Alive { return 0.0; }
+        if self.state != TreeState::Alive {
+            return 0.0;
+        }
         self.state = TreeState::Felled;
         self.wood_volume
     }
 
     pub fn leave_stump(&mut self) {
-        if self.state == TreeState::Felled { self.state = TreeState::Stump; }
+        if self.state == TreeState::Felled {
+            self.state = TreeState::Stump;
+        }
     }
 }
 
@@ -121,18 +358,26 @@ impl TreeGenerator {
         Self {
             seed,
             density: density.clamp(0.0, 1.0),
-            hexel_diameter: if hexel_diameter.is_finite() { hexel_diameter.max(0.001) } else { 1.0 },
+            hexel_diameter: if hexel_diameter.is_finite() {
+                hexel_diameter.max(0.001)
+            } else {
+                1.0
+            },
         }
     }
 
-    pub fn hexel_diameter(self) -> f64 { self.hexel_diameter }
+    pub fn hexel_diameter(self) -> f64 {
+        self.hexel_diameter
+    }
 
     pub fn candidate(self, slot_id: TreeId, sample: PlanetSample) -> Option<TreeInstance> {
         let mut rng = splitmix64(self.seed ^ slot_id.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let occupancy = unit_f64(next_random(&mut rng));
         let profile = choose_profile(sample, next_random(&mut rng))?;
         let suitability = suitability(sample.biome, sample.elevation, sample.moisture);
-        if occupancy >= self.density * suitability * profile.rarity_weight { return None; }
+        if occupancy >= self.density * suitability * profile.rarity_weight {
+            return None;
+        }
 
         let variant = choose_variant(profile.species, next_random(&mut rng));
         let diameter_fraction = 0.25 + unit_f64(next_random(&mut rng)) * 0.75;
@@ -159,38 +404,76 @@ impl TreeGenerator {
 }
 
 fn choose_profile(sample: PlanetSample, random: u64) -> Option<&'static SpeciesProfile> {
-    if sample.elevation < 0.0 || matches!(sample.biome, Biome::DeepOcean | Biome::ShallowOcean | Biome::PolarIce | Biome::Mountain) {
+    if sample.elevation < 0.0
+        || matches!(
+            sample.biome,
+            Biome::DeepOcean | Biome::ShallowOcean | Biome::PolarIce | Biome::Mountain
+        )
+    {
         return None;
     }
-    let eligible: Vec<_> = SPECIES_PROFILES.iter().filter(|p| {
-        sample.temperature_c >= p.min_temperature_c
-            && sample.temperature_c <= p.max_temperature_c
-            && sample.moisture >= p.min_moisture
-            && sample.moisture <= p.max_moisture
-            && biome_supports(p.species, sample.biome)
-            && climate_supports(p.species, sample.koppen)
-    }).collect();
-    if eligible.is_empty() { return None; }
+    let eligible: Vec<_> = SPECIES_PROFILES
+        .iter()
+        .filter(|p| {
+            sample.temperature_c >= p.min_temperature_c
+                && sample.temperature_c <= p.max_temperature_c
+                && sample.moisture >= p.min_moisture
+                && sample.moisture <= p.max_moisture
+                && biome_supports(p.species, sample.biome)
+                && climate_supports(p.species, sample.koppen)
+        })
+        .collect();
+    if eligible.is_empty() {
+        return None;
+    }
     // Weighted deterministic choice; rare types are much less likely than common types.
     let total: f64 = eligible.iter().map(|p| p.rarity_weight).sum();
     let mut pick = unit_f64(random) * total;
     for profile in &eligible {
         pick -= profile.rarity_weight;
-        if pick <= 0.0 { return Some(*profile); }
+        if pick <= 0.0 {
+            return Some(*profile);
+        }
     }
     eligible.last().copied()
 }
 
 fn biome_supports(species: TreeSpecies, biome: Biome) -> bool {
     match species {
-        TreeSpecies::Acacia => matches!(biome, Biome::Savanna | Biome::Desert | Biome::TropicalForest),
-        TreeSpecies::Ebony | TreeSpecies::Kapok | TreeSpecies::Purpleheart | TreeSpecies::Bamboo => biome == Biome::TropicalForest,
-        TreeSpecies::BaldCypress | TreeSpecies::Willow => matches!(biome, Biome::TemperateForest | Biome::Grassland | Biome::BorealForest),
+        TreeSpecies::Acacia => matches!(
+            biome,
+            Biome::Savanna | Biome::Desert | Biome::TropicalForest
+        ),
+        TreeSpecies::Ebony
+        | TreeSpecies::Kapok
+        | TreeSpecies::Purpleheart
+        | TreeSpecies::Bamboo => biome == Biome::TropicalForest,
+        TreeSpecies::BaldCypress | TreeSpecies::Willow => matches!(
+            biome,
+            Biome::TemperateForest | Biome::Grassland | Biome::BorealForest
+        ),
         TreeSpecies::Larch => matches!(biome, Biome::BorealForest | Biome::Tundra),
-        TreeSpecies::MediterraneanCypress => matches!(biome, Biome::Grassland | Biome::Savanna | Biome::TemperateForest),
-        TreeSpecies::Redwood => matches!(biome, Biome::BorealForest | Biome::TemperateForest | Biome::Mountain),
-        TreeSpecies::Oak | TreeSpecies::Birch | TreeSpecies::Maple | TreeSpecies::CrimsonKingMaple | TreeSpecies::Walnut => biome == Biome::TemperateForest,
-        TreeSpecies::Pine => matches!(biome, Biome::BorealForest | Biome::TemperateForest | Biome::Grassland | Biome::Savanna | Biome::Desert),
+        TreeSpecies::MediterraneanCypress => matches!(
+            biome,
+            Biome::Grassland | Biome::Savanna | Biome::TemperateForest
+        ),
+        TreeSpecies::Redwood => matches!(
+            biome,
+            Biome::BorealForest | Biome::TemperateForest | Biome::Mountain
+        ),
+        TreeSpecies::Oak
+        | TreeSpecies::Birch
+        | TreeSpecies::Maple
+        | TreeSpecies::CrimsonKingMaple
+        | TreeSpecies::Walnut => biome == Biome::TemperateForest,
+        TreeSpecies::Pine => matches!(
+            biome,
+            Biome::BorealForest
+                | Biome::TemperateForest
+                | Biome::Grassland
+                | Biome::Savanna
+                | Biome::Desert
+        ),
         TreeSpecies::Spruce | TreeSpecies::Jungle | TreeSpecies::Scrub => false,
     }
 }
@@ -200,24 +483,44 @@ fn biome_supports(species: TreeSpecies, biome: Biome) -> bool {
 fn climate_supports(species: TreeSpecies, climate: KoppenClass) -> bool {
     use KoppenClass::*;
     match species {
-        TreeSpecies::Kapok | TreeSpecies::Ebony | TreeSpecies::Purpleheart | TreeSpecies::Bamboo =>
-            matches!(climate, Af | Am | Aw | As),
-        TreeSpecies::Acacia =>
-            matches!(climate, BWh | BWk | BSh | BSk | Aw | As),
-        TreeSpecies::MediterraneanCypress =>
-            matches!(climate, Csa | Csb | Csc | BSh | BSk),
-        TreeSpecies::Larch =>
-            matches!(climate, Dfc | Dfd | Dwc | Dwd | Dsc | Dsd | ET),
-        TreeSpecies::Redwood =>
-            matches!(climate, Cfb | Cfc | Csb | Csa | Dfb | Dfc),
-        TreeSpecies::BaldCypress | TreeSpecies::Willow =>
-            matches!(climate, Cfa | Cfb | Cfc | Cwa | Cwb | Dfa | Dfb | Dfc),
-        TreeSpecies::Oak | TreeSpecies::Maple | TreeSpecies::CrimsonKingMaple | TreeSpecies::Walnut =>
-            matches!(climate, Csa | Csb | Cwa | Cwb | Cfa | Cfb | Dsa | Dsb | Dwa | Dwb | Dfa | Dfb),
-        TreeSpecies::Birch =>
-            matches!(climate, Cfb | Cfc | Dfb | Dfc | Dfd | Dwb | Dwc | ET),
-        TreeSpecies::Pine =>
-            matches!(climate, BSk | Csa | Csb | Cfb | Cfc | Dsa | Dsb | Dsc | Dsd | Dwa | Dwb | Dwc | Dwd | Dfa | Dfb | Dfc | Dfd),
+        TreeSpecies::Kapok
+        | TreeSpecies::Ebony
+        | TreeSpecies::Purpleheart
+        | TreeSpecies::Bamboo => matches!(climate, Af | Am | Aw | As),
+        TreeSpecies::Acacia => matches!(climate, BWh | BWk | BSh | BSk | Aw | As),
+        TreeSpecies::MediterraneanCypress => matches!(climate, Csa | Csb | Csc | BSh | BSk),
+        TreeSpecies::Larch => matches!(climate, Dfc | Dfd | Dwc | Dwd | Dsc | Dsd | ET),
+        TreeSpecies::Redwood => matches!(climate, Cfb | Cfc | Csb | Csa | Dfb | Dfc),
+        TreeSpecies::BaldCypress | TreeSpecies::Willow => {
+            matches!(climate, Cfa | Cfb | Cfc | Cwa | Cwb | Dfa | Dfb | Dfc)
+        }
+        TreeSpecies::Oak
+        | TreeSpecies::Maple
+        | TreeSpecies::CrimsonKingMaple
+        | TreeSpecies::Walnut => matches!(
+            climate,
+            Csa | Csb | Cwa | Cwb | Cfa | Cfb | Dsa | Dsb | Dwa | Dwb | Dfa | Dfb
+        ),
+        TreeSpecies::Birch => matches!(climate, Cfb | Cfc | Dfb | Dfc | Dfd | Dwb | Dwc | ET),
+        TreeSpecies::Pine => matches!(
+            climate,
+            BSk | Csa
+                | Csb
+                | Cfb
+                | Cfc
+                | Dsa
+                | Dsb
+                | Dsc
+                | Dsd
+                | Dwa
+                | Dwb
+                | Dwc
+                | Dwd
+                | Dfa
+                | Dfb
+                | Dfc
+                | Dfd
+        ),
         TreeSpecies::Spruce | TreeSpecies::Jungle | TreeSpecies::Scrub => false,
     }
 }
@@ -238,9 +541,27 @@ fn choose_variant(species: TreeSpecies, random: u64) -> TreeVariant {
     match species {
         TreeSpecies::Acacia if random % 8 == 0 => TreeVariant::PricklyMoses,
         TreeSpecies::BaldCypress => TreeVariant::Swamp,
-        TreeSpecies::Birch => match random % 5 { 0 => TreeVariant::SilverBirch, 1 => TreeVariant::HimalayanBirch, 2 => TreeVariant::RiverBirch, 3 => TreeVariant::DwarfBirch, _ => TreeVariant::Standard },
-        TreeSpecies::Maple => match random % 5 { 0 => TreeVariant::NorwayMaple, 1 => TreeVariant::MountainMaple, 2 => TreeVariant::JapaneseMaple, 3 => TreeVariant::SugarMaple, _ => TreeVariant::Standard },
-        TreeSpecies::Pine => match random % 5 { 0 => TreeVariant::MountainPine, 1 => TreeVariant::ScotsPine, 2 => TreeVariant::Fir, 3 => TreeVariant::Bristlecone, _ => TreeVariant::Standard },
+        TreeSpecies::Birch => match random % 5 {
+            0 => TreeVariant::SilverBirch,
+            1 => TreeVariant::HimalayanBirch,
+            2 => TreeVariant::RiverBirch,
+            3 => TreeVariant::DwarfBirch,
+            _ => TreeVariant::Standard,
+        },
+        TreeSpecies::Maple => match random % 5 {
+            0 => TreeVariant::NorwayMaple,
+            1 => TreeVariant::MountainMaple,
+            2 => TreeVariant::JapaneseMaple,
+            3 => TreeVariant::SugarMaple,
+            _ => TreeVariant::Standard,
+        },
+        TreeSpecies::Pine => match random % 5 {
+            0 => TreeVariant::MountainPine,
+            1 => TreeVariant::ScotsPine,
+            2 => TreeVariant::Fir,
+            3 => TreeVariant::Bristlecone,
+            _ => TreeVariant::Standard,
+        },
         TreeSpecies::Kapok if random % 12 == 0 => TreeVariant::Viney,
         TreeSpecies::Kapok if random % 15 == 0 => TreeVariant::Shrub,
         TreeSpecies::Oak if random % 100 == 0 => TreeVariant::OldGrowth,
@@ -254,7 +575,9 @@ fn choose_variant(species: TreeSpecies, random: u64) -> TreeVariant {
     }
 }
 
-fn unit_f64(value: u64) -> f64 { (value >> 11) as f64 / ((1_u64 << 53) as f64) }
+fn unit_f64(value: u64) -> f64 {
+    (value >> 11) as f64 / ((1_u64 << 53) as f64)
+}
 fn next_random(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     splitmix64(*state)
@@ -277,19 +600,38 @@ mod tests {
     #[test]
     fn canonical_roster_contains_all_starting_types() {
         for species in [
-            TreeSpecies::Acacia, TreeSpecies::BaldCypress, TreeSpecies::Birch,
-            TreeSpecies::CrimsonKingMaple, TreeSpecies::Ebony, TreeSpecies::MediterraneanCypress,
-            TreeSpecies::Kapok, TreeSpecies::Larch, TreeSpecies::Maple, TreeSpecies::Oak,
-            TreeSpecies::Pine, TreeSpecies::Purpleheart, TreeSpecies::Redwood, TreeSpecies::Walnut,
-            TreeSpecies::Bamboo, TreeSpecies::Willow,
-        ] { assert!(species.profile().is_some(), "missing profile for {species:?}"); }
+            TreeSpecies::Acacia,
+            TreeSpecies::BaldCypress,
+            TreeSpecies::Birch,
+            TreeSpecies::CrimsonKingMaple,
+            TreeSpecies::Ebony,
+            TreeSpecies::MediterraneanCypress,
+            TreeSpecies::Kapok,
+            TreeSpecies::Larch,
+            TreeSpecies::Maple,
+            TreeSpecies::Oak,
+            TreeSpecies::Pine,
+            TreeSpecies::Purpleheart,
+            TreeSpecies::Redwood,
+            TreeSpecies::Walnut,
+            TreeSpecies::Bamboo,
+            TreeSpecies::Willow,
+        ] {
+            assert!(
+                species.profile().is_some(),
+                "missing profile for {species:?}"
+            );
+        }
     }
 
     #[test]
     fn candidate_is_deterministic_for_seed_and_slot() {
         let generator = TreeGenerator::new(77, 1.0, 1.0);
         let sample = sample_at(35.0, -90.0, 4);
-        assert_eq!(generator.candidate(123, sample), generator.candidate(123, sample));
+        assert_eq!(
+            generator.candidate(123, sample),
+            generator.candidate(123, sample)
+        );
     }
 
     #[test]
@@ -316,7 +658,9 @@ mod tests {
     fn felling_yields_wood_only_once() {
         let sample = sample_at(35.0, -90.0, 4);
         let generator = TreeGenerator::new(77, 1.0, 1.0);
-        let mut tree = (0..1000).find_map(|id| generator.candidate(id, sample)).expect("candidate");
+        let mut tree = (0..1000)
+            .find_map(|id| generator.candidate(id, sample))
+            .expect("candidate");
         let yield_once = tree.fell();
         assert!(yield_once > 0.0);
         assert_eq!(tree.fell(), 0.0);

@@ -170,7 +170,10 @@ impl PlanetGenerator {
         } else {
             DVec3::X
         };
-        let coord = GeoCoord::new(direction.y.clamp(-1.0, 1.0).asin(), direction.z.atan2(direction.x));
+        let coord = GeoCoord::new(
+            direction.y.clamp(-1.0, 1.0).asin(),
+            direction.z.atan2(direction.x),
+        );
         self.sample(coord, season_phase)
     }
 
@@ -184,21 +187,15 @@ impl PlanetGenerator {
         // model, not only by the sphere-direction conversion.
         let coord = GeoCoord::new(coord.latitude, coord.longitude);
         let direction = coord.direction();
-        let continentalness = self.continents.get([
-            direction.x * 2.15,
-            direction.y * 2.15,
-            direction.z * 2.15,
-        ]);
-        let detail = self.detail.get([
-            direction.x * 17.0,
-            direction.y * 17.0,
-            direction.z * 17.0,
-        ]);
-        let ridge_noise = self.mountains.get([
-            direction.x * 7.0,
-            direction.y * 7.0,
-            direction.z * 7.0,
-        ]);
+        let continentalness =
+            self.continents
+                .get([direction.x * 2.15, direction.y * 2.15, direction.z * 2.15]);
+        let detail = self
+            .detail
+            .get([direction.x * 17.0, direction.y * 17.0, direction.z * 17.0]);
+        let ridge_noise =
+            self.mountains
+                .get([direction.x * 7.0, direction.y * 7.0, direction.z * 7.0]);
         let ridge = (1.0 - ridge_noise.abs()).powi(3);
 
         let elevation = if continentalness > 0.02 {
@@ -242,30 +239,36 @@ impl PlanetGenerator {
                     direction.y * 4.2,
                     direction.z * 4.2,
                 ]);
-        let elevation_drying = 1.0 - (elevation.max(0.0) / (self.config.elevation_scale * 0.8)).clamp(0.0, 0.65);
-        let moisture = (circulation_belt * 0.38
-            + ocean_influence * 0.37
-            + regional_moisture * 0.25)
-            * elevation_drying;
+        let elevation_drying =
+            1.0 - (elevation.max(0.0) / (self.config.elevation_scale * 0.8)).clamp(0.0, 0.65);
+        let moisture =
+            (circulation_belt * 0.38 + ocean_influence * 0.37 + regional_moisture * 0.25)
+                * elevation_drying;
         let moisture = moisture.clamp(0.0, 1.0);
 
         // Build twelve deterministic monthly normals. Temperature uses axial-tilt seasonality;
         // precipitation is a broad circulation/ocean proxy with a seasonal rainfall cycle.
         // These are explicit estimates, not a calibrated weather/climate simulation.
-        let annual_mean_temperature = 31.0 - coord.latitude.abs() * 39.0
-            - elevation.max(0.0) * 0.0065
-            + self.detail.get([direction.x * 3.5 + 19.1, direction.y * 3.5 - 7.7, direction.z * 3.5 + 2.3]) * 4.0;
+        let annual_mean_temperature =
+            31.0 - coord.latitude.abs() * 39.0 - elevation.max(0.0) * 0.0065
+                + self.detail.get([
+                    direction.x * 3.5 + 19.1,
+                    direction.y * 3.5 - 7.7,
+                    direction.z * 3.5 + 2.3,
+                ]) * 4.0;
         // Seasonal contrast increases toward the poles; retain a smaller tropical
         // seasonal cycle rather than incorrectly making equatorial temperatures static.
         let seasonal_amplitude = self.config.axial_tilt_degrees.to_radians().sin()
-            * (0.35 + 0.65 * coord.latitude.sin().abs()) * 30.0;
+            * (0.35 + 0.65 * coord.latitude.sin().abs())
+            * 30.0;
         let mut monthly_temperature = [0.0; 12];
         let mut monthly_precipitation = [0.0; 12];
         for month in 0..12 {
             let phase = (month as f64 + 0.5) / 12.0;
             let seasonal_wave = (phase * TAU - std::f64::consts::FRAC_PI_2).sin()
                 * if coord.latitude >= 0.0 { 1.0 } else { -1.0 };
-            monthly_temperature[month] = annual_mean_temperature + seasonal_amplitude * seasonal_wave;
+            monthly_temperature[month] =
+                annual_mean_temperature + seasonal_amplitude * seasonal_wave;
             // Separate rainfall field adds regional variation; seasonal amplitude grows away from the equator.
             let rainfall_detail = self.moisture_field.get([
                 direction.x * 8.1 + 13.7,
@@ -274,42 +277,65 @@ impl PlanetGenerator {
             ]);
             let continental_drying = 1.0 - smoothstep(-0.18, 0.58, continentalness) * 0.38;
             let lee_side_penalty = if ridge_noise > 0.55 { 0.78 } else { 1.0 };
-            let precipitation_capacity = (moisture * 720.0
+            let precipitation_capacity = (moisture
+                * 720.0
                 * (0.78 + rainfall_detail * 0.22)
-                * continental_drying * lee_side_penalty).max(0.0);
+                * continental_drying
+                * lee_side_penalty)
+                .max(0.0);
             let seasonal_strength = 0.18 + 0.42 * coord.latitude.sin().abs();
-            let rainfall_wave = (1.0 + seasonal_strength * seasonal_wave
-                + rainfall_detail * 0.16).clamp(0.08, 1.55);
+            let rainfall_wave = (1.0 + seasonal_strength * seasonal_wave + rainfall_detail * 0.16)
+                .clamp(0.08, 1.55);
             monthly_precipitation[month] = precipitation_capacity * rainfall_wave;
         }
         let koppen = crate::climate::MonthlyClimateNormals {
             temperature_c: monthly_temperature,
             precipitation_mm: monthly_precipitation,
-        }.classify(elevation.max(0.0));
+        }
+        .classify(elevation.max(0.0));
         // Ocean depth and extreme relief remain geographic overrides. On land, the
         // climate subtype now drives the broad biome used by downstream systems.
         let biome = if elevation < -self.config.elevation_scale * 0.12 {
             Biome::DeepOcean
         } else if elevation <= 0.0 {
-            if temperature_c < -3.0 { Biome::PolarIce } else { Biome::ShallowOcean }
+            if temperature_c < -3.0 {
+                Biome::PolarIce
+            } else {
+                Biome::ShallowOcean
+            }
         } else if matches!(koppen, crate::climate::KoppenClass::Highland)
-            || elevation > self.config.elevation_scale * 0.68 {
+            || elevation > self.config.elevation_scale * 0.68
+        {
             Biome::Mountain
         } else {
             use crate::climate::KoppenClass as K;
             match koppen {
                 K::EF => Biome::PolarIce,
                 K::ET => Biome::Tundra,
-                K::Dsa | K::Dsb | K::Dsc | K::Dsd | K::Dwa | K::Dwb | K::Dwc | K::Dwd
-                | K::Dfa | K::Dfb | K::Dfc | K::Dfd => Biome::BorealForest,
+                K::Dsa
+                | K::Dsb
+                | K::Dsc
+                | K::Dsd
+                | K::Dwa
+                | K::Dwb
+                | K::Dwc
+                | K::Dwd
+                | K::Dfa
+                | K::Dfb
+                | K::Dfc
+                | K::Dfd => Biome::BorealForest,
                 K::Af | K::Am => Biome::TropicalForest,
                 K::Aw | K::As => Biome::Savanna,
                 K::BWh | K::BWk => Biome::Desert,
                 K::BSh | K::BSk => Biome::Grassland,
                 K::Csa | K::Csb | K::Csc if moisture < 0.45 => Biome::Grassland,
-                K::Csa | K::Csb | K::Csc | K::Cwa | K::Cwb | K::Cwc
-                | K::Cfa | K::Cfb | K::Cfc =>
-                    if moisture > 0.52 { Biome::TemperateForest } else { Biome::Grassland },
+                K::Csa | K::Csb | K::Csc | K::Cwa | K::Cwb | K::Cwc | K::Cfa | K::Cfb | K::Cfc => {
+                    if moisture > 0.52 {
+                        Biome::TemperateForest
+                    } else {
+                        Biome::Grassland
+                    }
+                }
                 K::Highland => Biome::Mountain,
             }
         };
@@ -349,8 +375,8 @@ impl PlanetGenerator {
         }
         let start = GeoCoord::new(start.latitude, start.longitude);
         let up = start.direction();
-        let east_axis = DVec3::new(-start.longitude.sin(), 0.0, start.longitude.cos())
-            .normalize_or_zero();
+        let east_axis =
+            DVec3::new(-start.longitude.sin(), 0.0, start.longitude.cos()).normalize_or_zero();
         let north_axis = east_axis.cross(up).normalize_or_zero();
         let displacement = east_axis * east + north_axis * north;
         let distance = displacement.length();
@@ -360,7 +386,10 @@ impl PlanetGenerator {
         let angle = (distance / self.config.radius).min(std::f64::consts::PI);
         let tangent = displacement / distance;
         let destination = (up * angle.cos() + tangent * angle.sin()).normalize_or_zero();
-        GeoCoord::new(destination.y.clamp(-1.0, 1.0).asin(), destination.z.atan2(destination.x))
+        GeoCoord::new(
+            destination.y.clamp(-1.0, 1.0).asin(),
+            destination.z.atan2(destination.x),
+        )
     }
 
     /// Great-circle distance between two locations, in the same units as planet radius.
@@ -401,30 +430,53 @@ impl LocalTangentFrame {
     pub fn at(coord: GeoCoord, planet_radius: f64, elevation: f64) -> Self {
         let coord = GeoCoord::new(coord.latitude, coord.longitude);
         let up = coord.direction().normalize_or_zero();
-        let east = DVec3::new(-coord.longitude.sin(), 0.0, coord.longitude.cos())
-            .normalize_or_zero();
+        let east =
+            DVec3::new(-coord.longitude.sin(), 0.0, coord.longitude.cos()).normalize_or_zero();
         let north = east.cross(up).normalize_or_zero();
-        let radius = if planet_radius.is_finite() { planet_radius.max(1.0) } else { 1.0 };
-        let elevation = if elevation.is_finite() { elevation } else { 0.0 };
-        Self { origin: up * (radius + elevation), east, north, up }
+        let radius = if planet_radius.is_finite() {
+            planet_radius.max(1.0)
+        } else {
+            1.0
+        };
+        let elevation = if elevation.is_finite() {
+            elevation
+        } else {
+            0.0
+        };
+        Self {
+            origin: up * (radius + elevation),
+            east,
+            north,
+            up,
+        }
     }
 
     /// Convert a planet-centred f64 point to local east/north/up coordinates.
     pub fn to_local(self, planet_position: DVec3) -> DVec3 {
         let relative = planet_position - self.origin;
-        DVec3::new(relative.dot(self.east), relative.dot(self.north), relative.dot(self.up))
+        DVec3::new(
+            relative.dot(self.east),
+            relative.dot(self.north),
+            relative.dot(self.up),
+        )
     }
 
     /// Convert local east/north/up coordinates back to planet-centred f64 coordinates.
     pub fn to_planet(self, local_position: DVec3) -> DVec3 {
-        self.origin + self.east * local_position.x
-            + self.north * local_position.y + self.up * local_position.z
+        self.origin
+            + self.east * local_position.x
+            + self.north * local_position.y
+            + self.up * local_position.z
     }
 
-    pub fn origin(self) -> DVec3 { self.origin }
+    pub fn origin(self) -> DVec3 {
+        self.origin
+    }
 
     /// Radial up direction, used for planet-relative gravity and player orientation.
-    pub fn up(self) -> DVec3 { self.up }
+    pub fn up(self) -> DVec3 {
+        self.up
+    }
 }
 
 #[cfg(test)]
@@ -435,7 +487,8 @@ mod tests {
     #[test]
     fn direction_sampling_matches_geographic_sampling() {
         let generator = PlanetGenerator::new(42);
-        let topology = crate::topology::SurfaceTopology::generate(2, generator.config().radius).unwrap();
+        let topology =
+            crate::topology::SurfaceTopology::generate(2, generator.config().radius).unwrap();
         for cell in topology.cells() {
             let from_direction = generator.sample_direction(cell.center, 0.25);
             let direction = cell.center.normalize();
@@ -458,11 +511,8 @@ mod tests {
     fn direction_sampling_is_deterministic_for_same_seed_and_cell() {
         let first_generator = PlanetGenerator::new(42);
         let second_generator = PlanetGenerator::new(42);
-        let topology = crate::topology::SurfaceTopology::generate(
-            2,
-            first_generator.config().radius,
-        )
-        .unwrap();
+        let topology =
+            crate::topology::SurfaceTopology::generate(2, first_generator.config().radius).unwrap();
 
         for cell in topology.cells() {
             assert_eq!(
@@ -499,8 +549,7 @@ mod tests {
     fn tangent_frame_north_points_toward_increasing_latitude() {
         let coord = GeoCoord::from_degrees(0.0, 0.0);
         let frame = LocalTangentFrame::at(coord, 6_371_000.0, 0.0);
-        let slightly_north = GeoCoord::from_degrees(0.001, 0.0).direction()
-            * 6_371_000.0;
+        let slightly_north = GeoCoord::from_degrees(0.001, 0.0).direction() * 6_371_000.0;
         assert!(frame.to_local(slightly_north).y > 0.0);
     }
 
@@ -532,7 +581,11 @@ mod tests {
     fn latitude_is_clamped_at_the_poles() {
         let north = GeoCoord::from_degrees(120.0, 35.0);
         let pole = GeoCoord::from_degrees(90.0, 35.0);
-        assert_abs_diff_eq!(north.direction().distance(pole.direction()), 0.0, epsilon = 1e-8);
+        assert_abs_diff_eq!(
+            north.direction().distance(pole.direction()),
+            0.0,
+            epsilon = 1e-8
+        );
     }
 
     #[test]
@@ -578,10 +631,14 @@ mod tests {
         let a = PlanetGenerator::new(1);
         let b = PlanetGenerator::new(2);
         let coord = GeoCoord::from_degrees(15.0, 40.0);
-        assert_ne!(a.sample(coord, 0.0).elevation, b.sample(coord, 0.0).elevation);
         assert_ne!(
             a.sample(coord, 0.0).elevation,
-            a.sample(GeoCoord::from_degrees(-42.0, 120.0), 0.0).elevation
+            b.sample(coord, 0.0).elevation
+        );
+        assert_ne!(
+            a.sample(coord, 0.0).elevation,
+            a.sample(GeoCoord::from_degrees(-42.0, 120.0), 0.0)
+                .elevation
         );
     }
 
