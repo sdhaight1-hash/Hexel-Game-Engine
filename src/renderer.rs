@@ -518,12 +518,39 @@ impl Renderer {
         self._depth_texture = depth_texture;
         self.depth_view = depth_view;
     }
-    pub fn render(&mut self, camera: &Camera) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, camera: &Camera, selected_slot: usize, inventory_open: bool, item_counts: [u16; 36]) -> Result<(), wgpu::SurfaceError> {
         self.poll_mesh_results();
         let uniform = CameraUniform { view_proj: camera.view_projection(self.size).to_cols_array_2d() };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         let target_vertices = self.raycast(camera.position, camera.forward(), 8.0).map(|(cell, _)| build_target_outline(cell)).unwrap_or_default();
         if !target_vertices.is_empty() { self.queue.write_buffer(&self.target_buffer, 0, bytemuck::cast_slice(&target_vertices)); }
+        let mut hud_vertices: Vec<Vertex> = Vec::with_capacity(600);
+        let aspect = self.size.width.max(1) as f32 / self.size.height.max(1) as f32;
+        let mut hud_line = |x1: f32, y1: f32, x2: f32, y2: f32, color: [f32; 3]| {
+            hud_vertices.push(Vertex { position: [x1, y1, 0.0], color, uv: [0.0, 0.0], textured: 0.0 });
+            hud_vertices.push(Vertex { position: [x2, y2, 0.0], color, uv: [0.0, 0.0], textured: 0.0 });
+        };
+        let sw = (0.075 / aspect).min(0.085); let sh = 0.105; let gap = 0.012 / aspect;
+        let left = -(9.0 * sw + 8.0 * gap) * 0.5; let bottom = -0.91;
+        for i in 0..9 {
+            let x1 = left + i as f32 * (sw + gap); let x2 = x1 + sw; let y1 = bottom; let y2 = bottom + sh;
+            let col = if i == selected_slot { [1.0, 0.78, 0.12] } else { [0.95, 0.97, 1.0] };
+            hud_line(x1,y1,x2,y1,col); hud_line(x2,y1,x2,y2,col); hud_line(x2,y2,x1,y2,col); hud_line(x1,y2,x1,y1,col);
+            for tick in 0..item_counts[i].min(9) { let tx=x1+0.012/aspect+tick as f32*0.005/aspect; hud_line(tx,y1+0.012,tx,y1+0.028,[0.4,1.0,0.6]); }
+        }
+        if inventory_open {
+            let w=(0.055/aspect).min(0.065); let h=0.075; let gx=0.009/aspect; let gy=0.018;
+            let start_x=-(9.0*w+8.0*gx)*0.5; let start_y=0.48;
+            for i in 0..36 {
+                let x1=start_x+(i%9) as f32*(w+gx); let y1=start_y-(i/9) as f32*(h+gy); let x2=x1+w; let y2=y1+h;
+                let col=if i==selected_slot {[1.0,0.78,0.12]} else {[0.88,0.92,0.98]};
+                hud_line(x1,y1,x2,y1,col); hud_line(x2,y1,x2,y2,col); hud_line(x2,y2,x1,y2,col); hud_line(x1,y2,x1,y1,col);
+                for tick in 0..item_counts[i].min(5) { let tx=x1+0.008/aspect+tick as f32*0.004/aspect; hud_line(tx,y1+0.008,tx,y1+0.02,[0.4,1.0,0.6]); }
+            }
+        }
+        drop(hud_line);
+        let hud_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("HUD overlay"), contents: bytemuck::cast_slice(&hud_vertices), usage: wgpu::BufferUsages::VERTEX });
+        let frame = self.surface.get_current_texture()?;
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Hexel frame encoder") });
@@ -564,6 +591,8 @@ impl Renderer {
             overlay.set_vertex_buffer(0, self.crosshair_buffer.slice(..));
             overlay.draw(0..4, 0..1);
             overlay.draw(4..8, 0..1);
+            overlay.set_vertex_buffer(0, hud_buffer.slice(..));
+            overlay.draw(0..hud_vertices.len() as u32, 0..1);
         }
         self.queue.submit(Some(encoder.finish())); frame.present(); Ok(())
     }
