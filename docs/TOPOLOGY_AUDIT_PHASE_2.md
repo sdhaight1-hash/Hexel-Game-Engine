@@ -90,7 +90,7 @@ Phase 4 implementation in `src/bin/topology_geometry_check.rs` has been pulled a
 
 **Observed coverage result:** 4,095 samples were covered by exactly one cell, zero sampled gaps, zero multiple-owner samples, and one boundary sample excluded from ownership counts. The runtime audit also reported zero detected overlapping cell pairs and zero relative area coverage error. This is a successful finite-sampling check, not proof of complete coverage. The overlap predicates remain scoped to convex spherical polygons bounded by minor great-circle arcs.
 
-## Phase 5 — robustness implementation committed; local validation pending
+## Phase 5 — robustness implementation and local validation complete
 
 Phase 5 extends the offline checker with explicit malformed-input diagnostics in `src/bin/topology_geometry_check.rs`:
 
@@ -98,10 +98,14 @@ Phase 5 extends the offline checker with explicit malformed-input diagnostics in
 - Counts non-finite, zero-length, and off-radius vertices.
 - Counts invalid cell vertex indices and repeated vertex IDs.
 - Prints these diagnostics in the runtime audit instead of relying only on aggregate degenerate-cell counts.
-- Uses a documented scale-aware radius tolerance: max(`1e-10`, radius × `1e-8`).
+- Uses a documented scale-aware radius tolerance: max(`1e-10`, abs(radius) × `1e-8`).
 - Adds regression tests for invalid radii, non-finite coordinates, zero-length/off-radius vertices, invalid indices, repeated IDs, tolerance scaling, and a frequency 2–4 sampling sweep (1,024 deterministic samples per frequency).
 
-**Validation status:** Phase 5 code is committed but has not yet been run locally. Do not claim its new tests pass until the user runs the commands in `docs/TOPOLOGY_AUDIT_PHASE_5_PLAN.md`. Frequency-sweep sampling is finite evidence only, not a proof of complete coverage.
+**User-reported local validation:** `cargo test --bin topology_geometry_check` passed **32/32**; `cargo test --bin cube_sphere_geometry_check` passed **8/8**; and `cargo test` passed **86/86** tests (46 core, 8 cube-sphere, 32 topology; main and doc-test targets each contained zero tests). No failures were reported.
+
+The user also ran `cargo run --bin topology_geometry_check -- 2`, `-- 3`, and `-- 4`. Each runtime audit reported zero boundary edges, non-manifold edges, degenerate cells, duplicate cell IDs, invalid radius, non-finite vertices, zero-length vertices, off-radius vertices, invalid cell indices, repeated vertex IDs, detected overlapping cell pairs, and relative area coverage error. Each reported zero sampled gaps and zero multiple-owner samples across 4,096 coverage samples. Frequency 3 excluded one boundary sample and counted 4,095 samples with exactly one owner; frequencies 2 and 4 counted all 4,096 as singly owned. Maximum radius error was zero at all three frequencies.
+
+These are user-reported local results, not a claim that every malformed mesh is covered or that finite sampling proves complete coverage. The overlap detector remains scoped to convex spherical polygons bounded by minor great-circle arcs.
 
 ## Remaining design questions
 
