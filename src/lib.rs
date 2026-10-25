@@ -8,6 +8,7 @@ pub mod planet;
 pub mod soil;
 pub mod trees;
 pub mod tree_blocks;
+pub mod topology;
 
 use glam::Vec3;
 use noise::{NoiseFn, Perlin};
