@@ -1,4 +1,4 @@
-# Topology Audit — Phase 2 Findings, Phase 3 Results, and Phase 4 Plan
+# Topology Audit — Phase 2 Findings and Phases 3–5 Results
 
 **Status:** Experimental/offline diagnostics only. These findings do not change the playable world's topology or rendering.
 
@@ -89,6 +89,19 @@ Phase 4 implementation in `src/bin/topology_geometry_check.rs` has been pulled a
 5. Regression tests for generated coverage, a removed cell, and a duplicated cell.
 
 **Observed coverage result:** 4,095 samples were covered by exactly one cell, zero sampled gaps, zero multiple-owner samples, and one boundary sample excluded from ownership counts. The runtime audit also reported zero detected overlapping cell pairs and zero relative area coverage error. This is a successful finite-sampling check, not proof of complete coverage. The overlap predicates remain scoped to convex spherical polygons bounded by minor great-circle arcs.
+
+## Phase 5 — robustness implementation committed; local validation pending
+
+Phase 5 extends the offline checker with explicit malformed-input diagnostics in `src/bin/topology_geometry_check.rs`:
+
+- Flags non-finite or non-positive mesh radii.
+- Counts non-finite, zero-length, and off-radius vertices.
+- Counts invalid cell vertex indices and repeated vertex IDs.
+- Prints these diagnostics in the runtime audit instead of relying only on aggregate degenerate-cell counts.
+- Uses a documented scale-aware radius tolerance: max(`1e-10`, radius × `1e-8`).
+- Adds regression tests for invalid radii, non-finite coordinates, zero-length/off-radius vertices, invalid indices, repeated IDs, tolerance scaling, and a frequency 2–4 sampling sweep (1,024 deterministic samples per frequency).
+
+**Validation status:** Phase 5 code is committed but has not yet been run locally. Do not claim its new tests pass until the user runs the commands in `docs/TOPOLOGY_AUDIT_PHASE_5_PLAN.md`. Frequency-sweep sampling is finite evidence only, not a proof of complete coverage.
 
 ## Remaining design questions
 
