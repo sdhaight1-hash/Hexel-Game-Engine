@@ -247,7 +247,8 @@ impl ApplicationHandler for HexelApp {
             WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if !self.cursor_locked => self.lock_cursor(),
             WindowEvent::RedrawRequested => {
                 let Some(renderer) = self.renderer.as_mut() else { return; };
-                match renderer.render(&self.camera) {
+                let counts: [u16; Inventory::TOTAL_SLOTS] = std::array::from_fn(|i| self.inventory.slot(i).map(|stack| stack.count).unwrap_or(0));
+                match renderer.render(&self.camera, self.inventory.selected_hotbar(), self.inventory_open, counts) {
                     Ok(()) => {}
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => if let Some(window) = self.window.as_ref() { renderer.resize(window.inner_size()); },
                     Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
