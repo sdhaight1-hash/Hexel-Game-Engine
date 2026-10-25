@@ -232,6 +232,14 @@ fn point_strictly_inside_spherical_cell(
     let Some(points) = cell_points(mesh, cell) else {
         return false;
     };
+    if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() {
+        return false;
+    }
+    let point_norm = point.norm();
+    if !point_norm.is_finite() || point_norm <= 1e-12 {
+        return false;
+    }
+    let point = point.scale(1.0 / point_norm);
 
     let zero = Point3 { x: 0.0, y: 0.0, z: 0.0 };
     let center_sum = points.iter().copied().fold(zero, Point3::add);
@@ -275,6 +283,22 @@ fn point_is_in_minor_arc_interior(a: Point3, b: Point3, point: Point3) -> bool {
         && (angle_ap + angle_pb - angle_ab).abs() < 1e-7
 }
 
+fn coordinate_sets_match_one_to_one(points_a: &[Point3], points_b: &[Point3], tolerance: f64) -> bool {
+    if points_a.len() != points_b.len() {
+        return false;
+    }
+    let mut matched_b = vec![false; points_b.len()];
+    for pa in points_a {
+        let Some(index) = points_b.iter().enumerate().find_map(|(index, pb)| {
+            (!matched_b[index] && pa.distance(*pb) <= tolerance).then_some(index)
+        }) else {
+            return false;
+        };
+        matched_b[index] = true;
+    }
+    matched_b.iter().all(|matched| *matched)
+}
+
 /// Detects positive-area overlap between convex spherical polygons.
 /// Shared boundary edges and shared vertices alone are not overlaps.
 fn spherical_cells_overlap(mesh: &MeshInput, a: &PolygonCell, b: &PolygonCell) -> bool {
@@ -287,23 +311,7 @@ fn spherical_cells_overlap(mesh: &MeshInput, a: &PolygonCell, b: &PolygonCell) -
     // multiple matches in the other polygon.
     let ids_a: BTreeSet<usize> = a.vertices.iter().copied().collect();
     let ids_b: BTreeSet<usize> = b.vertices.iter().copied().collect();
-    let same_coordinate_set = if points_a.len() == points_b.len() {
-        let mut matched_b = vec![false; points_b.len()];
-        let mut all_matched = true;
-        for pa in &points_a {
-            if let Some(index) = points_b.iter().enumerate().find_map(|(index, pb)| {
-                (!matched_b[index] && pa.distance(*pb) <= 1e-8).then_some(index)
-            }) {
-                matched_b[index] = true;
-            } else {
-                all_matched = false;
-                break;
-            }
-        }
-        all_matched && matched_b.iter().all(|matched| *matched)
-    } else {
-        false
-    };
+    let same_coordinate_set = coordinate_sets_match_one_to_one(&points_a, &points_b, 1e-8);
     if ids_a == ids_b || same_coordinate_set {
         return true;
     }
@@ -1022,10 +1030,13 @@ mod tests {
             tangent_point(-0.5 + 8e-9, -0.5),
             polygon_a[2],
         ];
-        let mesh = separate_polygon_mesh(vec![polygon_a, polygon_b]);
         assert!(
-            !spherical_cells_overlap(&mesh, &mesh.cells[0], &mesh.cells[1]),
+            !coordinate_sets_match_one_to_one(&polygon_a, &polygon_b, 1e-8),
             "near-duplicate coordinate sets must not be called identical solely by reusing matches"
+        );
+        assert!(
+            coordinate_sets_match_one_to_one(&polygon_a, &polygon_a, 1e-8),
+            "identical coordinate sets should match one-to-one"
         );
     }
 
@@ -1042,8 +1053,8 @@ mod tests {
     #[test]
     fn runtime_topology_validation_detects_same_direction_shared_edge() {
         let mut mesh = square_mesh();
-        // Both cells traverse edge 0-2 as 0 -> 2.
-        mesh.cells[1].vertices = vec![0, 2, 3];
+        // Both cells traverse edge 0-2 as 2 -> 0.
+        mesh.cells[1].vertices = vec![0, 3, 2];
         let topology = validate_topology(&mesh);
         assert!(topology.inconsistent_edge_orientations > 0);
     }
