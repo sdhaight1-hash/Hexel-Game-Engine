@@ -67,7 +67,7 @@ This document is the working implementation roadmap. Update the phase status, de
 - [x] Add tests for center lookup with scaled position vectors, symmetric tie resolution, invalid directions/IDs, neighbor queries, and connected traversal across the sphere.
 - [x] Add an opt-in `SurfaceNavigator` adapter for planet-centered position lookup, neighbor access, and choosing an adjacent cell from a tangent-plane travel direction.
 - [x] Leave the existing flat-world movement and collision path unchanged; it is not yet compatible with spherical coordinates.
-- [ ] Run the new adapter tests and full `cargo test` after pulling the adapter commits.
+- [x] Run the new adapter tests and full `cargo test` after pulling the adapter commits: developer reports 111 passed, 0 failed (65 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no failures).
 - [x] Run focused lookup/traversal tests as part of the full `cargo test` run after pulling commit [2831ad2](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/2831ad2a031bc47a702ff7b373bf74c73068a6d3); developer reports 107 passed, 0 failed (61 library, 8 cube-sphere geometry, 38 topology geometry).
 
 ### Exit criteria
@@ -199,7 +199,7 @@ This document is the working implementation roadmap. Update the phase status, de
 - Commit [827d5f1](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/827d5f129002a2c403e4602882ddb882058467e9) adds `src/surface_navigation.rs` with `SurfaceNavigator` for planet-centered cell lookup, neighbor access, and selecting an adjacent cell aligned with a tangent travel direction.
 - Commit [abb43e5](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/abb43e5b41ad661f1cb402f127ee03d4ccb6e586) exports the adapter from `src/lib.rs`.
 - The existing flat X/Z movement, collision, raycast, and edit path remains unchanged because it is not yet compatible with spherical coordinates.
-- Adapter tests are committed but not yet locally verified. Pull `main` and run `cargo test` before closing Phase 2.
+- Adapter tests are committed and locally verified: the developer's full `cargo test` run passed 111 tests with 0 failures (65 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no failures).
 
 ### Implementation notes
 
@@ -211,3 +211,9 @@ This document is the working implementation roadmap. Update the phase status, de
 - Developer pulled the Phase 2 commits from `main` and ran the full `cargo test` suite.
 - Result: **107 passed, 0 failed**; 61 library tests, 8 cube-sphere geometry tests, and 38 topology geometry tests passed. Main and documentation test targets had no tests.
 - Phase 2 remains in progress because gameplay/movement integration and the remaining exit criteria have not been implemented; the lookup/neighbor API itself is verified.
+
+### Phase 2 adapter verification — 2026-10-25
+
+- Developer ran the full `cargo test` suite after pulling the surface-navigation adapter commits.
+- Result: **111 passed, 0 failed**: 65 library tests (including 4 `surface_navigation` tests), 8 cube-sphere geometry tests, and 38 topology geometry tests. Main and documentation test targets had no failures.
+- The opt-in navigation adapter is verified. Phase 2 should be reviewed against all exit criteria before closure; the existing flat gameplay path has intentionally not been switched to spherical movement.
