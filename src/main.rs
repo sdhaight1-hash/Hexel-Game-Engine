@@ -3,7 +3,7 @@ mod renderer;
 use std::{collections::HashSet, sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}};
 
 use glam::Vec3;
-use hexel_engine::BlockId;
+use hexel_engine::{BlockId, inventory::{Inventory, ItemId}};
 use renderer::{Camera, Renderer};
 use tracing::{error, info};
 use winit::{
@@ -32,6 +32,12 @@ struct HexelApp {
     jump_requested: bool,
     last_frame: Instant,
     cursor_locked: bool,
+    harvest_held: bool,
+    harvest_target: Option<hexel_engine::CellPos>,
+    harvest_progress: f32,
+    target_ui_tick: f32,
+    inventory: Inventory,
+    inventory_open: bool,
 }
 impl Default for HexelApp {
     fn default() -> Self {
@@ -39,6 +45,8 @@ impl Default for HexelApp {
             window: None, renderer: None, camera: Camera::default(),
             player_feet: Vec3::ZERO, vertical_velocity: 0.0, grounded: false,
             pressed: HashSet::new(), jump_requested: false, last_frame: Instant::now(), cursor_locked: false,
+            harvest_held: false, harvest_target: None, harvest_progress: 0.0, target_ui_tick: 0.0,
+            inventory: Inventory::default(), inventory_open: false,
         }
     }
 }
@@ -93,8 +101,9 @@ impl HexelApp {
                 let sample = Renderer::cell_from_world(candidate + Vec3::new(*ox, 0.01, *oz));
                 renderer.ground_height(sample.q, sample.r) > current_ground + 0.65
             });
-            (!blocked_by_step && next_ground <= current_ground + 0.65)
-                || self.player_feet.y > next_ground + 0.1
+            let blocked_by_tree = renderer.tree_blocks_player(candidate, PLAYER_RADIUS, PLAYER_HEIGHT);
+            !blocked_by_tree && ((!blocked_by_step && next_ground <= current_ground + 0.65)
+                || self.player_feet.y > next_ground + 0.1)
         };
         if can_move_to(proposed.x, proposed.z) {
             self.player_feet.x = proposed.x;
@@ -130,6 +139,35 @@ impl HexelApp {
             renderer.update_streaming(self.player_feet);
         }
     }
+    fn update_harvesting(&mut self, dt: f32) {
+        let Some(renderer) = self.renderer.as_mut() else { return; };
+        let hit = renderer.raycast(self.camera.position, self.camera.forward(), 8.0).map(|(cell, _)| cell);
+        if !self.harvest_held { self.harvest_target = None; self.harvest_progress = 0.0; return; }
+        if hit != self.harvest_target { self.harvest_target = hit; self.harvest_progress = 0.0; }
+        let Some(target) = hit else { self.harvest_progress = 0.0; return; };
+        let block = renderer.block_at(target);
+        if !block.is_solid() || block.is_indestructible() { self.harvest_progress = 0.0; return; }
+        let seconds = match block { BlockId::Grass => 0.55, BlockId::Dirt => 0.8, BlockId::Stone => 1.8, BlockId::Foundation | BlockId::Air => { self.harvest_progress = 0.0; return; } };
+        self.harvest_progress += dt.max(0.0);
+        if self.harvest_progress >= seconds {
+            let item = match block { BlockId::Grass => Some(ItemId::GrassFiber), BlockId::Dirt => None, BlockId::Stone => None, BlockId::Foundation | BlockId::Air => None };
+            renderer.edit_block(target, BlockId::Air);
+            if let Some(item) = item { let _overflow = self.inventory.add(item, 1); }
+            self.harvest_held = false; self.harvest_target = None; self.harvest_progress = 0.0;
+        }
+    }
+
+    fn update_target_title(&mut self, dt: f32) {
+        self.target_ui_tick += dt; if self.target_ui_tick < 0.12 { return; } self.target_ui_tick = 0.0;
+        let Some(window) = self.window.as_ref() else { return; }; let Some(renderer) = self.renderer.as_ref() else { return; };
+        let message = if let Some((cell, _)) = renderer.raycast(self.camera.position, self.camera.forward(), 8.0) {
+            let block = renderer.block_at(cell);
+            let name = match block { BlockId::Grass => "Grass", BlockId::Dirt => "Dirt", BlockId::Stone => "Stone", BlockId::Foundation => "Foundation (unbreakable)", BlockId::Air => "Air" };
+            let progress = if self.harvest_held && self.harvest_target == Some(cell) { format!(" | Breaking: {:.0}%", (self.harvest_progress / 1.8 * 100.0).min(100.0)) } else { String::new() };
+            format!("Hexel Engine | Looking at: {name} [{}, {}, {}]{progress} | Hotbar [{}] {} | E: {} | LMB break / RMB place", cell.q, cell.r, cell.y, self.inventory.selected_hotbar() + 1, self.inventory.selected_stack().map(|s| format!("{:?} x{}", s.item, s.count)).unwrap_or_else(|| "Empty".to_string()), if self.inventory_open { "inventory open (UI pending)" } else { "inventory" })
+        } else { format!("Hexel Engine | Looking at: nothing | Hotbar [{}] {} | E: {} | LMB break / RMB place", self.inventory.selected_hotbar() + 1, self.inventory.selected_stack().map(|s| format!("{:?} x{}", s.item, s.count)).unwrap_or_else(|| "Empty".to_string()), if self.inventory_open { "inventory open (UI pending)" } else { "inventory" }) };
+        window.set_title(&message);
+    }
     fn edit_target(&mut self, remove: bool) {
         let Some(renderer) = self.renderer.as_mut() else { return; };
         let Some((hit, placement)) = renderer.raycast(self.camera.position, self.camera.forward(), 8.0) else { return; };
@@ -149,7 +187,7 @@ impl ApplicationHandler for HexelApp {
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u32
             ^ std::process::id().rotate_left(13);
         let attributes = Window::default_attributes()
-            .with_title("Hexel Engine | WASD move | Space jump | Left remove | Right place | I inspect | Esc mouse")
+            .with_title("Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse")
             .with_inner_size(PhysicalSize::new(1280, 800));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
@@ -162,7 +200,7 @@ impl ApplicationHandler for HexelApp {
                 self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
                 info!(seed, "Generated streamed 16×16×16 hexel prism chunks; use this seed to identify this world");
                 println!("Hexel Engine world seed: {seed}");
-                println!("WASD move | Mouse look | Space jump | Left-click remove | Right-click place | I inspect target | Esc release mouse");
+                println!("WASD move | Mouse look | Space jump | Hold left mouse to break terrain | Right-click place | Esc release mouse");
                 self.window = Some(window);
                 self.renderer = Some(renderer);
                 self.lock_cursor();
@@ -185,22 +223,32 @@ impl ApplicationHandler for HexelApp {
                         if self.cursor_locked { self.unlock_cursor(); } else { self.lock_cursor(); }
                     }
                     if event.state == ElementState::Pressed {
-                        if code == KeyCode::KeyI {
-                            if let Some(renderer) = self.renderer.as_ref() {
-                                println!("{}", renderer.describe_target(self.camera.position, self.camera.forward(), 8.0));
-                            }
+                        match code {
+                            KeyCode::Digit1 => { self.inventory.select_hotbar(0); },
+                            KeyCode::Digit2 => { self.inventory.select_hotbar(1); },
+                            KeyCode::Digit3 => { self.inventory.select_hotbar(2); },
+                            KeyCode::Digit4 => { self.inventory.select_hotbar(3); },
+                            KeyCode::Digit5 => { self.inventory.select_hotbar(4); },
+                            KeyCode::Digit6 => { self.inventory.select_hotbar(5); },
+                            KeyCode::Digit7 => { self.inventory.select_hotbar(6); },
+                            KeyCode::Digit8 => { self.inventory.select_hotbar(7); },
+                            KeyCode::Digit9 => { self.inventory.select_hotbar(8); },
+                            KeyCode::KeyE => { self.inventory_open = !self.inventory_open; },
+                            _ => {}
                         }
                         if code == KeyCode::Space && !self.pressed.contains(&code) { self.jump_requested = true; }
                         self.pressed.insert(code);
                     } else { self.pressed.remove(&code); }
                 }
             }
-            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if self.cursor_locked => self.edit_target(true),
+            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if self.cursor_locked => { self.harvest_held = true; self.harvest_target = None; self.harvest_progress = 0.0; },
+            WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Released, .. } => { self.harvest_held = false; self.harvest_target = None; self.harvest_progress = 0.0; },
             WindowEvent::MouseInput { button: MouseButton::Right, state: ElementState::Pressed, .. } if self.cursor_locked => self.edit_target(false),
             WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } if !self.cursor_locked => self.lock_cursor(),
             WindowEvent::RedrawRequested => {
                 let Some(renderer) = self.renderer.as_mut() else { return; };
-                match renderer.render(&self.camera) {
+                let counts: [u16; Inventory::TOTAL_SLOTS] = std::array::from_fn(|i| self.inventory.slot(i).map(|stack| stack.count).unwrap_or(0));
+                match renderer.render(&self.camera, self.inventory.selected_hotbar(), self.inventory_open, counts) {
                     Ok(()) => {}
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => if let Some(window) = self.window.as_ref() { renderer.resize(window.inner_size()); },
                     Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
@@ -222,6 +270,8 @@ impl ApplicationHandler for HexelApp {
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
         self.update_player(dt);
+        self.update_harvesting(dt);
+        self.update_target_title(dt);
         if let Some(window) = self.window.as_ref() { window.request_redraw(); }
     }
 }

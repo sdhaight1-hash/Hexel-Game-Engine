@@ -237,6 +237,59 @@ impl Renderer {
         Ok(renderer)
     }
 
+    /// True when the player capsule would overlap a generated tree's solid trunk.
+    /// Tree roots use the same deterministic hash and reduced-density threshold as meshing.
+    pub fn tree_blocks_player(&self, position: Vec3, player_radius: f32, player_height: f32) -> bool {
+        let scale = WorldScale::default();
+        let cell = Self::cell_from_world(position);
+        for q in (cell.q - 2)..=(cell.q + 2) {
+            for r in (cell.r - 2)..=(cell.r + 2) {
+                let hash = vegetation_hash(self.seed, q, r);
+                if hash % 29 != 0 { continue; }
+                let terrain = terrain_height(self.seed, q, r);
+                let warmth = Perlin::new(self.seed.wrapping_add(0x51ED_270B))
+                    .get([q as f64 / 90.0, r as f64 / 90.0]);
+                let wetness = Perlin::new(self.seed.wrapping_add(0x51ED_270B))
+                    .get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
+                let conifer = warmth < -0.25 || wetness < -0.32;
+                let tropical = warmth > 0.38 && wetness > 0.05;
+                let roll = (hash >> 16) % 1000;
+                let (min_m, max_m, trunk_radius, giant) = if tropical {
+                    if roll < 22 { (55.0_f32, 95.0, 2, true) }
+                    else if roll < 105 { (25.0, 45.0, 1, false) }
+                    else { (16.0, 32.0, 1, false) }
+                } else if conifer {
+                    if roll < 8 { (55.0_f32, 95.0, 2, true) }
+                    else if roll < 570 { (18.0, 38.0, 1, false) }
+                    else { (10.0, 24.0, 1, false) }
+                } else if wetness > 0.25 {
+                    if roll < 9 { (55.0_f32, 95.0, 2, true) }
+                    else if roll < 590 { (18.0, 32.0, 1, false) }
+                    else { (10.0, 24.0, 1, false) }
+                } else { (6.0, 16.0, 1, false) };
+                let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
+                let mut height_m = min_m + (max_m - min_m) * variance;
+                if giant && (hash >> 28) % 4 != 0 { height_m = min_m * 0.55; }
+                let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
+                let trunk_top = layers * if tropical && roll < 22 { 3 } else { 2 } / 3;
+                let radius_cells = if trunk_radius > 1 { 0.70 } else { 0.43 };
+                let root = scale.prism_center(CellPos::new(q, r, terrain + 1));
+                let dx = position.x - root.x;
+                let dz = position.z - root.z;
+                let horizontal_limit = player_radius + scale.hex_radius * radius_cells;
+                let player_bottom = position.y;
+                let player_top = position.y + player_height;
+                let trunk_bottom = (terrain + 1) as f32 * scale.hexel_height;
+                let trunk_end = (terrain + 1 + trunk_top) as f32 * scale.hexel_height;
+                if dx * dx + dz * dz < horizontal_limit * horizontal_limit
+                    && player_top > trunk_bottom && player_bottom < trunk_end {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub fn ground_height(&self, q: i32, r: i32) -> f32 {
         let scale = WorldScale::default();
         let terrain_top = terrain_height(self.seed, q, r);
@@ -465,12 +518,38 @@ impl Renderer {
         self._depth_texture = depth_texture;
         self.depth_view = depth_view;
     }
-    pub fn render(&mut self, camera: &Camera) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, camera: &Camera, selected_slot: usize, inventory_open: bool, item_counts: [u16; 36]) -> Result<(), wgpu::SurfaceError> {
         self.poll_mesh_results();
         let uniform = CameraUniform { view_proj: camera.view_projection(self.size).to_cols_array_2d() };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         let target_vertices = self.raycast(camera.position, camera.forward(), 8.0).map(|(cell, _)| build_target_outline(cell)).unwrap_or_default();
         if !target_vertices.is_empty() { self.queue.write_buffer(&self.target_buffer, 0, bytemuck::cast_slice(&target_vertices)); }
+        let mut hud_vertices: Vec<Vertex> = Vec::with_capacity(600);
+        let aspect = self.size.width.max(1) as f32 / self.size.height.max(1) as f32;
+        let mut hud_line = |x1: f32, y1: f32, x2: f32, y2: f32, color: [f32; 3]| {
+            hud_vertices.push(Vertex { position: [x1, y1, 0.0], color, uv: [0.0, 0.0], textured: 0.0 });
+            hud_vertices.push(Vertex { position: [x2, y2, 0.0], color, uv: [0.0, 0.0], textured: 0.0 });
+        };
+        let sw = (0.075 / aspect).min(0.085); let sh = 0.105; let gap = 0.012 / aspect;
+        let left = -(9.0 * sw + 8.0 * gap) * 0.5; let bottom = -0.91;
+        for i in 0..9 {
+            let x1 = left + i as f32 * (sw + gap); let x2 = x1 + sw; let y1 = bottom; let y2 = bottom + sh;
+            let col = if i == selected_slot { [1.0, 0.78, 0.12] } else { [0.95, 0.97, 1.0] };
+            hud_line(x1,y1,x2,y1,col); hud_line(x2,y1,x2,y2,col); hud_line(x2,y2,x1,y2,col); hud_line(x1,y2,x1,y1,col);
+            for tick in 0..item_counts[i].min(9) { let tx=x1+0.012/aspect+tick as f32*0.005/aspect; hud_line(tx,y1+0.012,tx,y1+0.028,[0.4,1.0,0.6]); }
+        }
+        if inventory_open {
+            let w=(0.055/aspect).min(0.065); let h=0.075; let gx=0.009/aspect; let gy=0.018;
+            let start_x=-(9.0*w+8.0*gx)*0.5; let start_y=0.48;
+            for i in 0..36 {
+                let x1=start_x+(i%9) as f32*(w+gx); let y1=start_y-(i/9) as f32*(h+gy); let x2=x1+w; let y2=y1+h;
+                let col=if i==selected_slot {[1.0,0.78,0.12]} else {[0.88,0.92,0.98]};
+                hud_line(x1,y1,x2,y1,col); hud_line(x2,y1,x2,y2,col); hud_line(x2,y2,x1,y2,col); hud_line(x1,y2,x1,y1,col);
+                for tick in 0..item_counts[i].min(5) { let tx=x1+0.008/aspect+tick as f32*0.004/aspect; hud_line(tx,y1+0.008,tx,y1+0.02,[0.4,1.0,0.6]); }
+            }
+        }
+        drop(hud_line);
+        let hud_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("HUD overlay"), contents: bytemuck::cast_slice(&hud_vertices), usage: wgpu::BufferUsages::VERTEX });
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Hexel frame encoder") });
@@ -511,6 +590,8 @@ impl Renderer {
             overlay.set_vertex_buffer(0, self.crosshair_buffer.slice(..));
             overlay.draw(0..4, 0..1);
             overlay.draw(4..8, 0..1);
+            overlay.set_vertex_buffer(0, hud_buffer.slice(..));
+            overlay.draw(0..hud_vertices.len() as u32, 0..1);
         }
         self.queue.submit(Some(encoder.finish())); frame.present(); Ok(())
     }
@@ -661,7 +742,7 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
             let height = *heights.get(&(q, r)).unwrap_or(&0);
             if height < 0 || chunk.y != height.div_euclid(CHUNK_SIZE) { continue; }
             let hash = vegetation_hash(seed, q, r);
-            if hash % 11 != 0 { continue; }
+            if hash % 29 != 0 { continue; } // Reduced baseline density; biome patches are tuned below.
             let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
             let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
             let conifer = warmth < -0.25 || wetness < -0.32;
@@ -723,7 +804,8 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
     let (trunk_color, leaf_color) = colors;
     let trunk_top = height_layers * if species == 4 { 3 } else { 2 } / 3;
     for y in 0..trunk_top {
-        let radius = if trunk_radius > 1 && y > trunk_top * 2 / 3 { 1 } else { trunk_radius };
+        let taper = y as f32 / trunk_top.max(1) as f32;
+        let radius = if trunk_radius > 1 && taper > 0.42 { 1 } else { trunk_radius };
         for dq in -(radius - 1)..=radius - 1 {
             for dr in -(radius - 1)..=radius - 1 {
                 if radius == 1 || (dq.abs() + dr.abs() + (dq + dr).abs()) / 2 < radius {
@@ -829,8 +911,8 @@ fn append_hexel_prism(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldSca
             let a_top = Vec3::new(ring[i].x, top, ring[i].z);
             let b_bottom = Vec3::new(ring[j].x, bottom, ring[j].z);
             let b_top = Vec3::new(ring[j].x, top, ring[j].z);
-            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (a_top, [0.0, 0.0]), (b_top, [1.0, 0.0])], side, texture_layer);
-            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (b_top, [1.0, 0.0]), (b_bottom, [1.0, 1.0])], side, texture_layer);
+            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, cell.y as f32 * 0.35 + 1.0]), (a_top, [0.0, cell.y as f32 * 0.35]), (b_top, [1.0, cell.y as f32 * 0.35])], side, texture_layer);
+            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, cell.y as f32 * 0.35 + 1.0]), (b_top, [1.0, cell.y as f32 * 0.35]), (b_bottom, [1.0, cell.y as f32 * 0.35 + 1.0])], side, texture_layer);
         } else {
             let a_bottom = Vec3::new(ring[i].x, bottom, ring[i].z);
             let a_top = Vec3::new(ring[i].x, top, ring[i].z);
