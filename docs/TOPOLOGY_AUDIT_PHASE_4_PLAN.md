@@ -1,13 +1,13 @@
 # Topology Audit — Phase 4 Validation Plan
 
-**Status:** Initial implementation committed; local execution pending.  
+**Status:** Implemented and locally validated; follow-up robustness work remains.    
 **Scope:** Offline geometry diagnostics only. This phase must not change the playable world's topology, cell coordinates, rendering, or gameplay behavior.
 
 ## Objective
 
 Increase confidence in the spherical overlap and coverage diagnostics before using the topology comparison to make design decisions. Phase 3 passes its current regression tests, but the existing detector assumes convex spherical polygons bounded by minor great-circle arcs and has only limited adversarial coverage.
 
-Phase 4 prioritizes independent, falsifiable tests over simply adding more assertions around the same area-sum metric. The first implementation is in `src/bin/topology_geometry_check.rs`: coordinate-based duplicate detection, adversarial pair fixtures, and deterministic Fibonacci-sphere sampling with 4,096 runtime samples. The implementation is not considered validated until the local commands below pass.
+Phase 4 prioritizes independent, falsifiable tests over simply adding more assertions around the same area-sum metric. The first implementation is in `src/bin/topology_geometry_check.rs`: coordinate-based duplicate detection, adversarial pair fixtures, and deterministic Fibonacci-sphere sampling with 4,096 runtime samples. The user ran the focused topology checker (27 passed) and full test suite (81 passed). The frequency-3 runtime audit produced 4,095 singly-owned samples, zero sampled gaps, zero multiple-owner samples, and one excluded boundary sample out of 4,096. These results validate the implemented regression suite and this sampled run, not all possible spherical meshes.
 
 ## Workstream A — Adversarial overlap fixtures
 
@@ -64,13 +64,22 @@ Phase 4 is ready for review only when:
 
 A failing adversarial test is useful evidence: fix the predicate or narrow/document the supported geometry contract. Do not weaken the fixture or increase tolerances solely to obtain a green test.
 
-## Suggested implementation order
+## Local validation record
 
-1. Pull the committed implementation and run the focused topology tests.
-2. Fix any compile errors, false positives, or false negatives revealed by the tests; do not weaken fixtures merely to make them pass.
-3. Run the cube-sphere checker and full test suite.
-4. Run `cargo run --bin topology_geometry_check -- 3` and inspect all coverage sample counts.
-5. Share the actual output so the findings document can be updated with measured results, not expected results.
+The user ran these commands successfully after pulling the implementation:
+
+- `cargo test --bin topology_geometry_check` — **27 passed, 0 failed**.
+- `cargo test` — **81 passed, 0 failed** across the core engine, cube-sphere checker, and topology checker.
+- `cargo run --bin topology_geometry_check -- 3` — 92 cells, 180 dual vertices, 270 unique edges, zero boundary/non-manifold edges, zero detected overlapping pairs, and relative area coverage error `0.00000000`.
+- Coverage sampling — 4,096 samples; 4,095 covered by exactly one cell, 0 sampled gaps, 0 samples with multiple owners, 1 boundary sample excluded.
+
+## Suggested next work
+
+1. Add the remaining robustness checks from Workstream C: malformed cell indices, repeated vertex IDs, non-finite coordinates/radii, and clear audit reporting for invalid input.
+2. Strengthen the sampling boundary classification and document the numeric tolerances used by the overlap and boundary predicates.
+3. Run frequency sweeps (at least frequencies 2, 3, and 4) to compare coverage behavior and runtime scaling.
+4. Keep the production topology unchanged while evaluating how the 12 pentagons affect the pure-hexagonal-prism requirement.
+5. Only after those checks, design separate prism-boundary diagnostics for cracks and mismatched shared edges.
 
 ## Local validation commands
 
