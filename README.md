@@ -149,6 +149,7 @@ The roadmap prioritizes shared foundations before broad content. The current ren
 - **Different representations, shared rules:** detailed hexel parts can represent trunks, branches, roots, or other gameplay-relevant structures; lightweight geometry can represent grass, flowers, and fine foliage. Rendering detail must not dictate resource accounting or plant identity.
 - **Resource and ecology loops:** make yields finite per instance, define regrowth and propagation conditions, and account for soil nutrients, moisture, seasons, decomposition, and disturbance as those systems arrive.
 - **Vintage Story as a design reference:** study its breadth of useful wild plants, environmental requirements, growth stages, seasons, farming, fruiting, and resource uses. Use it as inspiration for systemic depth, not as a direct content or implementation copy.
+- **Eco: Global Survival as a systems reference:** study how ecological changes, resource extraction, production, and environmental consequences can connect across scales. Use that inspiration to make local flora and resource decisions matter to soils, habitats, water, and long-term planetary health, while keeping the simulation staged and performant rather than attempting to simulate everything at once.
 
 ### Planet and world simulation
 
