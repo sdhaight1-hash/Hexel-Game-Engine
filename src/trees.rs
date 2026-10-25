@@ -204,6 +204,7 @@ fn suitability(biome: Biome, elevation: f64, moisture: f64) -> f64 {
     base * (0.35 + moisture.clamp(0.0, 1.0) * 0.65) * if elevation > 2500.0 { 0.35 } else { 1.0 }
 }
 
+#[allow(clippy::manual_is_multiple_of)]
 fn choose_variant(species: TreeSpecies, random: u64) -> TreeVariant {
     match species {
         TreeSpecies::Acacia if random % 8 == 0 => TreeVariant::PricklyMoses,
