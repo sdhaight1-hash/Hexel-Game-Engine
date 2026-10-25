@@ -1,6 +1,6 @@
 # Topology Audit — Phase 5 Robustness and Frequency Scaling
 
-**Status:** Initial implementation committed; local validation pending.  
+**Status:** Implemented and locally validated by the user.  
 **Scope:** Offline diagnostic tooling only. Do not change gameplay topology, rendering, or production world generation.
 
 ## Goals
@@ -55,6 +55,37 @@ The focused test `frequency_sweep_has_no_sampled_gaps_or_multiple_ownership` che
 - Deliberately malformed fixtures are counted by the intended diagnostics without panics.
 - Existing Phase 4 adversarial overlap and missing-cell/duplicate-cell tests continue to pass.
 - No production gameplay topology or rendering code is changed.
+
+## Recorded local validation results
+
+The user ran the following commands successfully on the branch:
+
+- `cargo test --bin topology_geometry_check`: **32 passed, 0 failed**.
+- `cargo test --bin cube_sphere_geometry_check`: **8 passed, 0 failed**.
+- `cargo test`: **86 passed, 0 failed** across the core library (46), cube-sphere checker (8), and topology checker (32); main and doc-test targets contained zero tests.
+- Runtime audits at frequencies 2, 3, and 4 all completed successfully.
+
+Runtime results (radius 100; 4,096 coverage samples per run):
+
+| Metric | Frequency 2 | Frequency 3 | Frequency 4 |
+|---|---:|---:|---:|
+| Cells | 42 | 92 | 162 |
+| Dual vertices | 80 | 180 | 320 |
+| Unique edges | 120 | 270 | 480 |
+| Boundary edges | 0 | 0 | 0 |
+| Non-manifold edges | 0 | 0 | 0 |
+| Degenerate cells | 0 | 0 | 0 |
+| Invalid radius / non-finite vertices | 0 / 0 | 0 / 0 | 0 / 0 |
+| Zero-length / off-radius vertices | 0 / 0 | 0 / 0 | 0 / 0 |
+| Invalid cell indices / repeated vertex IDs | 0 / 0 | 0 / 0 | 0 / 0 |
+| Detected overlapping cell pairs | 0 | 0 | 0 |
+| Relative area coverage error | 0.00000000 | 0.00000000 | 0.00000000 |
+| Samples covered by exactly one cell | 4,096 | 4,095 | 4,096 |
+| Sampled gaps / multiple owners | 0 / 0 | 0 / 0 | 0 / 0 |
+| Boundary samples excluded | 0 | 1 | 0 |
+| Maximum radius error | 0.000000000000 | 0.000000000000 | 0.000000000000 |
+
+The frequency-3 run excluded one sample on a cell boundary under the audit's ownership rules; it still found zero sampled gaps and zero multiple ownership. These are finite-sampling diagnostics, not a formal proof of complete coverage. No gameplay topology or rendering code was changed.
 
 ## Interpretation limits and next steps
 
