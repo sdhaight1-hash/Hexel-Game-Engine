@@ -15,7 +15,7 @@ const RENDER_DISTANCE: f32 = 110.0;
 const SHADER: &str = r#"
 struct Camera { view_proj: mat4x4<f32>, };
 @group(0) @binding(0) var<uniform> camera: Camera;
-@group(1) @binding(0) var foliage_texture: texture_2d<f32>;
+@group(1) @binding(0) var tree_textures: texture_2d_array<f32>;
 @group(1) @binding(1) var foliage_sampler: sampler;
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -39,7 +39,13 @@ struct VertexOutput {
 }
 @fragment fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if input.textured > 0.5 {
-        let leaf = textureSample(foliage_texture, foliage_sampler, input.uv);
+        if input.textured > 1.5 {
+            let layer = i32(input.textured) - 2;
+            let texel = textureSample(tree_textures, foliage_sampler, input.uv, layer);
+            if layer < 15 && texel.a < 0.42 { discard; }
+            return vec4<f32>(input.color * texel.rgb, 1.0);
+        }
+        let leaf = textureSample(tree_textures, foliage_sampler, input.uv, 0);
         if leaf.a < 0.42 { discard; }
         return vec4<f32>(input.color * leaf.rgb, 1.0);
     }
@@ -143,11 +149,11 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: camera_buffer.as_entire_binding() }],
         });
         let foliage_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Foliage texture layout"),
+            label: Some("Tree texture-array layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1, visibility: wgpu::ShaderStages::FRAGMENT,
@@ -155,10 +161,13 @@ impl Renderer {
                 },
             ],
         });
-        let (foliage_texture, foliage_sampler) = create_foliage_texture(&device, &queue);
-        let foliage_view = foliage_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (tree_texture, foliage_sampler) = create_tree_texture_array(&device, &queue);
+        let foliage_view = tree_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         let foliage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Alpha-cutout foliage texture"),
+            label: Some("Imported species leaf and bark textures"),
             layout: &foliage_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&foliage_view) },
@@ -678,7 +687,19 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
             let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
             let trunk = if species == 1 { [0.78, 0.75, 0.65] } else { [0.38, 0.25, 0.14] };
             let foliage = match species { 1 => [0.24, 0.40, 0.19], 2 => [0.12, 0.30, 0.15], 4 => [0.07, 0.31, 0.11], 5 => [0.10, 0.39, 0.13], 6 => [0.30, 0.39, 0.17], _ => [0.18, 0.46, 0.15] };
-            append_hexel_tree(&mut vertices, CellPos::new(q, r, height + 1), layers, trunk_radius, crown_radius, (trunk, foliage), species, hash, scale);
+            let (leaf_layer, bark_layer) = match species {
+                0 => (7, 22), // oak
+                1 => (3, 17), // birch
+                2 => (8, 23), // pine
+                3 if tropical => (5, 19), // kapok
+                3 => (0, 15), // acacia-like
+                4 if tropical => (9, 24), // purpleheart
+                4 => (7, 22), // large temperate tree
+                5 => (1, 16), // bald cypress
+                6 => (6, 21), // maple
+                _ => (7, 22),
+            };
+            append_hexel_tree(&mut vertices, CellPos::new(q, r, height + 1), layers, trunk_radius, crown_radius, (trunk, foliage), species, hash, leaf_layer, bark_layer, scale);
         }
     }
     vertices
@@ -698,7 +719,7 @@ fn vegetation_hash(seed: u32, q: i32, r: i32) -> u32 {
     x ^= x >> 16; x = x.wrapping_mul(0x7FEB_352D); x ^= x >> 15; x = x.wrapping_mul(0x846C_A68B); x ^ (x >> 16)
 }
 
-fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i32, trunk_radius: i32, crown_radius: i32, colors: ([f32; 3], [f32; 3]), species: u8, seed_hash: u32, scale: WorldScale) {
+fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i32, trunk_radius: i32, crown_radius: i32, colors: ([f32; 3], [f32; 3]), species: u8, seed_hash: u32, leaf_layer: u32, bark_layer: u32, scale: WorldScale) {
     let (trunk_color, leaf_color) = colors;
     let trunk_top = height_layers * if species == 4 { 3 } else { 2 } / 3;
     for y in 0..trunk_top {
@@ -706,7 +727,7 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
         for dq in -(radius - 1)..=radius - 1 {
             for dr in -(radius - 1)..=radius - 1 {
                 if radius == 1 || (dq.abs() + dr.abs() + (dq + dr).abs()) / 2 < radius {
-                    append_hexel_prism(vertices, CellPos::new(root.q + dq, root.r + dr, root.y + y), scale, trunk_color, true);
+                    append_hexel_prism(vertices, CellPos::new(root.q + dq, root.r + dr, root.y + y), scale, trunk_color, true, bark_layer);
                 }
             }
         }
@@ -726,7 +747,7 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
         let length = if species == 2 { (crown_radius - level / 2).max(1) } else { (crown_radius - 1).max(1) };
         for step in 1..=length {
             let branch_cell = CellPos::new(root.q + dq * step, root.r + dr * step, root.y + y + step / 3);
-            append_hexel_prism(vertices, branch_cell, scale, [trunk_color[0] * 0.94, trunk_color[1] * 0.94, trunk_color[2] * 0.94], true);
+            append_hexel_prism(vertices, branch_cell, scale, [trunk_color[0] * 0.94, trunk_color[1] * 0.94, trunk_color[2] * 0.94], true, bark_layer);
         }
     }
 
@@ -749,14 +770,14 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
                 // branches and sky gaps room to read through the silhouette.
                 if irregular % if species == 2 { 4 } else { 3 } == 0 || distance == radius {
                     let cluster_cell = CellPos::new(root.q + dq, root.r + dr, root.y + crown_start + cy);
-                    append_foliage_cluster(vertices, cluster_cell, scale, leaf_color, seed_hash ^ irregular as u32);
+                    append_foliage_cluster(vertices, cluster_cell, scale, leaf_color, seed_hash ^ irregular as u32, leaf_layer);
                 }
             }
         }
     }
 }
 
-fn append_foliage_cluster(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldScale, color: [f32; 3], seed: u32) {
+fn append_foliage_cluster(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldScale, color: [f32; 3], seed: u32, leaf_layer: u32) {
     let center = scale.prism_center(cell);
     let bottom = cell.y as f32 * scale.hexel_height + scale.hexel_height * 0.12;
     let top = (cell.y + 1) as f32 * scale.hexel_height + scale.hexel_height * 0.82;
@@ -771,16 +792,16 @@ fn append_foliage_cluster(vertices: &mut Vec<Vertex>, cell: CellPos, scale: Worl
         let c = Vec3::new(center.x, top, center.z) + axis * half_width * 0.82;
         let d = Vec3::new(center.x, top, center.z) - axis * half_width * 0.82;
         let tint = [color[0] * (0.88 + angle_deg / 600.0), color[1], color[2] * (1.08 - angle_deg / 900.0)];
-        push_textured_triangle(vertices, [(a, [0.0, 1.0]), (b, [1.0, 1.0]), (c, [1.0, 0.0])], tint);
-        push_textured_triangle(vertices, [(a, [0.0, 1.0]), (c, [1.0, 0.0]), (d, [0.0, 0.0])], tint);
+        push_tree_textured_triangle(vertices, [(a, [0.0, 1.0]), (b, [1.0, 1.0]), (c, [1.0, 0.0])], tint, leaf_layer);
+        push_tree_textured_triangle(vertices, [(a, [0.0, 1.0]), (c, [1.0, 0.0]), (d, [0.0, 0.0])], tint, leaf_layer);
         // Reverse winding makes the card visible from its back side without
         // relying on a double-sided material setting.
-        push_textured_triangle(vertices, [(b, [1.0, 1.0]), (a, [0.0, 1.0]), (d, [0.0, 0.0])], tint);
-        push_textured_triangle(vertices, [(b, [1.0, 1.0]), (d, [0.0, 0.0]), (c, [1.0, 0.0])], tint);
+        push_tree_textured_triangle(vertices, [(b, [1.0, 1.0]), (a, [0.0, 1.0]), (d, [0.0, 0.0])], tint, leaf_layer);
+        push_tree_textured_triangle(vertices, [(b, [1.0, 1.0]), (d, [0.0, 0.0]), (c, [1.0, 0.0])], tint, leaf_layer);
     }
 }
 
-fn append_hexel_prism(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldScale, color: [f32; 3], wood: bool) {
+fn append_hexel_prism(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldScale, color: [f32; 3], wood: bool, texture_layer: u32) {
     let center = scale.prism_center(cell);
     let bottom = cell.y as f32 * scale.hexel_height;
     let top = (cell.y + 1) as f32 * scale.hexel_height;
@@ -804,8 +825,12 @@ fn append_hexel_prism(vertices: &mut Vec<Vertex>, cell: CellPos, scale: WorldSca
         let shade = 0.55 + i as f32 * 0.045;
         let side = [color[0] * shade, color[1] * shade, color[2] * shade];
         if wood {
-            push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[i].x, top, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), side);
-            push_triangle(vertices, Vec3::new(ring[i].x, bottom, ring[i].z), Vec3::new(ring[j].x, top, ring[j].z), Vec3::new(ring[j].x, bottom, ring[j].z), side);
+            let a_bottom = Vec3::new(ring[i].x, bottom, ring[i].z);
+            let a_top = Vec3::new(ring[i].x, top, ring[i].z);
+            let b_bottom = Vec3::new(ring[j].x, bottom, ring[j].z);
+            let b_top = Vec3::new(ring[j].x, top, ring[j].z);
+            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (a_top, [0.0, 0.0]), (b_top, [1.0, 0.0])], side, texture_layer);
+            push_tree_textured_triangle(vertices, [(a_bottom, [0.0, 1.0]), (b_top, [1.0, 0.0]), (b_bottom, [1.0, 1.0])], side, texture_layer);
         } else {
             let a_bottom = Vec3::new(ring[i].x, bottom, ring[i].z);
             let a_top = Vec3::new(ring[i].x, top, ring[i].z);
@@ -826,60 +851,102 @@ fn push_textured_triangle(vertices: &mut Vec<Vertex>, points: [(Vec3, [f32; 2]);
     }
 }
 
-fn create_foliage_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::Sampler) {
-    // A small generated RGBA atlas: opaque leaf clusters with transparent gaps.
-    // This keeps the prototype self-contained while exercising the same alpha-cutout path
-    // that imported, artist-authored foliage textures will use later.
-    const SIZE: u32 = 32;
-    let mut pixels = vec![0_u8; (SIZE * SIZE * 4) as usize];
-    let mut state = 0xA341_316C_u32;
-    let mut next = || {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        state
-    };
-    for _ in 0..18 {
-        let cx = (next() % SIZE) as i32;
-        let cy = (next() % SIZE) as i32;
-        let rx = 2 + (next() % 5) as i32;
-        let ry = 2 + (next() % 4) as i32;
-        let shade = (next() % 44) as i16;
-        for y in (cy - ry).max(0)..=(cy + ry).min(SIZE as i32 - 1) {
-            for x in (cx - rx).max(0)..=(cx + rx).min(SIZE as i32 - 1) {
-                let dx = x - cx;
-                let dy = y - cy;
-                let jitter = (next() % 9) as i32 - 4;
-                if dx * dx * ry * ry + dy * dy * rx * rx > rx * rx * ry * ry + jitter * rx * ry { continue; }
-                if next() % 11 == 0 { continue; }
-                let index = ((y as u32 * SIZE + x as u32) * 4) as usize;
-                pixels[index] = (48_i16 + shade).clamp(24, 105) as u8;
-                pixels[index + 1] = (100_i16 + shade * 2).clamp(65, 190) as u8;
-                pixels[index + 2] = (28_i16 + shade / 2).clamp(18, 70) as u8;
-                pixels[index + 3] = 255;
-            }
-        }
+fn push_tree_textured_triangle(vertices: &mut Vec<Vertex>, points: [(Vec3, [f32; 2]); 3], color: [f32; 3], layer: u32) {
+    for (point, uv) in points {
+        vertices.push(Vertex { position: point.to_array(), color, uv, textured: (layer + 2) as f32 });
     }
-    // Remove isolated pixels so the silhouette reads as leaf clusters, not static.
+}
+
+fn create_tree_texture_array(device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::Sampler) {
+    const SIZE: u32 = 64;
+    const PATHS: [&str; 30] = [
+        "assets/textures/leaves/small/acacia1.png",
+        "assets/textures/leaves/small/baldcypress1.png",
+        "assets/textures/leaves/small/bamboo.png",
+        "assets/textures/leaves/small/birch.png",
+        "assets/textures/leaves/small/ebony1.png",
+        "assets/textures/leaves/small/kapok1.png",
+        "assets/textures/leaves/small/maple.png",
+        "assets/textures/leaves/small/oak.png",
+        "assets/textures/leaves/small/pine1.png",
+        "assets/textures/leaves/small/purpleheartwood1.png",
+        "assets/textures/leaves/small/walnut1.png",
+        "assets/textures/leaves/small/acacia2.png",
+        "assets/textures/leaves/small/kapok2.png",
+        "assets/textures/leaves/small/pine2.png",
+        "assets/textures/leaves/small/fallen.png",
+        "assets/textures/trunks/acacia.png",
+        "assets/textures/trunks/baldcypress.png",
+        "assets/textures/trunks/birch.png",
+        "assets/textures/trunks/ebony.png",
+        "assets/textures/trunks/kapok.png",
+        "assets/textures/trunks/larch.png",
+        "assets/textures/trunks/maple.png",
+        "assets/textures/trunks/oak.png",
+        "assets/textures/trunks/pine.png",
+        "assets/textures/trunks/purpleheart.png",
+        "assets/textures/trunks/redwood.png",
+        "assets/textures/trunks/walnut.png",
+        "assets/textures/trunks/aged.png",
+        "assets/textures/trunks/veryaged.png",
+        "assets/textures/trunks/veryagedrotten.png",
+    ];
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Procedural leaf RGBA texture"),
-        size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        label: Some("Imported species leaf and bark texture array"),
+        size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: PATHS.len() as u32 },
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-        &pixels,
-        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(SIZE * 4), rows_per_image: Some(SIZE) },
-        wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
-    );
+    for (layer, relative_path) in PATHS.iter().enumerate() {
+        let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), relative_path);
+        let pixels = match std::fs::read(&full_path).ok().and_then(|bytes| image::load_from_memory(&bytes).ok()) {
+            Some(image) => image.resize_exact(SIZE, SIZE, image::imageops::FilterType::Nearest).to_rgba8().into_raw(),
+            None => {
+                eprintln!("Hexel Engine: fallback texture used for missing/unreadable asset {}", relative_path);
+                fallback_tree_texture(layer, SIZE)
+            }
+        };
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture, mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: layer as u32 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &pixels,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(SIZE * 4), rows_per_image: Some(SIZE) },
+            wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        );
+    }
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("Leaf alpha-cutout sampler"),
-        address_mode_u: wgpu::AddressMode::Repeat, address_mode_v: wgpu::AddressMode::Repeat, address_mode_w: wgpu::AddressMode::Repeat,
+        label: Some("Nearest-filtered tree texture sampler"),
+        address_mode_u: wgpu::AddressMode::Repeat, address_mode_v: wgpu::AddressMode::Repeat, address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Nearest, min_filter: wgpu::FilterMode::Nearest, mipmap_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     });
     (texture, sampler)
+}
+
+fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
+    let mut pixels = vec![0_u8; (size * size * 4) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let i = ((y * size + x) * 4) as usize;
+            if layer < 15 {
+                let dx = x as f32 / size as f32 - 0.5;
+                let dy = y as f32 / size as f32 - 0.5;
+                let leaf = dx * dx * 2.0 + dy * dy * 1.4 < 0.20 && (x + y * 3 + layer as u32) % 5 != 0;
+                pixels[i..i + 4].copy_from_slice(if leaf { &[43, 115, 39, 255] } else { &[0, 0, 0, 0] });
+            } else {
+                let stripe = ((x + layer as u32 * 3) % 13) as u8;
+                let grain = ((x * 7 + y * 3 + layer as u32) % 17) as u8;
+                pixels[i] = 76_u8.saturating_add(stripe.saturating_mul(3));
+                pixels[i + 1] = 45_u8.saturating_add(grain);
+                pixels[i + 2] = 25_u8.saturating_add(grain / 2);
+                pixels[i + 3] = 255;
+            }
+        }
+    }
+    pixels
 }
