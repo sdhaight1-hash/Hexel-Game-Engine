@@ -84,9 +84,9 @@ This document is the working implementation roadmap. Update the phase status, de
 ### Work
 
 - [ ] Audit current renderer, mesh, chunk, raycast, and world-edit assumptions before selecting an integration boundary.
-- [x] Define a CPU-side surface-mesh adapter that consumes topology boundaries and terrain samples; keep renderer-specific types out of the core topology module. Local verification pending.
+- [x] Define a CPU-side surface-mesh adapter that consumes topology boundaries and terrain samples; keep renderer-specific types out of the core topology module. Verified locally on 2026-10-25: `cargo check` succeeded and `cargo test` passed 114 tests with 0 failures.
 - [x] Sample boundary corners by direction so adjacent cells derive identical terrain-displaced positions for shared corners; regression test added, local verification pending.
-- [x] Triangulate arbitrary polygon side counts with a center fan; regression test covers pentagonal and hexagonal cells. Local verification pending.
+- [x] Triangulate arbitrary polygon side counts with a center fan; regression test covers pentagonal and hexagonal cells. Verified locally on 2026-10-25: `cargo check` succeeded and `cargo test` passed 114 tests with 0 failures.
 - [ ] Preserve winding, outward normals, radius constraints, and shared-edge consistency.
 - [ ] Connect raycasting and selection to the same cell geometry or a verified equivalent, avoiding visual/gameplay disagreement.
 - [ ] Map edits to a surface-cell identity through a world-state adapter. Keep current world-edit behavior intact until equivalent semantics are tested.
@@ -225,4 +225,11 @@ This document is the working implementation roadmap. Update the phase status, de
 - Commit [f047d17](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/f047d17d9bad2f098c9bcc90ea1685afc8b7374a) exports `surface_mesh` from `src/lib.rs`.
 - The mesh adapter triangulates each cell as a center fan, supports non-six-sided cells, corrects triangle winding outward, and terrain-displaces boundary corners by direction so shared corners receive identical positions.
 - Added tests for expected triangle count/pentagon coverage, finite positions and elevations, outward winding, and shared-corner consistency. These tests are committed but **local verification is pending**; the developer must pull and run the test suite.
-- This is a CPU data adapter only. It is not connected to `renderer.rs`, camera-relative rendering, raycasting, or world edits. The existing flat gameplay path remains unchanged.
+- The adapter now feeds an opt-in F3 spherical planet preview in `renderer.rs`. The preview is visual-only: spherical player movement, raycasting, and world edits are not switched over. Flat X/Z gameplay remains the default path.
+
+
+### Preview integration verification — 2026-10-25
+
+- The F3 key toggles the spherical planet preview without replacing the flat-world renderer path.
+- Developer verified `cargo check`, `cargo test` (**114 passed, 0 failed**), and `cargo run --bin hexel-engine`; the game opened and F3 toggled successfully.
+- Preview integration is an inspection milestone, not a claim that spherical gameplay, editing, collision, or navigation is complete.
