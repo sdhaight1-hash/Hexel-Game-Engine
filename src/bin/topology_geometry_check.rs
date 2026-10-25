@@ -485,6 +485,211 @@ mod tests {
         }
     }
 
+    fn directed_edge_uses(mesh: &MeshInput) -> BTreeMap<(usize, usize), usize> {
+        let mut uses = BTreeMap::new();
+
+        for cell in &mesh.cells {
+            for i in 0..cell.vertices.len() {
+                let a = cell.vertices[i];
+                let b = cell.vertices[(i + 1) % cell.vertices.len()];
+                *uses.entry((a, b)).or_insert(0) += 1;
+            }
+        }
+
+        uses
+    }
+
+    fn edge_cell_uses(mesh: &MeshInput) -> BTreeMap<(usize, usize), Vec<usize>> {
+        let mut uses: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
+
+        for (cell_index, cell) in mesh.cells.iter().enumerate() {
+            for i in 0..cell.vertices.len() {
+                let a = cell.vertices[i];
+                let b = cell.vertices[(i + 1) % cell.vertices.len()];
+
+                if a != b {
+                    uses.entry(edge_key(a, b)).or_default().push(cell_index);
+                }
+            }
+        }
+
+        uses
+    }
+
+    fn signed_spherical_polygon_area(mesh: &MeshInput, cell: &PolygonCell) -> f64 {
+        if cell.vertices.len() < 3 {
+            return 0.0;
+        }
+
+        let points: Vec<Point3> = cell
+            .vertices
+            .iter()
+            .map(|&id| mesh.vertices[id].normalized())
+            .collect();
+
+        let anchor = points[0];
+        let mut signed_area = 0.0;
+
+        for i in 1..points.len() - 1 {
+            let b = points[i];
+            let c = points[i + 1];
+
+            let numerator = anchor.dot(b.cross(c));
+            let denominator = 1.0 + anchor.dot(b) + b.dot(c) + c.dot(anchor);
+
+            signed_area += 2.0 * numerator.atan2(denominator);
+        }
+
+        signed_area * mesh.radius * mesh.radius
+    }
+
+    #[test]
+    fn generated_cells_have_consistent_outward_winding() {
+        let mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+
+        let signed_areas: Vec<f64> = mesh
+            .cells
+            .iter()
+            .map(|cell| signed_spherical_polygon_area(&mesh, cell))
+            .collect();
+
+        assert!(
+            signed_areas
+                .iter()
+                .all(|area| area.is_finite() && *area > 1e-8),
+            "every generated cell should have positive, finite signed spherical area; \
+             observed range: {:?}",
+            (
+                signed_areas.iter().copied().fold(f64::INFINITY, f64::min),
+                signed_areas
+                    .iter()
+                    .copied()
+                    .fold(f64::NEG_INFINITY, f64::max)
+            )
+        );
+    }
+
+    #[test]
+    fn every_shared_edge_is_traversed_in_opposite_directions() {
+        let mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+        let directed = directed_edge_uses(&mesh);
+        let mut undirected = BTreeSet::new();
+
+        for &(a, b) in directed.keys() {
+            undirected.insert(edge_key(a, b));
+        }
+
+        for (a, b) in undirected {
+            let forward = directed.get(&(a, b)).copied().unwrap_or(0);
+            let reverse = directed.get(&(b, a)).copied().unwrap_or(0);
+
+            assert_eq!(
+                (forward, reverse),
+                (1, 1),
+                "edge ({a}, {b}) should be used once in each direction"
+            );
+        }
+    }
+
+    #[test]
+    fn cell_adjacency_matches_shared_edges_and_is_reciprocal() {
+        let mesh = generate_icosphere_dual(3, 100.0).expect("valid mesh");
+        let edge_uses = edge_cell_uses(&mesh);
+
+        let mut neighbors = vec![BTreeSet::<usize>::new(); mesh.cells.len()];
+
+        // Build the complete adjacency graph before validating connectivity.
+        for (edge, owners) in &edge_uses {
+            assert_eq!(
+                owners.len(),
+                2,
+                "edge {edge:?} must belong to exactly two cells"
+            );
+
+            let a = owners[0];
+            let b = owners[1];
+
+            assert_ne!(a, b, "an edge cannot be shared by a cell with itself");
+
+            assert!(
+                neighbors[a].insert(b),
+                "duplicate adjacency between cells {} and {} for edge {edge:?}",
+                mesh.cells[a].id,
+                mesh.cells[b].id
+            );
+
+            assert!(
+                neighbors[b].insert(a),
+                "duplicate reciprocal adjacency between cells {} and {} for edge {edge:?}",
+                mesh.cells[b].id,
+                mesh.cells[a].id
+            );
+        }
+
+        // Every cell should have one distinct neighbor per boundary edge.
+        for (cell_index, cell) in mesh.cells.iter().enumerate() {
+            assert_eq!(
+                neighbors[cell_index].len(),
+                cell.vertices.len(),
+                "cell {} should have one distinct neighbor per boundary edge",
+                cell.id
+            );
+
+            for &neighbor_index in &neighbors[cell_index] {
+                assert!(
+                    neighbors[neighbor_index].contains(&cell_index),
+                    "adjacency must be reciprocal between cells {} and {}",
+                    cell.id,
+                    mesh.cells[neighbor_index].id
+                );
+            }
+        }
+
+        // Every cell should be reachable through shared-edge adjacency.
+        let mut visited = BTreeSet::<usize>::new();
+        let mut stack = vec![0usize];
+
+        while let Some(cell_index) = stack.pop() {
+            if !visited.insert(cell_index) {
+                continue;
+            }
+
+            for &neighbor_index in &neighbors[cell_index] {
+                assert!(
+                    neighbor_index < mesh.cells.len(),
+                    "neighbor index {neighbor_index} is out of bounds"
+                );
+
+                stack.push(neighbor_index);
+            }
+        }
+
+        assert_eq!(
+            visited.len(),
+            mesh.cells.len(),
+            "every cell should be reachable through shared-edge adjacency"
+        );
+    }
+
+    #[test]
+    fn total_spherical_area_is_close_to_sphere_area() {
+        let radius = 100.0;
+        let mesh = generate_icosphere_dual(3, radius).expect("valid mesh");
+
+        let total: f64 = mesh
+            .cells
+            .iter()
+            .map(|cell| spherical_polygon_area(&mesh, cell))
+            .sum();
+
+        let sphere_area = 4.0 * std::f64::consts::PI * radius * radius;
+
+        assert!(
+            total.is_finite() && (total - sphere_area).abs() / sphere_area < 0.01,
+            "total cell area {total} differs from sphere area {sphere_area}"
+        );
+    }
+
     #[test]
     fn shared_edge_is_counted_once_and_not_as_boundary() {
         let report = audit(&square_mesh());
