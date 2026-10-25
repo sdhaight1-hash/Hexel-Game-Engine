@@ -16,7 +16,7 @@ pub const CHUNK_Q: i32 = 16;
 pub const CHUNK_R: i32 = 16;
 pub const CHUNK_Y: i32 = 16;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CellPos {
     pub q: i32,
     pub r: i32,
