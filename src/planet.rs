@@ -321,7 +321,7 @@ impl LocalTangentFrame {
         let up = coord.direction().normalize_or_zero();
         let east = DVec3::new(-coord.longitude.sin(), 0.0, coord.longitude.cos())
             .normalize_or_zero();
-        let north = up.cross(east).normalize_or_zero();
+        let north = east.cross(up).normalize_or_zero();
         let radius = if planet_radius.is_finite() { planet_radius.max(1.0) } else { 1.0 };
         let elevation = if elevation.is_finite() { elevation } else { 0.0 };
         Self { origin: up * (radius + elevation), east, north, up }
@@ -361,6 +361,15 @@ mod tests {
         assert_abs_diff_eq!(local.x, 12.0, epsilon = 1e-8);
         assert_abs_diff_eq!(local.y, -4.0, epsilon = 1e-8);
         assert_abs_diff_eq!(local.z, 2.0, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn tangent_frame_north_points_toward_increasing_latitude() {
+        let coord = GeoCoord::from_degrees(0.0, 0.0);
+        let frame = LocalTangentFrame::at(coord, 6_371_000.0, 0.0);
+        let slightly_north = GeoCoord::from_degrees(0.001, 0.0).direction()
+            * 6_371_000.0;
+        assert!(frame.to_local(slightly_north).y > 0.0);
     }
 
     #[test]
