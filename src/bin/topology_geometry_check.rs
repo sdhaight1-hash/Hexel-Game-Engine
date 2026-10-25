@@ -162,8 +162,8 @@ fn generate_icosphere_dual(frequency: u32, radius: f64) -> Option<MeshInput> {
         let b = base[face[1]];
         let c = base[face[2]];
         let mut grid = vec![vec![0usize; n + 1]; n + 1];
-        for i in 0..=n {
-            for j in 0..=n - i {
+        for (i, row) in grid.iter_mut().enumerate().take(n + 1) {
+            for (j, slot) in row.iter_mut().enumerate().take(n - i + 1) {
                 let point = a.scale((n - i - j) as f64)
                     .add(b.scale(i as f64)).add(c.scale(j as f64))
                     .normalized();
@@ -177,7 +177,7 @@ fn generate_icosphere_dual(frequency: u32, radius: f64) -> Option<MeshInput> {
                     sphere_vertices.push(point);
                     id
                 });
-                grid[i][j] = id;
+                *slot = id;
             }
         }
         for i in 0..n {
