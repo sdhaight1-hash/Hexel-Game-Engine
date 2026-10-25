@@ -79,11 +79,12 @@ The current build streams a bounded neighborhood of **16 × 16 × 16 hexel-prism
 
 Terrain faces use darker side shading and lighter top faces to make the hexagonal-prism shape easier to read. This is still an early prototype: the player uses a simple capsule-like collision footprint, terrain meshes rebuild after each edit, and this pass uses baked face shading rather than real-time shadow maps. Terrain collision and block editing are first-pass implementations.
 
-**Important status note:** the current prototype is not yet the finite spherical planet described in the design vision. Planetary coordinates, spherical surface topology, global climate and circulation, persistent resource accounting, and the broader simulation systems remain future design and implementation work.
+**Important status note:** the current playable prototype is still flat. The first geodesic surface-topology data layer now exists in `src/topology.rs`, but it is not yet connected to the renderer or gameplay. Planet-relative movement, spherical prism/column geometry, surface raycasting, topology-aware terrain storage and save/load, global climate/circulation, and persistent resource accounting remain implementation work.
 
 ## Implemented core
 
-- Axial hex coordinates `(q, r)` plus vertical layer `y`.
+- Axial hex coordinates `(q, r)` plus vertical layer `y` for the current flat prototype.
+- Deterministic geodesic planetary surface topology in `src/topology.rs`: subdivided-icosahedron dual cells, stable IDs for a fixed topology configuration, ordered surface boundaries, and reciprocal cell adjacency. This is the first planetary topology implementation; it is not yet wired into playable terrain, prism meshing, movement, raycasting, or saves.
 - Chunk storage sized `16 × 16 × 16`.
 - Grass, dirt, stone, air, and foundation block types.
 - Seeded Perlin terrain-height generation.
