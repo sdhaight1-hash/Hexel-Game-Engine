@@ -1,6 +1,6 @@
 # Planetary Topology Comparative Research for Hexel Engine
 
-**Status:** Research synthesis; no engine code changes  
+**Status:** Research synthesis; initial geodesic topology implementation now exists in `src/topology.rs`  
 **Date:** 2026-10-25  
 **Scope:** Compare Hexel's current spherical-topology audit with PlanetSmith, public spherical-voxel projects, geodesic/Goldberg grid literature, and alternative planetary representations.  
 **Decision status:** No production topology selected. This report informs the topology proof described in `Hexel Engine Architecture Decision.md`.
@@ -19,7 +19,7 @@ The external implementations show three materially different strategies:
 
 A fourth category, **continuous SDF/smooth voxel terrain**, is useful for planetary terrain and LOD engineering but is not directly equivalent to discrete hexagonal-prism cells.
 
-**Recommendation:** Keep the existing geodesic dual audit as a validated geometric baseline, not as a production decision. Build a small apples-to-apples prototype comparing (A) geodesic cell graph and (B) cubed-sphere patches. Include a third exploratory local-chart representation only if Hexel's design permits a locally reoriented grid instead of globally fixed surface cells. Do not assume that “mostly hexagonal surface cells” automatically solves prism geometry, underground layers, raycasting, or persistence.
+**Implementation direction (updated 2026-10-25):** Start with the geodesic dual cell graph and integrate it into Hexel incrementally. The initial data layer now exists in `src/topology.rs`, with cell IDs, centers, ordered boundaries, reciprocal neighbors, and nearest-cell lookup. Do not wait for another broad comparison study before proceeding. Keep cubed-sphere patches as a fallback if actual prism integration exposes a concrete topology or performance blocker. The geodesic graph still does not, by itself, solve pure hexagonal-prism geometry, underground layers, raycasting, or persistence; those are the next implementation tasks.
 
 ## 1. Hexel's starting point: what our repository already says
 
