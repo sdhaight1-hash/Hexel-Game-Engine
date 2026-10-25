@@ -1,9 +1,9 @@
 # Planetary Topology Integration Roadmap
 
-**Status:** Phase 1 complete — implementation committed; developer reports latest full test suite passed  
+**Status:** Phase 1 complete; Phase 2 lookup/neighbor APIs verified; opt-in navigation adapter committed, adapter verification pending  
 **Target:** Integrate the geodesic dual-cell topology into Hexel Engine incrementally without regressing existing gameplay.  
 **Primary implementation:** `src/topology.rs`  
-**Current verification:** The developer-reported latest `cargo test` run passed all 103 tests (57 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no tests). Phase 2 lookup changes are committed, and their new tests are awaiting a local run.
+**Current verification:** Developer-reported `cargo test` after pulling the Phase 2 changes passed **107 tests, 0 failed** (61 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no tests).
 
 This document is the working implementation roadmap. Update the phase status, decisions, test results, and any deviations as work lands. Prefer small, reviewable commits and keep `main` buildable.
 
@@ -53,7 +53,7 @@ This document is the working implementation roadmap. Update the phase status, de
 
 ## Phase 2 — Surface-cell lookup and neighbor traversal
 
-**Status:** In progress — public lookup/neighbor APIs and regression tests committed; local verification pending.
+**Status:** In progress — public lookup/neighbor APIs and regression tests committed and locally verified; gameplay/movement adapter remains pending.
 
 **Goal:** Provide a dependable gameplay API for mapping positions/directions to cells and traversing the surface graph.
 
@@ -65,8 +65,10 @@ This document is the working implementation roadmap. Update the phase status, de
 - [x] Add tests for reciprocal adjacency, valid IDs, sorted unique neighbors, and whole-graph connectivity.
 - [x] Define deterministic exact-tie behavior (lowest cell ID); non-tied near-boundary inputs use the greatest dot-product score.
 - [x] Add tests for center lookup with scaled position vectors, symmetric tie resolution, invalid directions/IDs, neighbor queries, and connected traversal across the sphere.
-- [ ] Introduce gameplay/movement integration through an adapter rather than replacing movement or collision in one change.
-- [ ] Run focused lookup/traversal tests, then `cargo test` after pulling commit [2831ad2](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/2831ad2a031bc47a702ff7b373bf74c73068a6d3).
+- [x] Add an opt-in `SurfaceNavigator` adapter for planet-centered position lookup, neighbor access, and choosing an adjacent cell from a tangent-plane travel direction.
+- [x] Leave the existing flat-world movement and collision path unchanged; it is not yet compatible with spherical coordinates.
+- [ ] Run the new adapter tests and full `cargo test` after pulling the adapter commits.
+- [x] Run focused lookup/traversal tests as part of the full `cargo test` run after pulling commit [2831ad2](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/2831ad2a031bc47a702ff7b373bf74c73068a6d3); developer reports 107 passed, 0 failed (61 library, 8 cube-sphere geometry, 38 topology geometry).
 
 ### Exit criteria
 
@@ -190,9 +192,22 @@ This document is the working implementation roadmap. Update the phase status, de
 - Added `cell_id_for_direction`, `neighbor_ids`, and `are_neighbors` to `SurfaceTopology` without changing the existing renderer or gameplay path.
 - Clarified `nearest_cell` input semantics and made exact-score ties choose the lowest cell ID. Invalid direction inputs return `None`; invalid neighbor IDs return `None`.
 - Added regression tests for scaled center lookup, tie determinism, sorted/unique neighbor IDs, reciprocal adjacency, invalid IDs, and full graph connectivity.
-- Verification pending: developer should pull and run `cargo test`; the new tests have not been run locally yet.
+- Verification: developer pulled `main` and ran `cargo test`; **107 passed, 0 failed** (61 library, 8 cube-sphere geometry, 38 topology geometry; main/doc-test targets had no tests). New lookup, tie-breaking, neighbor validation, reciprocity, uniqueness, and connectivity tests all passed.
+
+### Phase 2 adapter — 2026-10-25
+
+- Commit [827d5f1](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/827d5f129002a2c403e4602882ddb882058467e9) adds `src/surface_navigation.rs` with `SurfaceNavigator` for planet-centered cell lookup, neighbor access, and selecting an adjacent cell aligned with a tangent travel direction.
+- Commit [abb43e5](https://github.com/sdhaight1-hash/Hexel-Game-Engine/commit/abb43e5b41ad661f1cb402f127ee03d4ccb6e586) exports the adapter from `src/lib.rs`.
+- The existing flat X/Z movement, collision, raycast, and edit path remains unchanged because it is not yet compatible with spherical coordinates.
+- Adapter tests are committed but not yet locally verified. Pull `main` and run `cargo test` before closing Phase 2.
 
 ### Implementation notes
 
 - Update this log after each meaningful phase with commit links/SHAs, tests actually run, and decisions that affect later phases.
 - Do not mark a phase complete merely because its code compiles; complete it only when its exit criteria are satisfied.
+
+### Phase 2 verification — 2026-10-25
+
+- Developer pulled the Phase 2 commits from `main` and ran the full `cargo test` suite.
+- Result: **107 passed, 0 failed**; 61 library tests, 8 cube-sphere geometry tests, and 38 topology geometry tests passed. Main and documentation test targets had no tests.
+- Phase 2 remains in progress because gameplay/movement integration and the remaining exit criteria have not been implemented; the lookup/neighbor API itself is verified.
