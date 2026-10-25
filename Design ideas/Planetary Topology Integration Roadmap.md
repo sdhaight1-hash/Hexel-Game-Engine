@@ -163,6 +163,11 @@ This document is the working implementation roadmap. Update the phase status, de
 - Developer pulled `main` and ran `cargo test`: **102 passed, 0 failed**. The new `planet::tests::direction_sampling_matches_geographic_sampling` and `planet::tests::direction_sampling_handles_invalid_directions_without_non_finite_output` tests passed.
 - Developer then ran `cargo run`, which reported that Cargo could not choose among three binaries. The manifest lists `hexel-engine`, `cube_sphere_geometry_check`, and `topology_geometry_check`; launching the main app should be attempted with `cargo run --bin hexel-engine`. This is a run-command selection issue, not a test failure.
 
+### Runtime launch verification — 2026-10-25
+
+- Developer reports `cargo run --bin hexel-engine` compiled and launched successfully, printing the world seed and gameplay controls.
+- This confirms the main binary starts; it does not establish that geodesic topology is wired into the live renderer or gameplay.
+
 ### Implementation notes
 
 - Update this log after each meaningful phase with commit links/SHAs, tests actually run, and decisions that affect later phases.
