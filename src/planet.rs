@@ -301,10 +301,75 @@ fn classify_biome(elevation: f64, temperature_c: f64, moisture: f64, elevation_s
     }
 }
 
+
+/// Player-centred east/north/up frame for stable local simulation and rendering.
+///
+/// Keep planetary positions in f64 and convert nearby points into this frame before
+/// narrowing to f32 for GPU buffers. Source positions retain the planet's curvature.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LocalTangentFrame {
+    origin: DVec3,
+    east: DVec3,
+    north: DVec3,
+    up: DVec3,
+}
+
+impl LocalTangentFrame {
+    /// Create a local frame at a geographic position and radial elevation.
+    pub fn at(coord: GeoCoord, planet_radius: f64, elevation: f64) -> Self {
+        let coord = GeoCoord::new(coord.latitude, coord.longitude);
+        let up = coord.direction().normalize_or_zero();
+        let east = DVec3::new(-coord.longitude.sin(), 0.0, coord.longitude.cos())
+            .normalize_or_zero();
+        let north = up.cross(east).normalize_or_zero();
+        let radius = if planet_radius.is_finite() { planet_radius.max(1.0) } else { 1.0 };
+        let elevation = if elevation.is_finite() { elevation } else { 0.0 };
+        Self { origin: up * (radius + elevation), east, north, up }
+    }
+
+    /// Convert a planet-centred f64 point to local east/north/up coordinates.
+    pub fn to_local(self, planet_position: DVec3) -> DVec3 {
+        let relative = planet_position - self.origin;
+        DVec3::new(relative.dot(self.east), relative.dot(self.north), relative.dot(self.up))
+    }
+
+    /// Convert local east/north/up coordinates back to planet-centred f64 coordinates.
+    pub fn to_planet(self, local_position: DVec3) -> DVec3 {
+        self.origin + self.east * local_position.x
+            + self.north * local_position.y + self.up * local_position.z
+    }
+
+    pub fn origin(self) -> DVec3 { self.origin }
+
+    /// Radial up direction, used for planet-relative gravity and player orientation.
+    pub fn up(self) -> DVec3 { self.up }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
+
+    #[test]
+    fn tangent_frame_round_trips_planet_positions() {
+        let coord = GeoCoord::from_degrees(37.0, -122.0);
+        let frame = LocalTangentFrame::at(coord, 6_371_000.0, 120.0);
+        let planet_point = frame.origin() + DVec3::new(12.0, -4.0, 2.0);
+        let local = frame.to_local(planet_point);
+        let reconstructed = frame.to_planet(local);
+        assert!(reconstructed.distance(planet_point) < 1e-8);
+        assert_abs_diff_eq!(local.x, 12.0, epsilon = 1e-8);
+        assert_abs_diff_eq!(local.y, -4.0, epsilon = 1e-8);
+        assert_abs_diff_eq!(local.z, 2.0, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn tangent_frame_up_matches_planet_radial_direction() {
+        let coord = GeoCoord::from_degrees(-28.0, 151.0);
+        let frame = LocalTangentFrame::at(coord, 6_371_000.0, 0.0);
+        assert_abs_diff_eq!(frame.up().length(), 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(frame.up().dot(coord.direction()), 1.0, epsilon = 1e-12);
+    }
 
     #[test]
     fn same_seed_and_coordinate_are_deterministic() {
