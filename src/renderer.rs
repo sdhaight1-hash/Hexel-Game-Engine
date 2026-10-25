@@ -245,7 +245,7 @@ impl Renderer {
         for q in (cell.q - 2)..=(cell.q + 2) {
             for r in (cell.r - 2)..=(cell.r + 2) {
                 let hash = vegetation_hash(self.seed, q, r);
-                if hash % 29 != 0 { continue; }
+                if !hash.is_multiple_of(29) { continue; }
                 let terrain = terrain_height(self.seed, q, r);
                 let warmth = Perlin::new(self.seed.wrapping_add(0x51ED_270B))
                     .get([q as f64 / 90.0, r as f64 / 90.0]);
@@ -269,7 +269,7 @@ impl Renderer {
                 } else { (6.0, 16.0, 1, false) };
                 let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
                 let mut height_m = min_m + (max_m - min_m) * variance;
-                if giant && (hash >> 28) % 4 != 0 { height_m = min_m * 0.55; }
+                if giant && !(hash >> 28).is_multiple_of(4) { height_m = min_m * 0.55; }
                 let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
                 let trunk_top = layers * if tropical && roll < 22 { 3 } else { 2 } / 3;
                 let radius_cells = if trunk_radius > 1 { 0.70 } else { 0.43 };
@@ -333,6 +333,7 @@ impl Renderer {
     }
 
     /// Text inspection for the "What am I looking at?" debug/gameplay affordance.
+    #[allow(dead_code)]
     pub fn describe_target(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> String {
         let Some((cell, _)) = self.raycast(origin, direction, max_distance) else {
             return "What am I looking at? Nothing identifiable in reach.".to_string();
@@ -532,20 +533,20 @@ impl Renderer {
         };
         let sw = (0.075 / aspect).min(0.085); let sh = 0.105; let gap = 0.012 / aspect;
         let left = -(9.0 * sw + 8.0 * gap) * 0.5; let bottom = -0.91;
-        for i in 0..9 {
+        for (i, count) in item_counts.iter().enumerate().take(9) {
             let x1 = left + i as f32 * (sw + gap); let x2 = x1 + sw; let y1 = bottom; let y2 = bottom + sh;
             let col = if i == selected_slot { [1.0, 0.78, 0.12] } else { [0.95, 0.97, 1.0] };
             hud_line(x1,y1,x2,y1,col); hud_line(x2,y1,x2,y2,col); hud_line(x2,y2,x1,y2,col); hud_line(x1,y2,x1,y1,col);
-            for tick in 0..item_counts[i].min(9) { let tx=x1+0.012/aspect+tick as f32*0.005/aspect; hud_line(tx,y1+0.012,tx,y1+0.028,[0.4,1.0,0.6]); }
+            for tick in 0..(*count).min(9) { let tx=x1+0.012/aspect+tick as f32*0.005/aspect; hud_line(tx,y1+0.012,tx,y1+0.028,[0.4,1.0,0.6]); }
         }
         if inventory_open {
             let w=(0.055/aspect).min(0.065); let h=0.075; let gx=0.009/aspect; let gy=0.018;
             let start_x=-(9.0*w+8.0*gx)*0.5; let start_y=0.48;
-            for i in 0..36 {
+            for (i, count) in item_counts.iter().enumerate() {
                 let x1=start_x+(i%9) as f32*(w+gx); let y1=start_y-(i/9) as f32*(h+gy); let x2=x1+w; let y2=y1+h;
                 let col=if i==selected_slot {[1.0,0.78,0.12]} else {[0.88,0.92,0.98]};
                 hud_line(x1,y1,x2,y1,col); hud_line(x2,y1,x2,y2,col); hud_line(x2,y2,x1,y2,col); hud_line(x1,y2,x1,y1,col);
-                for tick in 0..item_counts[i].min(5) { let tx=x1+0.008/aspect+tick as f32*0.004/aspect; hud_line(tx,y1+0.008,tx,y1+0.02,[0.4,1.0,0.6]); }
+                for tick in 0..(*count).min(5) { let tx=x1+0.008/aspect+tick as f32*0.004/aspect; hud_line(tx,y1+0.008,tx,y1+0.02,[0.4,1.0,0.6]); }
             }
         }
         drop(hud_line);
@@ -742,7 +743,7 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
             let height = *heights.get(&(q, r)).unwrap_or(&0);
             if height < 0 || chunk.y != height.div_euclid(CHUNK_SIZE) { continue; }
             let hash = vegetation_hash(seed, q, r);
-            if hash % 29 != 0 { continue; } // Reduced baseline density; biome patches are tuned below.
+            if !hash.is_multiple_of(29) { continue; } // Reduced baseline density; biome patches are tuned below.
             let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
             let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
             let conifer = warmth < -0.25 || wetness < -0.32;
@@ -764,7 +765,7 @@ fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPo
             } else { (6, 6.0, 16.0, 1, 2, false) };
             let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
             let mut height_m = min_m + (max_m - min_m) * variance;
-            if giant && (hash >> 28) % 4 != 0 { height_m = min_m * 0.55; }
+            if giant && !(hash >> 28).is_multiple_of(4) { height_m = min_m * 0.55; }
             let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
             let trunk = if species == 1 { [0.78, 0.75, 0.65] } else { [0.38, 0.25, 0.14] };
             let foliage = match species { 1 => [0.24, 0.40, 0.19], 2 => [0.12, 0.30, 0.15], 4 => [0.07, 0.31, 0.11], 5 => [0.10, 0.39, 0.13], 6 => [0.30, 0.39, 0.17], _ => [0.18, 0.46, 0.15] };
@@ -800,6 +801,7 @@ fn vegetation_hash(seed: u32, q: i32, r: i32) -> u32 {
     x ^= x >> 16; x = x.wrapping_mul(0x7FEB_352D); x ^= x >> 15; x = x.wrapping_mul(0x846C_A68B); x ^ (x >> 16)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i32, trunk_radius: i32, crown_radius: i32, colors: ([f32; 3], [f32; 3]), species: u8, seed_hash: u32, leaf_layer: u32, bark_layer: u32, scale: WorldScale) {
     let (trunk_color, leaf_color) = colors;
     let trunk_top = height_layers * if species == 4 { 3 } else { 2 } / 3;
@@ -850,9 +852,9 @@ fn append_hexel_tree(vertices: &mut Vec<Vertex>, root: CellPos, height_layers: i
                 // Avoid a solid voxel-like leaf mass: only a deterministic subset of
                 // canopy cells receives a textured, crossed leaf cluster. This gives
                 // branches and sky gaps room to read through the silhouette.
-                if irregular % if species == 2 { 4 } else { 3 } == 0 || distance == radius {
+                if irregular.is_multiple_of(if species == 2 { 4 } else { 3 }) || distance == radius {
                     let cluster_cell = CellPos::new(root.q + dq, root.r + dr, root.y + crown_start + cy);
-                    append_foliage_cluster(vertices, cluster_cell, scale, leaf_color, seed_hash ^ irregular as u32, leaf_layer);
+                    append_foliage_cluster(vertices, cluster_cell, scale, leaf_color, seed_hash ^ irregular, leaf_layer);
                 }
             }
         }
@@ -1018,7 +1020,7 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
             if layer < 15 {
                 let dx = x as f32 / size as f32 - 0.5;
                 let dy = y as f32 / size as f32 - 0.5;
-                let leaf = dx * dx * 2.0 + dy * dy * 1.4 < 0.20 && (x + y * 3 + layer as u32) % 5 != 0;
+                let leaf = dx * dx * 2.0 + dy * dy * 1.4 < 0.20 && !(x + y * 3 + layer as u32).is_multiple_of(5);
                 pixels[i..i + 4].copy_from_slice(if leaf { &[43, 115, 39, 255] } else { &[0, 0, 0, 0] });
             } else {
                 let stripe = ((x + layer as u32 * 3) % 13) as u8;
