@@ -128,17 +128,42 @@ Inspect the final audit output for `Overlapping cell pairs detected` and `Relati
 
 **Decision at this checkpoint:** keep the work diagnostic-only. Do not change playable-world topology until independent coverage validation, adversarial overlap checks, prism-boundary tests, and the pure-hexagonal-prism compatibility question have adequate evidence.
 
-## Phase 6 — audit hardening implemented; local validation pending
+## Phase 6 — audit hardening implemented and locally validated
 
-A focused hardening pass has been pushed to `src/bin/topology_geometry_check.rs`. This is still offline diagnostic code; gameplay topology and rendering are unchanged.
+Phase 6 hardened `src/bin/topology_geometry_check.rs` based on the audit review. This remains offline diagnostic tooling; gameplay topology and rendering are unchanged.
 
-- **Containment tolerance:** edge-plane normals are normalized before signed-side tests. The predicate now compares signed sides and uses a fixed angular-distance tolerance on the unit sphere rather than multiplying unnormalized side values, avoiding edge-length-dependent thresholds. Non-finite and zero-length query directions are rejected.
+- **Containment tolerance:** edge-plane normals are normalized before signed-side tests. The predicate compares signed sides using an explicit spherical tolerance, avoiding the previous edge-length-dependent product threshold. Non-finite and zero-length query directions are rejected.
 - **Duplicate-coordinate comparison:** duplicate polygon coordinate sets are matched one-to-one; a coordinate in one polygon cannot be reused to satisfy multiple vertices in the other.
 - **Runtime orientation:** the audit reports shared edges used twice with the same directed traversal.
-- **Runtime vertex neighborhoods:** the audit constructs each vertex's link graph and reports vertices whose link is not one connected cycle. This is a local manifold check; it complements, rather than replaces, edge-incidence checks.
-- **Adversarial regressions:** new tests cover tiny spherical polygons, one-to-one coordinate matching, malformed non-finite coordinates, same-direction shared edges, disconnected vertex links, and valid generated meshes at frequencies 2–4.
-- The runtime audit now prints `Inconsistent edge orientations` and `Invalid vertex links`.
+- **Runtime vertex neighborhoods:** the audit constructs each vertex's link graph and reports vertices whose link is not one connected cycle. This complements, rather than replaces, edge-incidence checks.
+- **Adversarial regressions:** tests cover tiny spherical polygons, one-to-one coordinate matching, malformed non-finite coordinates, same-direction shared edges, disconnected vertex links, and valid generated meshes at frequencies 2–4.
+- The runtime audit prints `Inconsistent edge orientations` and `Invalid vertex links`.
 
-**Validation status:** implementation and regression tests are committed, but the updated Rust code has not yet been compiled or run locally after this push. Do not treat Phase 6 as validated until the user runs the commands in `docs/TOPOLOGY_AUDIT_PHASE_5_PLAN.md` and shares the output.
+**User-reported local test results after Phase 6:**
 
-The containment predicate and vertex-link check assume valid convex spherical cells with minor great-circle edges. Finite coverage sampling remains a diagnostic, not a proof of full coverage.
+- `cargo test --bin topology_geometry_check`: **38 passed, 0 failed**.
+- `cargo test --bin cube_sphere_geometry_check`: **8 passed, 0 failed**.
+- `cargo test`: **92 passed, 0 failed** (46 core, 8 cube-sphere, 38 topology; main and doc-test targets had zero tests).
+
+**User-reported runtime audit results** at radius 100:
+
+| Metric | Frequency 2 | Frequency 3 | Frequency 4 |
+|---|---:|---:|---:|
+| Cells | 42 | 92 | 162 |
+| Dual vertices | 80 | 180 | 320 |
+| Unique edges | 120 | 270 | 480 |
+| Boundary edges | 0 | 0 | 0 |
+| Non-manifold edges | 0 | 0 | 0 |
+| Degenerate cells | 0 | 0 | 0 |
+| Invalid radius | false | false | false |
+| Non-finite / zero-length / off-radius vertices | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| Invalid indices / repeated vertex IDs | 0 / 0 | 0 / 0 | 0 / 0 |
+| Inconsistent edge orientations | 0 | 0 | 0 |
+| Invalid vertex links | 0 | 0 | 0 |
+| Maximum radius error | 0.000000000000 | 0.000000000000 | 0.000000000000 |
+| Detected overlapping cell pairs | 0 | 0 | 0 |
+| Relative area coverage error | 0.00000000 | 0.00000000 | 0.00000000 |
+
+The pasted frequency-2 coverage report showed 4,096 singly-owned samples, zero sampled gaps, zero multiple-owner samples, and zero excluded boundary samples. Frequency 3 showed 4,095 singly-owned samples, zero sampled gaps, zero multiple-owner samples, and one excluded boundary sample. The shared frequency-4 output excerpt ended at the area-coverage line, so its 4,096-sample ownership summary was not visible in the message; the other frequency-4 topology and area metrics above were visible. The frequency-4 runtime audit completed through the reported area-coverage result.
+
+These results are strong evidence for the generated meshes under the implemented checks, not a formal proof of complete coverage or a guarantee for every malformed input. The containment and vertex-link checks assume valid convex spherical cells bounded by minor great-circle arcs. Finite coverage sampling remains a diagnostic.
