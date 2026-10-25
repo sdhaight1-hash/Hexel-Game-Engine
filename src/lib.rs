@@ -9,6 +9,7 @@ pub mod soil;
 pub mod trees;
 pub mod tree_blocks;
 pub mod topology;
+pub mod geodesic_topology;
 
 use glam::Vec3;
 use noise::{NoiseFn, Perlin};
