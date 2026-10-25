@@ -251,6 +251,30 @@ impl PlanetGenerator {
         self.config.radius * (1.0 - (distance / self.config.radius).cos())
     }
 
+    /// Move over the spherical surface by local east/north distances, in world units.
+    ///
+    /// Uses a great-circle step rather than adding directly to latitude/longitude, so
+    /// movement remains well behaved across the date line and near either pole.
+    pub fn move_on_surface(&self, start: GeoCoord, east: f64, north: f64) -> GeoCoord {
+        if !east.is_finite() || !north.is_finite() {
+            return GeoCoord::new(start.latitude, start.longitude);
+        }
+        let start = GeoCoord::new(start.latitude, start.longitude);
+        let up = start.direction();
+        let east_axis = DVec3::new(-start.longitude.sin(), 0.0, start.longitude.cos())
+            .normalize_or_zero();
+        let north_axis = east_axis.cross(up).normalize_or_zero();
+        let displacement = east_axis * east + north_axis * north;
+        let distance = displacement.length();
+        if distance <= f64::EPSILON {
+            return start;
+        }
+        let angle = (distance / self.config.radius).min(std::f64::consts::PI);
+        let tangent = displacement / distance;
+        let destination = (up * angle.cos() + tangent * angle.sin()).normalize_or_zero();
+        GeoCoord::new(destination.y.clamp(-1.0, 1.0).asin(), destination.z.atan2(destination.x))
+    }
+
     /// Great-circle distance between two locations, in the same units as planet radius.
     pub fn surface_distance(&self, a: GeoCoord, b: GeoCoord) -> f64 {
         let a = a.direction();
@@ -401,6 +425,32 @@ mod tests {
         let north = GeoCoord::from_degrees(120.0, 35.0);
         let pole = GeoCoord::from_degrees(90.0, 35.0);
         assert_abs_diff_eq!(north.direction().distance(pole.direction()), 0.0, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn surface_movement_crosses_date_line_without_discontinuity() {
+        let generator = PlanetGenerator::new(1);
+        let start = GeoCoord::from_degrees(0.0, 179.999);
+        let end = generator.move_on_surface(start, 500.0, 0.0);
+        assert!(end.longitude < 0.0);
+        assert_abs_diff_eq!(
+            generator.surface_distance(start, end),
+            500.0,
+            epsilon = 0.01
+        );
+    }
+
+    #[test]
+    fn surface_movement_toward_north_increases_latitude() {
+        let generator = PlanetGenerator::new(1);
+        let start = GeoCoord::from_degrees(0.0, 0.0);
+        let end = generator.move_on_surface(start, 0.0, 1_000.0);
+        assert!(end.latitude > start.latitude);
+        assert_abs_diff_eq!(
+            generator.surface_distance(start, end),
+            1_000.0,
+            epsilon = 0.01
+        );
     }
 
     #[test]
