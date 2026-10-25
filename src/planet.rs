@@ -109,6 +109,8 @@ pub struct PlanetSample {
     /// Dimensionless first-pass moisture estimate in [0, 1].
     pub moisture: f64,
     pub biome: Biome,
+    /// Köppen-Geiger subtype estimated from procedural monthly climate normals.
+    pub koppen: crate::climate::KoppenClass,
 }
 
 #[derive(Clone, Debug)]
@@ -226,6 +228,28 @@ impl PlanetGenerator {
         let moisture = moisture.clamp(0.0, 1.0);
 
         let biome = classify_biome(elevation, temperature_c, moisture, self.config.elevation_scale);
+        // Build twelve deterministic monthly normals. Temperature uses axial-tilt seasonality;
+        // precipitation is a broad circulation/ocean proxy with a seasonal rainfall cycle.
+        // These are explicit estimates, not a calibrated weather/climate simulation.
+        let annual_mean_temperature = 31.0 - coord.latitude.abs() * 39.0
+            - elevation.max(0.0) * 0.0065
+            + self.detail.get([direction.x * 3.5 + 19.1, direction.y * 3.5 - 7.7, direction.z * 3.5 + 2.3]) * 4.0;
+        let seasonal_amplitude = self.config.axial_tilt_degrees.to_radians().sin()
+            * coord.latitude.cos().abs() * 22.0;
+        let mut monthly_temperature = [0.0; 12];
+        let mut monthly_precipitation = [0.0; 12];
+        for month in 0..12 {
+            let phase = (month as f64 + 0.5) / 12.0;
+            let seasonal_wave = (phase * TAU - std::f64::consts::FRAC_PI_2).sin()
+                * if coord.latitude >= 0.0 { 1.0 } else { -1.0 };
+            monthly_temperature[month] = annual_mean_temperature + seasonal_amplitude * seasonal_wave;
+            let rainfall_wave = 0.55 + 0.45 * seasonal_wave;
+            monthly_precipitation[month] = (moisture * 300.0 * rainfall_wave).max(0.0);
+        }
+        let koppen = crate::climate::MonthlyClimateNormals {
+            temperature_c: monthly_temperature,
+            precipitation_mm: monthly_precipitation,
+        }.classify(elevation.max(0.0));
         PlanetSample {
             direction,
             surface_position: direction * (self.config.radius + elevation),
@@ -233,6 +257,7 @@ impl PlanetGenerator {
             temperature_c,
             moisture,
             biome,
+            koppen,
         }
     }
 
