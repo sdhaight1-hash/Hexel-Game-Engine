@@ -227,7 +227,6 @@ impl PlanetGenerator {
             * elevation_drying;
         let moisture = moisture.clamp(0.0, 1.0);
 
-        let biome = classify_biome(elevation, temperature_c, moisture, self.config.elevation_scale);
         // Build twelve deterministic monthly normals. Temperature uses axial-tilt seasonality;
         // precipitation is a broad circulation/ocean proxy with a seasonal rainfall cycle.
         // These are explicit estimates, not a calibrated weather/climate simulation.
@@ -362,36 +361,6 @@ fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
     let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
-
-fn classify_biome(elevation: f64, temperature_c: f64, moisture: f64, elevation_scale: f64) -> Biome {
-    if elevation < -elevation_scale * 0.12 {
-        return Biome::DeepOcean;
-    }
-    if elevation <= 0.0 {
-        return if temperature_c < -3.0 { Biome::PolarIce } else { Biome::ShallowOcean };
-    }
-    if elevation > elevation_scale * 0.68 {
-        return Biome::Mountain;
-    }
-    if temperature_c < -8.0 {
-        Biome::PolarIce
-    } else if temperature_c < 2.0 {
-        Biome::Tundra
-    } else if temperature_c < 10.0 {
-        if moisture > 0.52 { Biome::BorealForest } else { Biome::Grassland }
-    } else if temperature_c < 22.0 {
-        if moisture > 0.58 { Biome::TemperateForest } else { Biome::Grassland }
-    } else if moisture < 0.24 {
-        Biome::Desert
-    } else if temperature_c > 25.0 && moisture > 0.68 {
-        Biome::TropicalForest
-    } else if temperature_c > 22.0 {
-        Biome::Savanna
-    } else {
-        Biome::Grassland
-    }
-}
-
 
 /// Player-centred east/north/up frame for stable local simulation and rendering.
 ///
