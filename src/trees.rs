@@ -6,6 +6,7 @@
 
 use glam::DVec3;
 use crate::planet::{Biome, PlanetSample};
+use crate::climate::KoppenClass;
 
 pub type TreeId = u64;
 
@@ -167,6 +168,7 @@ fn choose_profile(sample: PlanetSample, random: u64) -> Option<&'static SpeciesP
             && sample.moisture >= p.min_moisture
             && sample.moisture <= p.max_moisture
             && biome_supports(p.species, sample.biome)
+            && climate_supports(p.species, sample.koppen)
     }).collect();
     if eligible.is_empty() { return None; }
     // Weighted deterministic choice; rare types are much less likely than common types.
@@ -189,6 +191,33 @@ fn biome_supports(species: TreeSpecies, biome: Biome) -> bool {
         TreeSpecies::Redwood => matches!(biome, Biome::BorealForest | Biome::TemperateForest | Biome::Mountain),
         TreeSpecies::Oak | TreeSpecies::Birch | TreeSpecies::Maple | TreeSpecies::CrimsonKingMaple | TreeSpecies::Walnut => biome == Biome::TemperateForest,
         TreeSpecies::Pine => matches!(biome, Biome::BorealForest | Biome::TemperateForest | Biome::Grassland | Biome::Savanna | Biome::Desert),
+        TreeSpecies::Spruce | TreeSpecies::Jungle | TreeSpecies::Scrub => false,
+    }
+}
+
+/// Broad climate-envelope gate applied in addition to the existing local habitat proxies.
+/// This is intentionally conservative: a subtype does not guarantee a species can grow there.
+fn climate_supports(species: TreeSpecies, climate: KoppenClass) -> bool {
+    use KoppenClass::*;
+    match species {
+        TreeSpecies::Kapok | TreeSpecies::Ebony | TreeSpecies::Purpleheart | TreeSpecies::Bamboo =>
+            matches!(climate, Af | Am | Aw | As),
+        TreeSpecies::Acacia =>
+            matches!(climate, BWh | BWk | BSh | BSk | Aw | As),
+        TreeSpecies::MediterraneanCypress =>
+            matches!(climate, Csa | Csb | Csc | BSh | BSk),
+        TreeSpecies::Larch =>
+            matches!(climate, Dfc | Dfd | Dwc | Dwd | Dsc | Dsd | ET),
+        TreeSpecies::Redwood =>
+            matches!(climate, Cfb | Cfc | Csb | Csa | Dfb | Dfc),
+        TreeSpecies::BaldCypress | TreeSpecies::Willow =>
+            matches!(climate, Cfa | Cfb | Cfc | Cwa | Cwb | Dfa | Dfb | Dfc),
+        TreeSpecies::Oak | TreeSpecies::Maple | TreeSpecies::CrimsonKingMaple | TreeSpecies::Walnut =>
+            matches!(climate, Csa | Csb | Cwa | Cwb | Cfa | Cfb | Dsa | Dsb | Dwa | Dwb | Dfa | Dfb),
+        TreeSpecies::Birch =>
+            matches!(climate, Cfb | Cfc | Dfb | Dfc | Dfd | Dwb | Dwc | ET),
+        TreeSpecies::Pine =>
+            matches!(climate, BSk | Csa | Csb | Cfb | Cfc | Dsa | Dsb | Dsc | Dsd | Dwa | Dwb | Dwc | Dwd | Dfa | Dfb | Dfc | Dfd),
         TreeSpecies::Spruce | TreeSpecies::Jungle | TreeSpecies::Scrub => false,
     }
 }
