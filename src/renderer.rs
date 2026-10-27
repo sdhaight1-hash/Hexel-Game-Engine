@@ -1086,17 +1086,22 @@ impl Renderer {
         let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else {
             return;
         };
-        let color = match block {
-            BlockId::Air => [0.025, 0.055, 0.10],
-            BlockId::Grass => [0.20, 0.62, 0.22],
-            BlockId::Dirt => [0.48, 0.29, 0.14],
-            BlockId::Stone => [0.42, 0.45, 0.49],
-            BlockId::Foundation => [0.75, 0.75, 0.78],
-        };
+        let color = planet_block_color(block);
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
         for vertex in &mut self.planet_vertices[first..end_index] {
+            // Mining lowers the cell floor into the planet instead of merely
+            // painting the visible surface. Re-sample from the radial direction
+            // so placing a solid block restores the generated terrain elevation.
+            let radial = vertex.position.into();
+            let sample = self.planet_terrain.sample_direction(radial, 0.25);
+            let position = if block == BlockId::Air {
+                sample.surface_position - sample.direction * 2.4
+            } else {
+                sample.surface_position
+            };
+            vertex.position = position.as_vec3().to_array();
             vertex.color = color;
         }
         self.queue.write_buffer(
@@ -1222,12 +1227,18 @@ impl Renderer {
             let mut vertices = Vec::with_capacity(mesh.indices.len());
             for index in mesh.indices {
                 let source = mesh.vertices[index as usize];
-                let position = source.position + source.normal * 0.035;
                 let sample = self.planet_terrain.sample_direction(source.normal, 0.25);
-                let color = self
+                let cell_block = self
                     .planet_topology
                     .cell_id_for_direction(source.normal)
-                    .map(|id| self.planet_block_at(id.0))
+                    .map(|id| self.planet_block_at(id.0));
+                let surface_position = if cell_block == Some(BlockId::Air) {
+                    source.position - source.normal * 2.4
+                } else {
+                    source.position
+                };
+                let position = surface_position + source.normal * 0.035;
+                let color = cell_block
                     .map(planet_block_color)
                     .unwrap_or_else(|| planet_vertex_color(sample));
                 vertices.push(Vertex {
