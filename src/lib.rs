@@ -5,6 +5,7 @@ pub mod climate;
 pub mod geology;
 pub mod inventory;
 pub mod planet;
+pub mod planetary_world;
 pub mod soil;
 pub mod surface_navigation;
 pub mod surface_mesh;
