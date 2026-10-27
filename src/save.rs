@@ -204,6 +204,7 @@ mod tests {
         save.selected_hotbar = 4;
         save.inventory[0] = ItemStack::new(ItemId::GrassFiber, 17);
         save.inventory[35] = ItemStack::new(ItemId::BirchWood, 99);
+        save.inventory[34] = ItemStack::new(ItemId::StoneBlock, 7);
         save.flat_edits.push((CellPos::new(-3, 8, 2), BlockId::Air));
         save.planet_edits.push((42, BlockId::Stone));
         let decoded = GameSave::decode(&save.encode()).unwrap();
