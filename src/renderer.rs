@@ -170,6 +170,8 @@ pub struct Renderer {
     target_buffer: wgpu::Buffer,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
+    planet_cell_ranges: HashMap<u32, (u64, u64)>,
+    planet_cell_edits: HashMap<u32, BlockId>,
     planet_topology: SurfaceTopology,
     planet_terrain: PlanetGenerator,
     planet_radius: f32,
@@ -514,41 +516,43 @@ impl Renderer {
         // Keep the spherical preview separate from the flat-world chunk meshes.
         // It is generated once and only drawn while F3 preview mode is enabled.
         let planet_config = PlanetConfig {
-            radius: 36.0,
-            elevation_scale: 3.0,
+            radius: 180.0,
+            elevation_scale: 14.0,
             axial_tilt_degrees: 23.5,
         };
-        let topology = SurfaceTopology::generate(8, planet_config.radius)
+        let topology = SurfaceTopology::generate(16, planet_config.radius)
             .map_err(|error| format!("Could not generate planet preview topology: {error}"))?;
         let terrain = PlanetGenerator::with_config(seed, planet_config);
         let planet_mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
-        let mut planet_vertices = planet_mesh
-            .triangles
-            .into_iter()
-            .flat_map(|triangle| {
-                let is_pentagon = topology
-                    .cell(triangle.cell_id)
-                    .is_some_and(|cell| cell.boundary.len() == 5);
-                triangle.vertices.into_iter().map(move |vertex| {
-                    let mut color = planet_vertex_color(vertex.sample);
-                    if is_pentagon {
-                        // Keep biome color readable while making the twelve
-                        // topological defect cells immediately recognizable.
-                        color = [
-                            color[0] * 0.78 + 0.22,
-                            color[1] * 0.78 + 0.30,
-                            color[2] * 0.78 + 0.08,
-                        ];
-                    }
-                    Vertex {
-                        position: vertex.position.as_vec3().to_array(),
-                        color,
-                        uv: [0.0, 0.0],
-                        textured: 0.0,
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut planet_vertices = Vec::new();
+        let mut planet_cell_ranges = HashMap::new();
+        for triangle in planet_mesh.triangles {
+            let is_pentagon = topology
+                .cell(triangle.cell_id)
+                .is_some_and(|cell| cell.boundary.len() == 5);
+            let start = planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
+            for vertex in triangle.vertices {
+                let mut color = planet_vertex_color(vertex.sample);
+                if is_pentagon {
+                    color = [
+                        color[0] * 0.78 + 0.22,
+                        color[1] * 0.78 + 0.30,
+                        color[2] * 0.78 + 0.08,
+                    ];
+                }
+                planet_vertices.push(Vertex {
+                    position: vertex.position.as_vec3().to_array(),
+                    color,
+                    uv: [0.0, 0.0],
+                    textured: 0.0,
+                });
+            }
+            let end = planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
+            planet_cell_ranges
+                .entry(triangle.cell_id.0)
+                .and_modify(|range: &mut (u64, u64)| range.1 = end)
+                .or_insert((start, end));
+        }
 
         // Draw a narrow, slightly raised ribbon along every topology edge. This
         // makes the actual pentagon/hexagon partition visible instead of showing
@@ -583,7 +587,7 @@ impl Renderer {
         let planet_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Procedural spherical planet preview"),
             contents: bytemuck::cast_slice(&planet_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
@@ -625,6 +629,8 @@ impl Renderer {
             target_buffer,
             planet_vertex_buffer,
             planet_vertex_count,
+            planet_cell_ranges,
+            planet_cell_edits: HashMap::new(),
             planet_topology: topology,
             planet_terrain: terrain,
             planet_radius: planet_config.radius as f32,
