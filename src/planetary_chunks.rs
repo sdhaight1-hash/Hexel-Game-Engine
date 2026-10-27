@@ -35,6 +35,67 @@ impl CubeFace {
     }
 }
 
+/// Return a bounded set of cube-sphere patches around a unit-sphere direction.
+///
+/// Unlike scanning the entire face grid, this planner remains O(r^2) as the
+/// planet's patch resolution increases. Patches that cross a cube-face seam are
+/// remapped through their direction and deduplicated by canonical face address.
+pub fn chunk_keys_near_direction(
+    direction: DVec3,
+    chunks_per_face: u32,
+    radius_in_chunks: u32,
+) -> Vec<PlanetChunkKey> {
+    use std::collections::BTreeSet;
+
+    if chunks_per_face == 0 || !direction.is_finite() || direction.length_squared() <= f64::EPSILON {
+        return Vec::new();
+    }
+
+    let direction = direction.normalize();
+    let (face, u, v) = project_direction_to_face(direction);
+    let grid = chunks_per_face as f64;
+    let center_x = (((u + 1.0) * 0.5 * grid).floor() as i64)
+        .clamp(0, chunks_per_face as i64 - 1);
+    let center_y = (((v + 1.0) * 0.5 * grid).floor() as i64)
+        .clamp(0, chunks_per_face as i64 - 1);
+    let (normal, axis_u, axis_v) = face.basis();
+    let radius = radius_in_chunks as i64;
+    let mut keys = BTreeSet::new();
+
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            let x = center_x + dx;
+            let y = center_y + dy;
+            let patch_u = -1.0 + 2.0 * (x as f64 + 0.5) / grid;
+            let patch_v = -1.0 + 2.0 * (y as f64 + 0.5) / grid;
+            let patch_direction = (normal + axis_u * patch_u + axis_v * patch_v).normalize();
+            let (mapped_face, mapped_u, mapped_v) = project_direction_to_face(patch_direction);
+            let mapped_x = (((mapped_u + 1.0) * 0.5 * grid).floor() as i64)
+                .clamp(0, chunks_per_face as i64 - 1) as u32;
+            let mapped_y = (((mapped_v + 1.0) * 0.5 * grid).floor() as i64)
+                .clamp(0, chunks_per_face as i64 - 1) as u32;
+            keys.insert(PlanetChunkKey { face: mapped_face, x: mapped_x, y: mapped_y });
+        }
+    }
+    keys.into_iter().collect()
+}
+
+fn project_direction_to_face(direction: DVec3) -> (CubeFace, f64, f64) {
+    let a = direction.abs();
+    let face = if a.x >= a.y && a.x >= a.z {
+        if direction.x >= 0.0 { CubeFace::PositiveX } else { CubeFace::NegativeX }
+    } else if a.y >= a.z {
+        if direction.y >= 0.0 { CubeFace::PositiveY } else { CubeFace::NegativeY }
+    } else if direction.z >= 0.0 {
+        CubeFace::PositiveZ
+    } else {
+        CubeFace::NegativeZ
+    };
+    let (normal, axis_u, axis_v) = face.basis();
+    let denominator = direction.dot(normal).abs().max(f64::MIN_POSITIVE);
+    (face, direction.dot(axis_u) / denominator, direction.dot(axis_v) / denominator)
+}
+
 /// Integer patch address. x/y range from 0 to chunks_per_face - 1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PlanetChunkKey {
