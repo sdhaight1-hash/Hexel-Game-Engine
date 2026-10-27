@@ -1094,7 +1094,12 @@ impl Renderer {
             // Mining lowers the cell floor into the planet instead of merely
             // painting the visible surface. Re-sample from the radial direction
             // so placing a solid block restores the generated terrain elevation.
-            let radial = vertex.position.into();
+            let direction = Vec3::from_array(vertex.position).normalize_or_zero();
+            let radial = DVec3::new(
+                direction.x as f64,
+                direction.y as f64,
+                direction.z as f64,
+            );
             let sample = self.planet_terrain.sample_direction(radial, 0.25);
             let position = if block == BlockId::Air {
                 sample.surface_position - sample.direction * 2.4
