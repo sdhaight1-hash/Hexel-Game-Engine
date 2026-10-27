@@ -704,7 +704,6 @@ impl Renderer {
             pending_mesh_count: 0,
             pending_mesh_revision: 0,
         };
-        renderer.update_streaming(Vec3::ZERO);
         Ok(renderer)
     }
 
