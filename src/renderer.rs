@@ -170,6 +170,7 @@ pub struct Renderer {
     target_buffer: wgpu::Buffer,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
+    planet_vertices: Vec<Vertex>,
     planet_cell_ranges: HashMap<u32, (u64, u64)>,
     planet_cell_edits: HashMap<u32, BlockId>,
     planet_topology: SurfaceTopology,
@@ -629,6 +630,7 @@ impl Renderer {
             target_buffer,
             planet_vertex_buffer,
             planet_vertex_count,
+            planet_vertices,
             planet_cell_ranges,
             planet_cell_edits: HashMap::new(),
             planet_topology: topology,
@@ -1103,17 +1105,16 @@ impl Renderer {
             BlockId::Foundation => [0.75, 0.75, 0.78],
         };
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
-        let count = ((end - start) / vertex_size) as usize;
-        let mut vertices = Vec::with_capacity(count);
-        for _ in 0..count {
-            vertices.push(Vertex { position: [0.0; 3], color, uv: [0.0; 2], textured: 0.0 });
+        let first = (start / vertex_size) as usize;
+        let end_index = (end / vertex_size) as usize;
+        for vertex in &mut self.planet_vertices[first..end_index] {
+            vertex.color = color;
         }
-        // Update only the color field, preserving the generated triangle positions.
-        // Vertex layout is position(12 bytes), color(12 bytes), UV(8 bytes), textured(4 bytes).
-        let color_offset = start + 12;
-        let color_bytes = bytemuck::cast_slice(&vertices.iter().map(|v| v.color).collect::<Vec<_>>());
-        self.queue.write_buffer(&self.planet_vertex_buffer, color_offset, color_bytes);
-        let _ = count;
+        self.queue.write_buffer(
+            &self.planet_vertex_buffer,
+            start,
+            bytemuck::cast_slice(&self.planet_vertices[first..end_index]),
+        );
     }
 
     pub fn planet_surface_position(&self, direction: Vec3) -> Vec3 {
