@@ -103,7 +103,7 @@ impl HexelApp {
         if radial == Vec3::ZERO { return; }
         let forward = self.camera.forward();
         let tangent_forward = (forward - radial * forward.dot(radial)).normalize_or_zero();
-        let tangent_right = radial.cross(tangent_forward).normalize_or_zero();
+        let tangent_right = tangent_forward.cross(radial).normalize_or_zero();
         let mut direction = Vec3::ZERO;
         if self.pressed.contains(&KeyCode::KeyW) { direction += tangent_forward; }
         if self.pressed.contains(&KeyCode::KeyS) { direction -= tangent_forward; }
