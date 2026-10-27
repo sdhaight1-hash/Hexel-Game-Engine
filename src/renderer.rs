@@ -1629,6 +1629,23 @@ fn append_hexel_prism(
         }
     }
 }
+fn push_triangle(
+    vertices: &mut Vec<Vertex>,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    color: [f32; 3],
+) {
+    for position in [a, b, c] {
+        vertices.push(Vertex {
+            position: position.to_array(),
+            color,
+            uv: [0.0, 0.0],
+            textured: 0.0,
+        });
+    }
+}
+
 fn push_textured_triangle(
     vertices: &mut Vec<Vertex>,
     points: [(Vec3, [f32; 2]); 3],
