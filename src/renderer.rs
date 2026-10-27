@@ -1518,10 +1518,9 @@ impl Renderer {
             overlay.set_vertex_buffer(0, self.crosshair_buffer.slice(..));
             overlay.draw(0..4, 0..1);
             overlay.draw(4..8, 0..1);
-            if !self.planet_preview {
-                overlay.set_vertex_buffer(0, hud_buffer.slice(..));
-                overlay.draw(0..hud_vertices.len() as u32, 0..1);
-            }
+            // The survival HUD is part of the single planetary world too.
+            overlay.set_vertex_buffer(0, hud_buffer.slice(..));
+            overlay.draw(0..hud_vertices.len() as u32, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
