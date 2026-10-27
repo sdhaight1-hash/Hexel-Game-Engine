@@ -2,7 +2,7 @@ name: Windows playable build
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/unified-planetary-gameplay"]
   workflow_dispatch:
 
 permissions:
