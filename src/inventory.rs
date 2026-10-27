@@ -110,6 +110,13 @@ impl Inventory {
         removed
     }
 
+    /// Restore a saved slot without applying inventory pickup/stacking rules.
+    pub fn set_slot(&mut self, index: usize, stack: Option<ItemStack>) -> bool {
+        let Some(slot) = self.slots.get_mut(index) else { return false; };
+        *slot = stack;
+        true
+    }
+
     pub fn slots(&self) -> &[Option<ItemStack>; 36] {
         &self.slots
     }
