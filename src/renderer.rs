@@ -1124,8 +1124,14 @@ impl Renderer {
     pub fn planet_cell_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
         let dir = direction.normalize_or_zero();
         if dir == Vec3::ZERO { return None; }
+        // Intersect a local-radius sphere: terrain elevation varies around the
+        // globe, so the configured base radius can put an ocean-level player inside
+        // the ideal sphere and incorrectly select the far side.
+        let local_radius = self.planet_terrain
+            .sample_direction(DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64), 0.25)
+            .surface_position.length() as f32;
         let b = origin.dot(dir);
-        let c = origin.length_squared() - self.planet_radius * self.planet_radius;
+        let c = origin.length_squared() - local_radius * local_radius;
         let discriminant = b * b - c;
         if discriminant < 0.0 { return None; }
         let root = discriminant.sqrt();
