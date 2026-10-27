@@ -26,7 +26,6 @@ use winit::{dpi::PhysicalSize, window::Window};
 const CHUNK_SIZE: i32 = 16;
 const MAX_EDIT_HEIGHT: i32 = 12;
 const STREAM_RADIUS_CHUNKS: i32 = 5;
-const RENDER_DISTANCE: f32 = 110.0;
 
 const SHADER: &str = r#"
 struct Camera { view_proj: mat4x4<f32>, };
@@ -157,8 +156,6 @@ struct MeshResult {
 struct ChunkMesh {
     buffer: wgpu::Buffer,
     vertex_count: u32,
-    bounds_min: Vec3,
-    bounds_max: Vec3,
 }
 
 struct PlanetGpuChunk {
@@ -711,8 +708,6 @@ impl Renderer {
         Ok(renderer)
     }
 
-    /// True when the player capsule would overlap a generated tree's solid trunk.
-    /// Tree roots use the same deterministic hash and reduced-density threshold as meshing.
     pub fn cell_from_world(position: Vec3) -> CellPos {
         let scale = WorldScale::default();
         let r_float = position.z / (scale.hex_radius * 1.5);
@@ -1023,38 +1018,9 @@ impl Renderer {
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         };
-        let scale = WorldScale::default();
-        let mut min = Vec3::new(f32::INFINITY, 0.0, f32::INFINITY);
-        let y_start = pos.y * CHUNK_SIZE;
-        let y_end = y_start + CHUNK_SIZE;
-        let mut max = Vec3::new(
-            f32::NEG_INFINITY,
-            if pos.y == 0 {
-                (y_end as f32 * scale.hexel_height).max(105.0)
-            } else {
-                y_end as f32 * scale.hexel_height
-            },
-            f32::NEG_INFINITY,
-        );
-        for q in [q_start, q_end - 1] {
-            for r in [r_start, r_end - 1] {
-                let center = scale.prism_center(CellPos::new(q, r, 0));
-                min.x = min.x.min(center.x);
-                min.z = min.z.min(center.z);
-                max.x = max.x.max(center.x);
-                max.z = max.z.max(center.z);
-            }
-        }
-        min.x -= scale.hex_radius * 2.0;
-        min.z -= scale.hex_radius * 2.0;
-        max.x += scale.hex_radius * 2.0;
-        max.z += scale.hex_radius * 2.0;
-        min.y = y_start as f32 * scale.hexel_height;
         ChunkMesh {
             buffer,
             vertex_count,
-            bounds_min: min,
-            bounds_max: max,
         }
     }
     pub fn planet_block_at(&self, id: u32) -> BlockId {
@@ -1735,54 +1701,6 @@ fn generated_block_from_height(cell: CellPos, height: i32) -> BlockId {
     }
 }
 
-fn build_target_outline(cell: CellPos) -> Vec<Vertex> {
-    let scale = WorldScale::default();
-    let center = scale.prism_center(cell);
-    let radius = scale.hex_radius * 1.025;
-    let bottom = cell.y as f32 * scale.hexel_height - 0.002;
-    let top = (cell.y + 1) as f32 * scale.hexel_height + 0.002;
-    let ring: [Vec3; 6] = std::array::from_fn(|i| {
-        let angle = (30.0_f32 + i as f32 * 60.0).to_radians();
-        Vec3::new(
-            center.x + angle.cos() * radius,
-            0.0,
-            center.z + angle.sin() * radius,
-        )
-    });
-    let color = [1.0, 0.92, 0.12];
-    let mut vertices = Vec::with_capacity(36);
-    let mut edge = |a: Vec3, b: Vec3| {
-        vertices.push(Vertex {
-            position: a.to_array(),
-            color,
-            uv: [0.0, 0.0],
-            textured: 0.0,
-        });
-        vertices.push(Vertex {
-            position: b.to_array(),
-            color,
-            uv: [0.0, 0.0],
-            textured: 0.0,
-        });
-    };
-    for i in 0..6 {
-        let next = (i + 1) % 6;
-        edge(
-            Vec3::new(ring[i].x, bottom, ring[i].z),
-            Vec3::new(ring[next].x, bottom, ring[next].z),
-        );
-        edge(
-            Vec3::new(ring[i].x, top, ring[i].z),
-            Vec3::new(ring[next].x, top, ring[next].z),
-        );
-        edge(
-            Vec3::new(ring[i].x, bottom, ring[i].z),
-            Vec3::new(ring[i].x, top, ring[i].z),
-        );
-    }
-    vertices
-}
-
 fn create_depth_target(
     device: &wgpu::Device,
     width: u32,
@@ -1804,35 +1722,6 @@ fn create_depth_target(
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
-}
-fn chunk_visible(view_proj: Mat4, camera_position: Vec3, forward: Vec3, chunk: &ChunkMesh) -> bool {
-    let center = (chunk.bounds_min + chunk.bounds_max) * 0.5;
-    let radius = (chunk.bounds_max - center).length();
-    let to_center = center - camera_position;
-    if to_center.length() - radius > RENDER_DISTANCE || to_center.dot(forward) < -radius {
-        return false;
-    }
-    let corners = [
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_min.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_min.y, chunk.bounds_max.z),
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_max.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_max.y, chunk.bounds_max.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_min.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_min.y, chunk.bounds_max.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_max.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_max.y, chunk.bounds_max.z),
-    ];
-    let clip = corners.map(|p| view_proj * p.extend(1.0));
-    if clip.iter().all(|p| p.x < -p.w)
-        || clip.iter().all(|p| p.x > p.w)
-        || clip.iter().all(|p| p.y < -p.w)
-        || clip.iter().all(|p| p.y > p.w)
-        || clip.iter().all(|p| p.z < 0.0)
-        || clip.iter().all(|p| p.z > p.w)
-    {
-        return false;
-    }
-    true
 }
 fn affected_chunks_for_cell(cell: CellPos) -> Vec<ChunkPos> {
     let mut affected = cell
