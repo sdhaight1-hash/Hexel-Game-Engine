@@ -903,23 +903,37 @@ impl Renderer {
         let dir = direction.normalize_or_zero();
         if dir == Vec3::ZERO { return None; }
         let mut best: Option<(u32, f32)> = None;
-        let mut test_range = |id: u32, start: usize, end: usize| {
-            for index in (start..end).step_by(3) {
-                let a = Vec3::from_array(self.planet_vertices[index].position);
-                let b = Vec3::from_array(self.planet_vertices[index + 1].position);
-                let c = Vec3::from_array(self.planet_vertices[index + 2].position);
-                if let Some(distance) = ray_triangle_distance(origin, dir, a, b, c)
-                    && best.is_none_or(|(_, current)| distance < current) {
-                    best = Some((id, distance));
-                }
-            }
-        };
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
+        let radius = self.planet_world.descriptor().radius;
+        let elevation = self.planet_world.descriptor().elevation_scale;
         for (id, (start, end)) in &self.planet_cell_ranges {
-            test_range(*id, (start / vertex_size) as usize, (end / vertex_size) as usize);
-        }
-        for (id, (start, end)) in &self.planet_cell_wall_ranges {
-            test_range(*id, *start, *end);
+            let cell_id = hexel_engine::topology::SurfaceCellId(*id);
+            let Some(cell) = self.planet_world.topology().cell(cell_id) else { continue; };
+            let layer = if self.planet_voxel_block_at(*id, 0).is_solid() {
+                0
+            } else {
+                self.planet_top_solid_voxel(*id).0
+            };
+            let depth = (-layer).max(0) as f64 * 2.4;
+            let center = (cell.center * radius - cell.center * (depth * 0.5)).as_vec3();
+            let bound_radius = radius * 0.18 + elevation + depth * 0.5 + 2.4;
+            let Some(bound_hit) = ray_sphere_distance(origin, dir, center, bound_radius as f32) else {
+                continue;
+            };
+            if best.is_some_and(|(_, distance)| bound_hit > distance) {
+                continue;
+            }
+            let first = (*start / vertex_size) as usize;
+            let last = (*end / vertex_size) as usize;
+            if let Some(distance) = ray_triangle_range(&self.planet_vertices, origin, dir, first, last)
+                && best.is_none_or(|(_, current)| distance < current) {
+                best = Some((*id, distance));
+            }
+            if let Some((wall_start, wall_end)) = self.planet_cell_wall_ranges.get(id)
+                && let Some(distance) = ray_triangle_range(&self.planet_vertices, origin, dir, *wall_start, *wall_end)
+                && best.is_none_or(|(_, current)| distance < current) {
+                best = Some((*id, distance));
+            }
         }
         best
     }
@@ -1473,6 +1487,32 @@ fn append_planetary_trees(
             vertices.push(vertex);
         }
     }
+}
+
+fn ray_triangle_range(vertices: &[Vertex], origin: Vec3, direction: Vec3, start: usize, end: usize) -> Option<f32> {
+    let mut nearest: Option<f32> = None;
+    for index in (start..end).step_by(3) {
+        let a = Vec3::from_array(vertices[index].position);
+        let b = Vec3::from_array(vertices[index + 1].position);
+        let c = Vec3::from_array(vertices[index + 2].position);
+        if let Some(distance) = ray_triangle_distance(origin, direction, a, b, c)
+            && nearest.is_none_or(|current| distance < current) {
+            nearest = Some(distance);
+        }
+    }
+    nearest
+}
+
+fn ray_sphere_distance(origin: Vec3, direction: Vec3, center: Vec3, radius: f32) -> Option<f32> {
+    let relative = origin - center;
+    let b = relative.dot(direction);
+    let c = relative.length_squared() - radius * radius;
+    let discriminant = b * b - c;
+    if discriminant < 0.0 { return None; }
+    let root = discriminant.sqrt();
+    let near = -b - root;
+    let far = -b + root;
+    if far < 0.0 { None } else { Some(near.max(0.0)) }
 }
 
 fn ray_triangle_distance(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
