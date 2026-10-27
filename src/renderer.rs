@@ -909,10 +909,10 @@ impl Renderer {
         for (id, (start, end)) in &self.planet_cell_ranges {
             let cell_id = hexel_engine::topology::SurfaceCellId(*id);
             let Some(cell) = self.planet_world.topology().cell(cell_id) else { continue; };
-            let layer = if self.planet_voxel_block_at(*id, 0).is_solid() {
-                0
-            } else {
+            let layer = if self.planet_world.edited_cells().get(&cell_id) == Some(&BlockId::Air) {
                 self.planet_top_solid_voxel(*id).0
+            } else {
+                0
             };
             let depth = (-layer).max(0) as f64 * 2.4;
             let center = (cell.center * radius - cell.center * (depth * 0.5)).as_vec3();
