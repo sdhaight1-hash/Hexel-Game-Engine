@@ -1419,6 +1419,7 @@ fn planetary_chunk_owns_direction(
     x == key.x && y == key.y
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_planetary_trees(
     vertices: &mut Vec<Vertex>,
     key: PlanetChunkKey,
