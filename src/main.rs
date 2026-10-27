@@ -10,6 +10,7 @@ use glam::Vec3;
 use hexel_engine::{
     BlockId,
     inventory::{Inventory, ItemId},
+    save::GameSave,
 };
 use renderer::{Camera, Renderer};
 use tracing::{error, info};
@@ -71,6 +72,23 @@ impl Default for HexelApp {
     }
 }
 impl HexelApp {
+    fn save_game(&self) {
+        let Some(renderer) = self.renderer.as_ref() else { return; };
+        let mut save = GameSave::fresh(renderer.world_seed());
+        save.player_position = [self.player_feet.x, self.player_feet.y, self.player_feet.z];
+        save.yaw = self.camera.yaw;
+        save.pitch = self.camera.pitch;
+        save.planet_mode = renderer.planet_preview_enabled();
+        save.selected_hotbar = self.inventory.selected_hotbar();
+        save.inventory = *self.inventory.slots();
+        save.flat_edits = renderer.flat_edits_snapshot();
+        save.planet_edits = renderer.planet_edits_snapshot();
+        match std::fs::write("hexel-world.save", save.encode()) {
+            Ok(()) => println!("Saved Hexel world to hexel-world.save"),
+            Err(error) => eprintln!("Could not save Hexel world: {error}"),
+        }
+    }
+
     fn lock_cursor(&mut self) {
         let Some(window) = self.window.as_ref() else {
             return;
@@ -473,11 +491,22 @@ impl ApplicationHandler for HexelApp {
         if self.window.is_some() {
             return;
         }
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u32
-            ^ std::process::id().rotate_left(13);
+        let loaded_save = std::fs::read_to_string("hexel-world.save")
+            .ok()
+            .and_then(|contents| match GameSave::decode(&contents) {
+                Ok(save) => Some(save),
+                Err(error) => {
+                    eprintln!("Ignoring invalid hexel-world.save: {error:?}");
+                    None
+                }
+            });
+        let seed = loaded_save.as_ref().map(|save| save.seed).unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u32
+                ^ std::process::id().rotate_left(13)
+        });
         let attributes = Window::default_attributes()
             .with_title("Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse")
             .with_inner_size(PhysicalSize::new(1280, 800));
@@ -490,10 +519,32 @@ impl ApplicationHandler for HexelApp {
             }
         };
         match pollster::block_on(Renderer::new(window.clone(), seed)) {
-            Ok(renderer) => {
-                let ground = renderer.ground_height(0, 0);
-                self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
-                self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
+            Ok(mut renderer) => {
+                if let Some(save) = loaded_save.as_ref() {
+                    renderer.restore_flat_edits(&save.flat_edits);
+                    renderer.restore_planet_edits(&save.planet_edits);
+                    self.player_feet = Vec3::from_array(save.player_position);
+                    self.camera.yaw = save.yaw;
+                    self.camera.pitch = save.pitch.clamp(-1.52, 1.52);
+                    self.inventory = Inventory::default();
+                    for (index, stack) in save.inventory.iter().enumerate() {
+                        self.inventory.set_slot(index, *stack);
+                    }
+                    self.inventory.select_hotbar(save.selected_hotbar);
+                    if save.planet_mode {
+                        renderer.toggle_planet_preview();
+                        self.camera.up = self.player_feet.normalize_or_zero();
+                        if self.camera.up == Vec3::ZERO { self.camera.up = Vec3::X; }
+                    } else {
+                        self.camera.up = Vec3::Y;
+                    }
+                    self.camera.position = self.player_feet + self.camera.up * PLAYER_EYE_HEIGHT;
+                    println!("Loaded saved Hexel world.");
+                } else {
+                    let ground = renderer.ground_height(0, 0);
+                    self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
+                    self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
+                }
                 info!(
                     seed,
                     "Generated streamed 16×16×16 hexel prism chunks; use this seed to identify this world"
@@ -521,7 +572,7 @@ impl ApplicationHandler for HexelApp {
         event: WindowEvent,
     ) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => { self.save_game(); event_loop.exit(); }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size);
@@ -567,6 +618,9 @@ impl ApplicationHandler for HexelApp {
                             }
                             KeyCode::KeyE => {
                                 self.inventory_open = !self.inventory_open;
+                            }
+                            KeyCode::F5 => {
+                                self.save_game();
                             }
                             KeyCode::F3 if !self.pressed.contains(&code) => {
                                 let preview = if let Some(renderer) = self.renderer.as_mut() {
