@@ -297,8 +297,10 @@ impl HexelApp {
             ItemId::OakWood | ItemId::BirchWood | ItemId::PineWood
             | ItemId::GenericWood | ItemId::Stick | ItemId::GrassFiber => return,
         };
-        if renderer.planet_voxel_block_at(target, 0) == BlockId::Air
-            && renderer.edit_planet_voxel(target, 0, block)
+        let (top_layer, _) = renderer.planet_top_solid_voxel(target);
+        let place_layer = top_layer + 1;
+        if place_layer <= hexel_engine::planetary_voxels::PlanetVoxelVolume::MAX_BUILD_HEIGHT
+            && renderer.edit_planet_voxel(target, place_layer, block)
         {
             let slot = self.inventory.selected_hotbar();
             self.inventory.remove_from_slot(slot, 1);
