@@ -1068,6 +1068,38 @@ impl Renderer {
             bounds_max: max,
         }
     }
+    pub fn planet_surface_position(&self, direction: Vec3) -> Vec3 {
+        self.planet_terrain.sample_direction(DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64), 0.25).surface_position.as_vec3()
+    }
+
+    pub fn planet_cell_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
+        let dir = direction.normalize_or_zero();
+        if dir == Vec3::ZERO { return None; }
+        let b = origin.dot(dir);
+        let c = origin.length_squared() - self.planet_radius * self.planet_radius;
+        let discriminant = b * b - c;
+        if discriminant < 0.0 { return None; }
+        let root = discriminant.sqrt();
+        let near = -b - root;
+        let far = -b + root;
+        let distance = if near >= 0.0 { near } else if far >= 0.0 { far } else { return None; };
+        let hit = origin + dir * distance;
+        self.planet_topology.cell_id_for_direction(DVec3::new(hit.x as f64, hit.y as f64, hit.z as f64)).map(|id| id.0)
+    }
+
+    fn build_planet_cell_outline(&self, id: u32) -> Vec<Vertex> {
+        let Some(cell) = self.planet_topology.cell(hexel_engine::topology::SurfaceCellId(id)) else { return Vec::new(); };
+        let mut vertices = Vec::with_capacity(cell.boundary.len() * 2);
+        for i in 0..cell.boundary.len() {
+            let a = self.planet_terrain.sample_direction(cell.boundary[i], 0.25).surface_position.as_vec3() * 1.006;
+            let b = self.planet_terrain.sample_direction(cell.boundary[(i + 1) % cell.boundary.len()], 0.25).surface_position.as_vec3() * 1.006;
+            for point in [a, b] {
+                vertices.push(Vertex { position: point.to_array(), color: [1.0, 0.92, 0.22], uv: [0.0, 0.0], textured: 0.0 });
+            }
+        }
+        vertices
+    }
+
     pub fn toggle_planet_preview(&mut self) {
         self.planet_preview = !self.planet_preview;
     }
@@ -1104,7 +1136,9 @@ impl Renderer {
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         let target_vertices = if self.planet_preview {
-            Vec::new()
+            self.planet_cell_at_ray(camera.position, camera.forward())
+                .map(|id| self.build_planet_cell_outline(id))
+                .unwrap_or_default()
         } else {
             self.raycast(camera.position, camera.forward(), 8.0)
                 .map(|(cell, _)| build_target_outline(cell))
@@ -1243,6 +1277,11 @@ impl Renderer {
             if self.planet_preview {
                 pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
                 pass.draw(0..self.planet_vertex_count, 0..1);
+                if !target_vertices.is_empty() {
+                    pass.set_pipeline(&self.outline_pipeline);
+                    pass.set_vertex_buffer(0, self.target_buffer.slice(..));
+                    pass.draw(0..target_vertices.len() as u32, 0..1);
+                }
             } else {
                 let forward = camera.forward();
                 for chunk in self.chunks.values() {
@@ -1262,7 +1301,7 @@ impl Renderer {
                 }
             }
         }
-        if !self.planet_preview {
+        {
             let mut overlay = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Crosshair overlay pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1281,8 +1320,10 @@ impl Renderer {
             overlay.set_vertex_buffer(0, self.crosshair_buffer.slice(..));
             overlay.draw(0..4, 0..1);
             overlay.draw(4..8, 0..1);
-            overlay.set_vertex_buffer(0, hud_buffer.slice(..));
-            overlay.draw(0..hud_vertices.len() as u32, 0..1);
+            if !self.planet_preview {
+                overlay.set_vertex_buffer(0, hud_buffer.slice(..));
+                overlay.draw(0..hud_vertices.len() as u32, 0..1);
+            }
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
