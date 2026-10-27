@@ -70,9 +70,7 @@ impl PlanetVoxelVolume {
         world: &PlanetaryWorld,
         pos: PlanetVoxelPos,
     ) -> Option<BlockId> {
-        if world.topology().cell(pos.cell).is_none() {
-            return None;
-        }
+        world.topology().cell(pos.cell)?;
         Some(self.edits.get(&pos).copied().unwrap_or_else(|| {
             generated_layer(world.sample_cell(pos.cell, 0.0).expect("cell validated"), pos.layer)
         }))
