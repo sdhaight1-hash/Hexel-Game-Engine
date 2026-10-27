@@ -110,12 +110,6 @@ impl HexelApp {
         }
         self.cursor_locked = false;
     }
-    fn planet_preview_active(&self) -> bool {
-        self.renderer
-            .as_ref()
-            .is_some_and(Renderer::planet_preview_enabled)
-    }
-
     fn update_planet_player(&mut self, dt: f32) {
         let Some(renderer) = self.renderer.as_ref() else {
             return;
@@ -251,79 +245,24 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_ref() else {
             return;
         };
-        if self.planet_preview_active() {
-            let message = renderer
-                .planet_cell_at_ray(self.camera.position, self.camera.forward())
-                .map(|id| {
-                    format!(
-                        "Hexel Engine | Globe | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB harvest / RMB place",
-                        renderer.planet_block_at(id),
-                        self.inventory.selected_hotbar() + 1,
-                        self.inventory
-                            .selected_stack()
-                            .map(|s| format!("{:?} x{}", s.item, s.count))
-                            .unwrap_or_else(|| "Empty".to_string())
-                    )
-                })
-                .unwrap_or_else(|| {
-                    "Hexel Engine | Globe | WASD move | Space jump | E inventory".to_string()
-                });
-            window.set_title(&message);
-            return;
-        }
-        let message = if let Some((cell, _)) =
-            renderer.raycast(self.camera.position, self.camera.forward(), 8.0)
-        {
-            let block = renderer.block_at(cell);
-            let name = match block {
-                BlockId::Grass => "Grass",
-                BlockId::Dirt => "Dirt",
-                BlockId::Stone => "Stone",
-                BlockId::Foundation => "Foundation (unbreakable)",
-                BlockId::Air => "Air",
-            };
-            let progress = if self.harvest_held && self.harvest_target == Some(cell) {
+        let message = renderer
+            .planet_cell_at_ray(self.camera.position, self.camera.forward())
+            .map(|id| {
                 format!(
-                    " | Breaking: {:.0}%",
-                    (self.harvest_progress / 1.8 * 100.0).min(100.0)
+                    "Hexel Engine | Globe | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB harvest / RMB place",
+                    renderer.planet_block_at(id),
+                    self.inventory.selected_hotbar() + 1,
+                    self.inventory
+                        .selected_stack()
+                        .map(|s| format!("{:?} x{}", s.item, s.count))
+                        .unwrap_or_else(|| "Empty".to_string())
                 )
-            } else {
-                String::new()
-            };
-            format!(
-                "Hexel Engine | Looking at: {name} [{}, {}, {}]{progress} | Hotbar [{}] {} | E: {} | LMB break / RMB place",
-                cell.q,
-                cell.r,
-                cell.y,
-                self.inventory.selected_hotbar() + 1,
-                self.inventory
-                    .selected_stack()
-                    .map(|s| format!("{:?} x{}", s.item, s.count))
-                    .unwrap_or_else(|| "Empty".to_string()),
-                if self.inventory_open {
-                    "inventory open (UI pending)"
-                } else {
-                    "inventory"
-                }
-            )
-        } else {
-            format!(
-                "Hexel Engine | Looking at: nothing | Hotbar [{}] {} | E: {} | LMB break / RMB place",
-                self.inventory.selected_hotbar() + 1,
-                self.inventory
-                    .selected_stack()
-                    .map(|s| format!("{:?} x{}", s.item, s.count))
-                    .unwrap_or_else(|| "Empty".to_string()),
-                if self.inventory_open {
-                    "inventory open (UI pending)"
-                } else {
-                    "inventory"
-                }
-            )
-        };
+            })
+            .unwrap_or_else(|| {
+                "Hexel Engine | Globe | WASD move | Space jump | E inventory".to_string()
+            });
         window.set_title(&message);
     }
-
 }
 
 impl ApplicationHandler for HexelApp {
