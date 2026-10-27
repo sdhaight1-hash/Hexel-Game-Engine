@@ -43,6 +43,7 @@ struct HexelApp {
     harvest_held: bool,
     harvest_target: Option<hexel_engine::CellPos>,
     planet_harvest_target: Option<u32>,
+    planet_tree_harvest_target: Option<u32>,
     harvest_progress: f32,
     target_ui_tick: f32,
     inventory: Inventory,
@@ -64,6 +65,7 @@ impl Default for HexelApp {
             harvest_held: false,
             harvest_target: None,
             planet_harvest_target: None,
+            planet_tree_harvest_target: None,
             harvest_progress: 0.0,
             target_ui_tick: 0.0,
             inventory: Inventory::default(),
@@ -83,6 +85,7 @@ impl HexelApp {
         save.inventory = *self.inventory.slots();
         save.planet_edits = renderer.planet_edits_snapshot();
         save.planet_voxel_edits = renderer.planet_voxel_edits_snapshot();
+        save.planet_removed_trees = renderer.planet_removed_trees_snapshot();
         match std::fs::write("hexel-world.save", save.encode()) {
             Ok(()) => println!("Saved Hexel world to hexel-world.save"),
             Err(error) => eprintln!("Could not save Hexel world: {error}"),
@@ -178,12 +181,37 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        let hit = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward());
+        let tree_hit = renderer.planet_tree_at_ray(self.camera.position, self.camera.forward());
         if !self.harvest_held {
             self.planet_harvest_target = None;
+            self.planet_tree_harvest_target = None;
             self.harvest_progress = 0.0;
             return;
         }
+        if let Some(tree_id) = tree_hit {
+            if self.planet_tree_harvest_target != Some(tree_id) {
+                self.planet_tree_harvest_target = Some(tree_id);
+                self.planet_harvest_target = None;
+                self.harvest_progress = 0.0;
+            }
+            self.harvest_progress += dt.max(0.0);
+            if self.harvest_progress >= 1.1 {
+                if renderer.remove_planet_tree(tree_id) {
+                    let _overflow = self.inventory.add(ItemId::GenericWood, 3);
+                    let _overflow = self.inventory.add(ItemId::Stick, 1);
+                }
+                self.harvest_held = false;
+                self.planet_tree_harvest_target = None;
+                self.planet_harvest_target = None;
+                self.harvest_progress = 0.0;
+            }
+            return;
+        }
+        if self.planet_tree_harvest_target.take().is_some() {
+            self.planet_harvest_target = None;
+            self.harvest_progress = 0.0;
+        }
+        let hit = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward());
         if hit != self.planet_harvest_target {
             self.planet_harvest_target = hit;
             self.harvest_progress = 0.0;
@@ -326,6 +354,7 @@ impl ApplicationHandler for HexelApp {
                 if let Some(save) = loaded_save.as_ref() {
                     renderer.restore_planet_edits(&save.planet_edits);
                     renderer.restore_planet_voxel_edits(&save.planet_voxel_edits);
+                    renderer.restore_planet_removed_trees(&save.planet_removed_trees);
                     self.player_feet = Vec3::from_array(save.player_position);
                     self.camera.yaw = save.yaw;
                     self.camera.pitch = save.pitch.clamp(-1.52, 1.52);
