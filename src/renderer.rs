@@ -798,7 +798,7 @@ impl Renderer {
                 let neighbor_layer = self.planet_top_solid_voxel(neighbor.0).0;
                 deepest_neighbor = deepest_neighbor.max((-neighbor_layer).max(0) as f64 * BLOCK_DEPTH);
             }
-            let wall_depth = deepest_neighbor + BLOCK_DEPTH;
+            let wall_depth = (deepest_neighbor + BLOCK_DEPTH - offset).max(BLOCK_DEPTH);
             let mut wall_positions = Vec::with_capacity(wall_end - wall_start);
             for index in 0..cell.boundary.len() {
                 let next = (index + 1) % cell.boundary.len();
