@@ -5,6 +5,7 @@ pub mod climate;
 pub mod geology;
 pub mod inventory;
 pub mod planet;
+pub mod planetary_frame;
 pub mod planetary_world;
 pub mod planetary_chunks;
 pub mod soil;
@@ -53,11 +54,7 @@ impl CellPos {
         let cr = self.r.div_euclid(CHUNK_R);
         let cy = self.y.div_euclid(CHUNK_Y);
         (
-            ChunkPos {
-                q: cq,
-                r: cr,
-                y: cy,
-            },
+            ChunkPos { q: cq, r: cr, y: cy },
             [
                 self.q.rem_euclid(CHUNK_Q) as usize,
                 self.r.rem_euclid(CHUNK_R) as usize,
@@ -114,7 +111,6 @@ impl Default for WorldScale {
 
 impl WorldScale {
     pub fn prism_center(self, cell: CellPos) -> Vec3 {
-        // Pointy-top axial layout; vertical layer centers align to cell caps.
         let x = self.hex_radius * 3.0_f32.sqrt() * (cell.q as f32 + cell.r as f32 * 0.5);
         let z = self.hex_radius * 1.5 * cell.r as f32;
         Vec3::new(x, (cell.y as f32 + 0.5) * self.hexel_height, z)
@@ -128,9 +124,7 @@ pub struct Chunk {
 
 impl Default for Chunk {
     fn default() -> Self {
-        Self {
-            cells: vec![BlockId::Air; (CHUNK_Q * CHUNK_R * CHUNK_Y) as usize],
-        }
+        Self { cells: vec![BlockId::Air; (CHUNK_Q * CHUNK_R * CHUNK_Y) as usize] }
     }
 }
 
@@ -138,18 +132,10 @@ impl Chunk {
     fn index(local: [usize; 3]) -> usize {
         (local[2] * CHUNK_R as usize + local[1]) * CHUNK_Q as usize + local[0]
     }
-    pub fn get(&self, local: [usize; 3]) -> BlockId {
-        self.cells[Self::index(local)]
-    }
-    pub fn set(&mut self, local: [usize; 3], id: BlockId) {
-        self.cells[Self::index(local)] = id;
-    }
-    pub fn len(&self) -> usize {
-        self.cells.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
-    }
+    pub fn get(&self, local: [usize; 3]) -> BlockId { self.cells[Self::index(local)] }
+    pub fn set(&mut self, local: [usize; 3], id: BlockId) { self.cells[Self::index(local)] = id; }
+    pub fn len(&self) -> usize { self.cells.len() }
+    pub fn is_empty(&self) -> bool { self.cells.is_empty() }
 }
 
 #[derive(Default)]
@@ -160,19 +146,13 @@ pub struct World {
 impl World {
     pub fn get(&self, pos: CellPos) -> BlockId {
         let (chunk_pos, local) = pos.chunk_and_local();
-        self.chunks
-            .get(&chunk_pos)
-            .map_or(BlockId::Air, |c| c.get(local))
+        self.chunks.get(&chunk_pos).map_or(BlockId::Air, |c| c.get(local))
     }
-
     pub fn set(&mut self, pos: CellPos, id: BlockId) {
         let (chunk_pos, local) = pos.chunk_and_local();
         self.chunks.entry(chunk_pos).or_default().set(local, id);
     }
-
-    pub fn chunk_count(&self) -> usize {
-        self.chunks.len()
-    }
+    pub fn chunk_count(&self) -> usize { self.chunks.len() }
 }
 
 pub fn terrain_height(seed: u32, q: i32, r: i32) -> i32 {
@@ -204,8 +184,6 @@ pub struct RayHit {
     pub distance: f32,
 }
 
-/// Intersect a ray against a regular pointy-top hexagonal prism by clipping it
-/// against the six side half-spaces and the two horizontal caps.
 pub fn raycast_prism(
     origin: Vec3,
     direction: Vec3,
@@ -218,7 +196,6 @@ pub fn raycast_prism(
     if dir == Vec3::ZERO {
         return None;
     }
-
     let apothem = radius * 3.0_f32.sqrt() * 0.5;
     let half_h = height * 0.5;
     let planes = [
@@ -231,35 +208,25 @@ pub fn raycast_prism(
         (Vec3::Y, half_h, 6usize),
         (-Vec3::Y, half_h, 7usize),
     ];
-
     let relative_origin = origin - center;
     let mut enter = 0.0_f32;
     let mut exit = max_distance;
     let mut enter_face = 0usize;
-
     for (normal, limit, face) in planes {
         let dist = normal.dot(relative_origin);
         let denom = normal.dot(dir);
         if denom.abs() < 1e-6 {
-            if dist > limit {
-                return None;
-            }
+            if dist > limit { return None; }
             continue;
         }
         let t = (limit - dist) / denom;
         if denom < 0.0 {
-            if t > enter {
-                enter = t;
-                enter_face = face;
-            }
+            if t > enter { enter = t; enter_face = face; }
         } else {
             exit = exit.min(t);
         }
-        if enter > exit {
-            return None;
-        }
+        if enter > exit { return None; }
     }
-
     if exit >= 0.0 && enter <= max_distance {
         Some((enter.max(0.0), enter_face))
     } else {
@@ -272,21 +239,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chunk_layout_has_4096_cells() {
-        assert_eq!(Chunk::default().len(), 16 * 16 * 16);
-    }
+    fn chunk_layout_has_4096_cells() { assert_eq!(Chunk::default().len(), 16 * 16 * 16); }
 
     #[test]
     fn negative_coordinates_use_euclidean_chunking() {
         let (chunk, local) = CellPos::new(-1, -16, -17).chunk_and_local();
-        assert_eq!(
-            chunk,
-            ChunkPos {
-                q: -1,
-                r: -1,
-                y: -2
-            }
-        );
+        assert_eq!(chunk, ChunkPos { q: -1, r: -1, y: -2 });
         assert_eq!(local, [15, 0, 15]);
     }
 
@@ -305,10 +263,7 @@ mod tests {
 
     #[test]
     fn generation_is_deterministic() {
-        assert_eq!(
-            generated_block(42, CellPos::new(3, -8, 5)),
-            generated_block(42, CellPos::new(3, -8, 5))
-        );
+        assert_eq!(generated_block(42, CellPos::new(3, -8, 5)), generated_block(42, CellPos::new(3, -8, 5)));
         assert_eq!(terrain_height(42, 3, -8), terrain_height(42, 3, -8));
     }
 
@@ -324,14 +279,7 @@ mod tests {
 
     #[test]
     fn ray_hits_prism_front_face() {
-        let hit = raycast_prism(
-            Vec3::new(0.0, 0.0, -3.0),
-            Vec3::Z,
-            Vec3::ZERO,
-            1.0,
-            1.0,
-            10.0,
-        );
+        let hit = raycast_prism(Vec3::new(0.0, 0.0, -3.0), Vec3::Z, Vec3::ZERO, 1.0, 1.0, 10.0);
         assert!(hit.is_some());
     }
 }
