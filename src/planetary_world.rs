@@ -102,6 +102,11 @@ impl PlanetaryWorld {
         &self.topology
     }
 
+    /// Procedural terrain source used by rendering, collision, and sampling.
+    pub fn terrain(&self) -> &PlanetGenerator {
+        &self.terrain
+    }
+
     pub fn edited_cells(&self) -> &BTreeMap<SurfaceCellId, BlockId> {
         &self.edits
     }
