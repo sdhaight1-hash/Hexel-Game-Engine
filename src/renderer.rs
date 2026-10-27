@@ -9,6 +9,7 @@ use hexel_engine::{
     planetary_chunks::{CubeFace, PlanetChunkKey, PlanetChunkMesh},
     planetary_frame::PlanetaryFrame,
     planetary_world::PlanetaryWorld,
+    planetary_voxels::{PlanetVoxelPos, PlanetVoxelVolume},
     BlockId, CellPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
     surface_mesh::SurfaceMesh,
@@ -153,6 +154,7 @@ pub struct Renderer {
     planet_vertices: Vec<Vertex>,
     planet_cell_ranges: HashMap<u32, (u64, u64)>,
     planet_world: PlanetaryWorld,
+    planet_voxels: PlanetVoxelVolume,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
     camera_buffer: wgpu::Buffer,
@@ -622,6 +624,7 @@ impl Renderer {
             planet_vertex_count,
             planet_vertices,
             planet_cell_ranges,
+            planet_voxels: PlanetVoxelVolume::new(),
             planet_world,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
@@ -653,6 +656,40 @@ impl Renderer {
         for (id, block) in edits {
             self.edit_planet_cell(*id, *block);
         }
+    }
+
+    pub fn planet_voxel_edits_snapshot(&self) -> Vec<(u32, i32, BlockId)> {
+        self.planet_voxels.edited_voxels().iter()
+            .map(|(pos, block)| (pos.cell.0, pos.layer, *block))
+            .collect()
+    }
+
+    pub fn restore_planet_voxel_edits(&mut self, edits: &[(u32, i32, BlockId)]) {
+        for (id, layer, block) in edits {
+            let pos = PlanetVoxelPos::new(hexel_engine::topology::SurfaceCellId(*id), *layer);
+            self.planet_voxels.set_block(&self.planet_world, pos, *block);
+        }
+    }
+
+    pub fn planet_voxel_block_at(&self, id: u32, layer: i32) -> BlockId {
+        self.planet_voxels.block_at(
+            &self.planet_world,
+            PlanetVoxelPos::new(hexel_engine::topology::SurfaceCellId(id), layer),
+        ).unwrap_or(BlockId::Air)
+    }
+
+    pub fn edit_planet_voxel(&mut self, id: u32, layer: i32, block: BlockId) -> bool {
+        let pos = PlanetVoxelPos::new(hexel_engine::topology::SurfaceCellId(id), layer);
+        if self.planet_voxels.block_at(&self.planet_world, pos).is_none()
+            || !self.planet_voxels.set_block(&self.planet_world, pos, block) {
+            return false;
+        }
+        if layer == 0 && !self.edit_planet_cell(id, block) {
+            return false;
+        }
+        self.planet_stream_chunks.clear();
+        self.planet_stream_pending.clear();
+        true
     }
 
     pub fn planet_block_at(&self, id: u32) -> BlockId {
