@@ -1085,7 +1085,7 @@ impl Renderer {
         let Some(current_id) = self.planet_world.topology().cell_id_for_direction(radial) else {
             return false;
         };
-        let Some(current_cell) = self.planet_topology.cell(current_id) else {
+        let Some(current_cell) = self.planet_world.topology().cell(current_id) else {
             return false;
         };
         let mut candidates = HashSet::new();
@@ -1095,12 +1095,12 @@ impl Renderer {
             if self.planet_world.edited_cells().get(&hexel_engine::topology::SurfaceCellId(id)) == Some(&BlockId::Air) {
                 continue;
             }
-            let Some(cell) = self.planet_topology.cell(
+            let Some(cell) = self.planet_world.topology().cell(
                 hexel_engine::topology::SurfaceCellId(id),
             ) else {
                 continue;
             };
-            let sample = self.planet_terrain.sample_direction(cell.center, 0.25);
+            let sample = self.planet_world.terrain().sample_direction(cell.center, 0.25);
             let hash = vegetation_hash(
                 self.seed ^ id.wrapping_mul(0x27D4_EB2D),
                 id as i32,
@@ -1138,7 +1138,7 @@ impl Renderer {
             direction.z as f64,
         )
         .normalize_or_zero();
-        let sample = self.planet_terrain.sample_direction(radial, 0.25);
+        let sample = self.planet_world.terrain().sample_direction(radial, 0.25);
         let block = self
             .planet_topology
             .cell_id_for_direction(radial)
@@ -1157,7 +1157,7 @@ impl Renderer {
         // Intersect a local-radius sphere: terrain elevation varies around the
         // globe, so the configured base radius can put an ocean-level player inside
         // the ideal sphere and incorrectly select the far side.
-        let local_radius = self.planet_terrain
+        let local_radius = self.planet_world.terrain()
             .sample_direction(DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64), 0.25)
             .surface_position.length() as f32;
         let b = origin.dot(dir);
@@ -1169,15 +1169,15 @@ impl Renderer {
         let far = -b + root;
         let distance = if near >= 0.0 { near } else if far >= 0.0 { far } else { return None; };
         let hit = origin + dir * distance;
-        self.planet_topology.cell_id_for_direction(DVec3::new(hit.x as f64, hit.y as f64, hit.z as f64)).map(|id| id.0)
+        self.planet_world.topology().cell_id_for_direction(DVec3::new(hit.x as f64, hit.y as f64, hit.z as f64)).map(|id| id.0)
     }
 
     fn build_planet_cell_outline(&self, id: u32) -> Vec<Vertex> {
-        let Some(cell) = self.planet_topology.cell(hexel_engine::topology::SurfaceCellId(id)) else { return Vec::new(); };
+        let Some(cell) = self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)) else { return Vec::new(); };
         let mut vertices = Vec::with_capacity(cell.boundary.len() * 2);
         for i in 0..cell.boundary.len() {
-            let a = self.planet_terrain.sample_direction(cell.boundary[i], 0.25).surface_position.as_vec3() * 1.006;
-            let b = self.planet_terrain.sample_direction(cell.boundary[(i + 1) % cell.boundary.len()], 0.25).surface_position.as_vec3() * 1.006;
+            let a = self.planet_world.terrain().sample_direction(cell.boundary[i], 0.25).surface_position.as_vec3() * 1.006;
+            let b = self.planet_world.terrain().sample_direction(cell.boundary[(i + 1) % cell.boundary.len()], 0.25).surface_position.as_vec3() * 1.006;
             for point in [a, b] {
                 vertices.push(Vertex { position: point.to_array(), color: [1.0, 0.92, 0.22], uv: [0.0, 0.0], textured: 0.0 });
             }
@@ -1252,7 +1252,7 @@ impl Renderer {
                 continue;
             }
             let Ok(mesh) = PlanetChunkMesh::generate(
-                &self.planet_terrain,
+                &self.planet_world.terrain(),
                 key,
                 CHUNKS_PER_FACE,
                 MESH_RESOLUTION,
@@ -1265,7 +1265,7 @@ impl Renderer {
             // size, so this avoids repeating that work for shared mesh vertices.
             let mut grid_vertices = Vec::with_capacity(mesh.vertices.len());
             for source in &mesh.vertices {
-                let sample = self.planet_terrain.sample_direction(source.normal, 0.25);
+                let sample = self.planet_world.terrain().sample_direction(source.normal, 0.25);
                 let cell_block = self
                     .planet_topology
                     .cell_id_for_direction(source.normal)
@@ -1295,10 +1295,10 @@ impl Renderer {
                 &mut vertices,
                 key,
                 CHUNKS_PER_FACE,
-                &self.planet_topology,
-                &self.planet_terrain,
+                &self.planet_world.topology(),
+                &self.planet_world.terrain(),
                 self.seed,
-                &self.planet_cell_edits,
+                self.planet_world.edited_cells(),
             );
             if vertices.is_empty() {
                 continue;
