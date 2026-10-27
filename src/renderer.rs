@@ -12,6 +12,7 @@ use glam::{DVec3, Mat4, Vec3};
 use hexel_engine::{
     planetary_chunks::{CubeFace, PlanetChunkKey, PlanetChunkMesh},
     planetary_frame::PlanetaryFrame,
+    planetary_world::PlanetaryWorld,
     BlockId, CellPos, ChunkPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
     raycast_prism,
@@ -176,9 +177,7 @@ pub struct Renderer {
     planet_vertex_count: u32,
     planet_vertices: Vec<Vertex>,
     planet_cell_ranges: HashMap<u32, (u64, u64)>,
-    planet_cell_edits: HashMap<u32, BlockId>,
-    planet_topology: SurfaceTopology,
-    planet_terrain: PlanetGenerator,
+    planet_world: PlanetaryWorld,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
     chunks: HashMap<ChunkPos, ChunkMesh>,
@@ -525,10 +524,11 @@ impl Renderer {
             elevation_scale: 14.0,
             axial_tilt_degrees: 23.5,
         };
-        let topology = SurfaceTopology::generate(16, planet_config.radius)
-            .map_err(|error| format!("Could not generate planetary world topology: {error}"))?;
-        let terrain = PlanetGenerator::with_config(seed, planet_config);
-        let planet_mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
+        let planet_world = PlanetaryWorld::new(seed, 16, planet_config)
+            .map_err(|error| format!("Could not generate planetary world: {error:?}"))?;
+        let topology = planet_world.topology();
+        let terrain = planet_world.terrain();
+        let planet_mesh = SurfaceMesh::generate(topology, terrain, 0.25);
         let mut planet_vertices = Vec::new();
         let mut planet_cell_ranges = HashMap::new();
         for triangle in planet_mesh.triangles {
@@ -682,9 +682,7 @@ impl Renderer {
             planet_vertex_count,
             planet_vertices,
             planet_cell_ranges,
-            planet_cell_edits: HashMap::new(),
-            planet_topology: topology,
-            planet_terrain: terrain,
+            planet_world,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
             chunks: HashMap::new(),
@@ -750,9 +748,12 @@ impl Renderer {
     }
 
     pub fn planet_edits_snapshot(&self) -> Vec<(u32, BlockId)> {
-        let mut edits = self.planet_cell_edits.iter().map(|(id, block)| (*id, *block)).collect::<Vec<_>>();
-        edits.sort_by_key(|(id, _)| *id);
-        edits
+        self.planet_world
+            .save()
+            .edits
+            .into_iter()
+            .map(|(id, block)| (id.0, block))
+            .collect()
     }
 
     pub fn restore_planet_edits(&mut self, edits: &[(u32, BlockId)]) {
@@ -1019,30 +1020,22 @@ impl Renderer {
         }
     }
     pub fn planet_block_at(&self, id: u32) -> BlockId {
-        if let Some(block) = self.planet_cell_edits.get(&id) {
-            return *block;
-        }
-        let Some(cell) = self
-            .planet_topology
-            .cell(hexel_engine::topology::SurfaceCellId(id))
-        else {
-            return BlockId::Air;
-        };
-        let sample = self.planet_terrain.sample_direction(cell.center, 0.25);
-        use hexel_engine::planet::Biome;
-        match sample.biome {
-            Biome::DeepOcean | Biome::ShallowOcean => BlockId::Stone,
-            Biome::Mountain | Biome::PolarIce | Biome::Tundra => BlockId::Stone,
-            Biome::Desert | Biome::Savanna => BlockId::Dirt,
-            _ => BlockId::Grass,
-        }
+        self.planet_world
+            .block_at(hexel_engine::topology::SurfaceCellId(id))
+            .unwrap_or(BlockId::Air)
     }
 
     pub fn edit_planet_cell(&mut self, id: u32, block: BlockId) {
         if !self.planet_cell_ranges.contains_key(&id) || block == BlockId::Foundation {
             return;
         }
-        self.planet_cell_edits.insert(id, block);
+        if self
+            .planet_world
+            .set_block(hexel_engine::topology::SurfaceCellId(id), block)
+            .is_err()
+        {
+            return;
+        }
         let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else {
             return;
         };
@@ -1051,16 +1044,13 @@ impl Renderer {
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
         for vertex in &mut self.planet_vertices[first..end_index] {
-            // Mining lowers the cell floor into the planet instead of merely
-            // painting the visible surface. Re-sample from the radial direction
-            // so placing a solid block restores the generated terrain elevation.
             let direction = Vec3::from_array(vertex.position).normalize_or_zero();
             let radial = DVec3::new(
                 direction.x as f64,
                 direction.y as f64,
                 direction.z as f64,
             );
-            let sample = self.planet_terrain.sample_direction(radial, 0.25);
+            let sample = self.planet_world.terrain().sample_direction(radial, 0.25);
             let position = if block == BlockId::Air {
                 sample.surface_position - sample.direction * 2.4
             } else {
@@ -1074,8 +1064,6 @@ impl Renderer {
             start,
             bytemuck::cast_slice(&self.planet_vertices[first..end_index]),
         );
-        // Existing patches also contain this cell and its trees. Rebuild them
-        // against the authoritative edit map so mining/placing takes effect now.
         self.planet_stream_chunks.clear();
         self.planet_stream_pending.clear();
     }
@@ -1094,7 +1082,7 @@ impl Renderer {
             position.z as f64,
         )
         .normalize_or_zero();
-        let Some(current_id) = self.planet_topology.cell_id_for_direction(radial) else {
+        let Some(current_id) = self.planet_world.topology().cell_id_for_direction(radial) else {
             return false;
         };
         let Some(current_cell) = self.planet_topology.cell(current_id) else {
@@ -1104,7 +1092,7 @@ impl Renderer {
         candidates.insert(current_id.0);
         candidates.extend(current_cell.neighbors.iter().map(|id| id.0));
         for id in candidates {
-            if self.planet_cell_edits.get(&id) == Some(&BlockId::Air) {
+            if self.planet_world.edited_cells().get(&hexel_engine::topology::SurfaceCellId(id)) == Some(&BlockId::Air) {
                 continue;
             }
             let Some(cell) = self.planet_topology.cell(
@@ -1614,12 +1602,12 @@ fn append_planetary_trees(
     topology: &SurfaceTopology,
     terrain: &PlanetGenerator,
     seed: u32,
-    edits: &HashMap<u32, BlockId>,
+    edits: &std::collections::BTreeMap<hexel_engine::topology::SurfaceCellId, BlockId>,
 ) {
     let scale = WorldScale::default();
     for cell in topology.cells() {
         if !planetary_chunk_owns_direction(cell.center, key, chunks_per_face)
-            || edits.get(&cell.id.0) == Some(&BlockId::Air)
+            || edits.get(&cell.id) == Some(&BlockId::Air)
         {
             continue;
         }
