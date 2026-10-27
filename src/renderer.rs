@@ -894,24 +894,34 @@ impl Renderer {
     }
 
     pub fn planet_cell_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
+        self.planet_cell_hit_at_ray(origin, direction).map(|(id, _)| id)
+    }
+
+    /// Intersect the live edited surface triangles and inward cell walls. The
+    /// returned distance is the same geometry used for rendering, not an ideal sphere.
+    pub fn planet_cell_hit_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<(u32, f32)> {
         let dir = direction.normalize_or_zero();
         if dir == Vec3::ZERO { return None; }
-        // Intersect a local-radius sphere: terrain elevation varies around the
-        // globe, so the configured base radius can put an ocean-level player inside
-        // the ideal sphere and incorrectly select the far side.
-        let local_radius = self.planet_world.terrain()
-            .sample_direction(DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64), 0.25)
-            .surface_position.length() as f32;
-        let b = origin.dot(dir);
-        let c = origin.length_squared() - local_radius * local_radius;
-        let discriminant = b * b - c;
-        if discriminant < 0.0 { return None; }
-        let root = discriminant.sqrt();
-        let near = -b - root;
-        let far = -b + root;
-        let distance = if near >= 0.0 { near } else if far >= 0.0 { far } else { return None; };
-        let hit = origin + dir * distance;
-        self.planet_world.topology().cell_id_for_direction(DVec3::new(hit.x as f64, hit.y as f64, hit.z as f64)).map(|id| id.0)
+        let mut best: Option<(u32, f32)> = None;
+        let mut test_range = |id: u32, start: usize, end: usize| {
+            for index in (start..end).step_by(3) {
+                let a = Vec3::from_array(self.planet_vertices[index].position);
+                let b = Vec3::from_array(self.planet_vertices[index + 1].position);
+                let c = Vec3::from_array(self.planet_vertices[index + 2].position);
+                if let Some(distance) = ray_triangle_distance(origin, dir, a, b, c)
+                    && best.is_none_or(|(_, current)| distance < current) {
+                    best = Some((id, distance));
+                }
+            }
+        };
+        let vertex_size = std::mem::size_of::<Vertex>() as u64;
+        for (id, (start, end)) in &self.planet_cell_ranges {
+            test_range(*id, (start / vertex_size) as usize, (end / vertex_size) as usize);
+        }
+        for (id, (start, end)) in &self.planet_cell_wall_ranges {
+            test_range(*id, *start, *end);
+        }
+        best
     }
 
     /// Ray-test deterministic trunk cylinders and canopy spheres before the terrain hit.
@@ -919,19 +929,10 @@ impl Renderer {
     pub fn planet_tree_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
         let dir = direction.normalize_or_zero();
         if dir == Vec3::ZERO { return None; }
-        let surface_id = self.planet_cell_at_ray(origin, dir)?;
+        let (surface_id, surface_distance) = self.planet_cell_hit_at_ray(origin, dir)?;
+        let surface_distance = surface_distance as f64;
         let origin_d = DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64);
         let dir_d = DVec3::new(dir.x as f64, dir.y as f64, dir.z as f64);
-        let radial = origin_d.normalize_or_zero();
-        let local_radius = self.planet_world.terrain()
-            .sample_direction(radial, 0.25).surface_position.length();
-        let b = origin_d.dot(dir_d);
-        let c = origin_d.length_squared() - local_radius * local_radius;
-        let disc = b * b - c;
-        if disc < 0.0 { return None; }
-        let near = -b - disc.sqrt();
-        let surface_distance = if near >= 0.0 { near } else { -b + disc.sqrt() };
-        if surface_distance < 0.0 { return None; }
 
         let surface_cell = self.planet_world.topology()
             .cell(hexel_engine::topology::SurfaceCellId(surface_id))?;
