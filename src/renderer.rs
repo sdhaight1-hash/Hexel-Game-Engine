@@ -1072,6 +1072,50 @@ impl Renderer {
             bounds_max: max,
         }
     }
+    pub fn planet_block_at(&self, id: u32) -> BlockId {
+        if let Some(block) = self.planet_cell_edits.get(&id) {
+            return *block;
+        }
+        let Some(cell) = self.planet_topology.cell(hexel_engine::topology::SurfaceCellId(id)) else {
+            return BlockId::Air;
+        };
+        let sample = self.planet_terrain.sample_direction(cell.center, 0.25);
+        use hexel_engine::planet::Biome;
+        match sample.biome {
+            Biome::DeepOcean | Biome::ShallowOcean => BlockId::Stone,
+            Biome::Mountain | Biome::PolarIce | Biome::Tundra => BlockId::Stone,
+            Biome::Desert | Biome::Savanna => BlockId::Dirt,
+            _ => BlockId::Grass,
+        }
+    }
+
+    pub fn edit_planet_cell(&mut self, id: u32, block: BlockId) {
+        if !self.planet_cell_ranges.contains_key(&id) || block == BlockId::Foundation {
+            return;
+        }
+        self.planet_cell_edits.insert(id, block);
+        let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else { return; };
+        let color = match block {
+            BlockId::Air => [0.025, 0.055, 0.10],
+            BlockId::Grass => [0.20, 0.62, 0.22],
+            BlockId::Dirt => [0.48, 0.29, 0.14],
+            BlockId::Stone => [0.42, 0.45, 0.49],
+            BlockId::Foundation => [0.75, 0.75, 0.78],
+        };
+        let vertex_size = std::mem::size_of::<Vertex>() as u64;
+        let count = ((end - start) / vertex_size) as usize;
+        let mut vertices = Vec::with_capacity(count);
+        for _ in 0..count {
+            vertices.push(Vertex { position: [0.0; 3], color, uv: [0.0; 2], textured: 0.0 });
+        }
+        // Update only the color field, preserving the generated triangle positions.
+        // Vertex layout is position(12 bytes), color(12 bytes), UV(8 bytes), textured(4 bytes).
+        let color_offset = start + 12;
+        let color_bytes = bytemuck::cast_slice(&vertices.iter().map(|v| v.color).collect::<Vec<_>>());
+        self.queue.write_buffer(&self.planet_vertex_buffer, color_offset, color_bytes);
+        let _ = count;
+    }
+
     pub fn planet_surface_position(&self, direction: Vec3) -> Vec3 {
         self.planet_terrain.sample_direction(DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64), 0.25).surface_position.as_vec3()
     }
