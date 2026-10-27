@@ -1,0 +1,140 @@
+//! Double-precision planetary coordinates and camera-relative tangent frames.
+//!
+//! Earth-scale coordinates must remain in f64 until they are rebased around the
+//! active player. GPU vertices and the current camera use f32, so converting raw
+//! planet-centered positions (millions of metres from the origin) directly to f32
+//! causes visible jitter. This module is the shared coordinate foundation for
+//! planetary movement, terrain streaming, collision, and rendering.
+
+use glam::DVec3;
+
+/// An orthonormal local frame anchored to a point on a spherical planet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlanetaryFrame {
+    /// Planet-centred position of the frame origin, including terrain elevation.
+    pub origin: DVec3,
+    /// Local east, north, and up axes expressed in planet-centred coordinates.
+    pub east: DVec3,
+    pub north: DVec3,
+    pub up: DVec3,
+}
+
+impl PlanetaryFrame {
+    /// Construct a stable local frame at a planet-centred position.
+    ///
+    /// At the poles, global +Z replaces +Y as the north reference to avoid a
+    /// degenerate projection. The supplied position must be non-zero; invalid
+    /// positions fall back to the positive X axis.
+    pub fn at(position: DVec3) -> Self {
+        let up = if position.is_finite() && position.length_squared() > f64::EPSILON {
+            position.normalize()
+        } else {
+            DVec3::X
+        };
+        let reference = if up.dot(DVec3::Y).abs() < 0.99 {
+            DVec3::Y
+        } else {
+            DVec3::Z
+        };
+        let north = (reference - up * reference.dot(up)).normalize_or_zero();
+        let east = north.cross(up).normalize_or_zero();
+        Self {
+            origin: position,
+            east,
+            north,
+            up,
+        }
+    }
+
+    /// Convert a planet-centred position to a small, camera-relative coordinate.
+    pub fn to_local(self, planet_position: DVec3) -> DVec3 {
+        let delta = planet_position - self.origin;
+        DVec3::new(
+            delta.dot(self.east),
+            delta.dot(self.up),
+            delta.dot(self.north),
+        )
+    }
+
+    /// Convert a local east/up/north coordinate back to planet-centred space.
+    pub fn to_planet(self, local_position: DVec3) -> DVec3 {
+        self.origin
+            + self.east * local_position.x
+            + self.up * local_position.y
+            + self.north * local_position.z
+    }
+
+    /// Move a point along the spherical surface by a local east/north displacement.
+    ///
+    /// The input radius is preserved, so callers can apply the generated terrain
+    /// elevation separately. Great-circle movement remains stable at the date line
+    /// and across the poles.
+    pub fn move_tangent(self, east_distance: f64, north_distance: f64) -> DVec3 {
+        if !east_distance.is_finite() || !north_distance.is_finite() {
+            return self.origin;
+        }
+        let radius = self.origin.length();
+        if radius <= f64::EPSILON {
+            return self.origin;
+        }
+        let displacement = self.east * east_distance + self.north * north_distance;
+        let distance = displacement.length();
+        if distance <= f64::EPSILON {
+            return self.origin;
+        }
+        let angle = (distance / radius).min(std::f64::consts::PI);
+        let tangent = displacement / distance;
+        (self.up * angle.cos() + tangent * angle.sin()) * radius
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EARTH_RADIUS: f64 = 6_371_000.0;
+
+    #[test]
+    fn frame_axes_are_orthonormal_at_equator_and_poles() {
+        for position in [
+            DVec3::X * EARTH_RADIUS,
+            DVec3::Y * EARTH_RADIUS,
+            -DVec3::Y * EARTH_RADIUS,
+            DVec3::new(1.0, 2.0, 3.0) * EARTH_RADIUS,
+        ] {
+            let frame = PlanetaryFrame::at(position);
+            assert!((frame.east.length() - 1.0).abs() < 1e-12);
+            assert!((frame.north.length() - 1.0).abs() < 1e-12);
+            assert!((frame.up.length() - 1.0).abs() < 1e-12);
+            assert!(frame.east.dot(frame.north).abs() < 1e-12);
+            assert!(frame.east.dot(frame.up).abs() < 1e-12);
+            assert!(frame.north.dot(frame.up).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn local_rebasing_round_trips_nearby_positions() {
+        let frame = PlanetaryFrame::at(DVec3::X * EARTH_RADIUS);
+        let local = DVec3::new(125.25, 8.0, -73.5);
+        let planet = frame.to_planet(local);
+        let round_trip = frame.to_local(planet);
+        assert!((round_trip - local).length() < 1e-8);
+        assert!((planet - frame.origin).length() < 200.0);
+    }
+
+    #[test]
+    fn tangent_move_preserves_earth_radius_and_advances_expected_distance() {
+        let frame = PlanetaryFrame::at(DVec3::X * EARTH_RADIUS);
+        let moved = frame.move_tangent(1_000.0, 0.0);
+        assert!((moved.length() - EARTH_RADIUS).abs() < 1e-8);
+        let angle = frame.up.dot(moved.normalize()).clamp(-1.0, 1.0).acos();
+        assert!((angle * EARTH_RADIUS - 1_000.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn invalid_direction_falls_back_to_finite_frame() {
+        let frame = PlanetaryFrame::at(DVec3::ZERO);
+        assert_eq!(frame.up, DVec3::X);
+        assert!(frame.to_local(DVec3::X * (EARTH_RADIUS + 1.0)).is_finite());
+    }
+}
