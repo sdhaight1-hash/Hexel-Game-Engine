@@ -996,10 +996,6 @@ impl Renderer {
         }
     }
     fn create_chunk(&self, pos: ChunkPos) -> ChunkMesh {
-        let q_start = pos.q * CHUNK_SIZE;
-        let r_start = pos.r * CHUNK_SIZE;
-        let q_end = q_start + CHUNK_SIZE;
-        let r_end = r_start + CHUNK_SIZE;
         let vertices = build_chunk_mesh(self.seed, &self.edits, pos);
         let vertex_count = vertices.len() as u32;
         let buffer = if vertices.is_empty() {
