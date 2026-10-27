@@ -1810,6 +1810,3 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
     }
     pixels
 }
-
-
-}
