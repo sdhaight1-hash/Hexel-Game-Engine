@@ -73,6 +73,9 @@ impl PlanetVoxelVolume {
         pos: PlanetVoxelPos,
     ) -> Option<BlockId> {
         world.topology().cell(pos.cell)?;
+        if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
+            return None;
+        }
         Some(self.edits.get(&pos).copied().unwrap_or_else(|| {
             generated_layer(world.sample_cell(pos.cell, 0.0).expect("cell validated"), pos.layer)
         }))
@@ -86,6 +89,9 @@ impl PlanetVoxelVolume {
         pos: PlanetVoxelPos,
         block: BlockId,
     ) -> bool {
+        if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
+            return false;
+        }
         let Some(sample) = world.sample_cell(pos.cell, 0.0).ok() else {
             return false;
         };
@@ -109,6 +115,9 @@ impl PlanetVoxelVolume {
         block_height: f64,
     ) -> Option<DVec3> {
         if !block_height.is_finite() || block_height <= 0.0 {
+            return None;
+        }
+        if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
             return None;
         }
         let cell = world.topology().cell(pos.cell)?;
@@ -137,6 +146,9 @@ impl PlanetVoxelVolume {
         }
         let mut restored = BTreeMap::new();
         for (pos, block) in &save.edits {
+            if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
+                return Err("planetary voxel save contains an out-of-range layer");
+            }
             let Some(sample) = world.sample_cell(pos.cell, 0.0).ok() else {
                 return Err("planetary voxel save references an invalid surface cell");
             };
