@@ -717,11 +717,11 @@ impl Renderer {
 
     fn planet_top_solid_layer(&self, id: u32) -> i32 {
         let cell = hexel_engine::topology::SurfaceCellId(id);
-        for layer in (1..=PlanetVoxelVolume::MAX_BUILD_HEIGHT).rev() {
-            let pos = PlanetVoxelPos::new(cell, layer);
-            if self.planet_voxels.edited_voxels().get(&pos).is_some_and(|block| block.is_solid()) {
-                return layer;
-            }
+        let positive_start = PlanetVoxelPos::new(cell, 1);
+        let positive_end = PlanetVoxelPos::new(cell, PlanetVoxelVolume::MAX_BUILD_HEIGHT);
+        if let Some((pos, _)) = self.planet_voxels.edited_voxels()
+            .range(positive_start..=positive_end).rev().find(|(_, block)| block.is_solid()) {
+            return pos.layer;
         }
         if self.planet_world.edited_cells().get(&cell) != Some(&BlockId::Air) {
             return 0;
