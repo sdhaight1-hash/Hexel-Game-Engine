@@ -11,6 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{DVec3, Mat4, Vec3};
 use hexel_engine::{
     planetary_chunks::{CubeFace, PlanetChunkKey, PlanetChunkMesh},
+    planetary_frame::PlanetaryFrame,
     BlockId, CellPos, ChunkPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
     raycast_prism,
@@ -1271,11 +1272,20 @@ impl Renderer {
                     textured: 0.0,
                 });
             }
-            let vertices = mesh
+            let mut vertices = mesh
                 .indices
                 .iter()
                 .map(|index| grid_vertices[*index as usize])
                 .collect::<Vec<_>>();
+            append_planetary_trees(
+                &mut vertices,
+                key,
+                CHUNKS_PER_FACE,
+                &self.planet_topology,
+                &self.planet_terrain,
+                self.seed,
+                &self.planet_cell_edits,
+            );
             if vertices.is_empty() {
                 continue;
             }
@@ -1525,6 +1535,141 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         frame.present();
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PlanetTreeSpec {
+    species: u8,
+    height_layers: i32,
+    trunk_radius: i32,
+    crown_radius: i32,
+    trunk_color: [f32; 3],
+    foliage_color: [f32; 3],
+    leaf_layer: u32,
+    bark_layer: u32,
+}
+
+fn planet_tree_spec(biome: Biome, hash: u32) -> Option<PlanetTreeSpec> {
+    let (frequency, species, min_height, height_span, crown_radius, foliage_color, leaf_layer, bark_layer) =
+        match biome {
+            Biome::BorealForest => (3, 2, 10, 9, 2, [0.12, 0.30, 0.15], 8, 23),
+            Biome::TemperateForest => (3, 0, 9, 8, 3, [0.18, 0.46, 0.15], 7, 22),
+            Biome::TropicalForest => (2, 3, 13, 9, 3, [0.10, 0.39, 0.13], 5, 19),
+            Biome::Grassland => (9, 6, 6, 5, 2, [0.30, 0.39, 0.17], 6, 21),
+            Biome::Savanna => (12, 3, 7, 7, 2, [0.18, 0.46, 0.15], 0, 15),
+            _ => return None,
+        };
+    if !hash.is_multiple_of(frequency) {
+        return None;
+    }
+    Some(PlanetTreeSpec {
+        species,
+        height_layers: min_height + (hash.rotate_left(11) % height_span) as i32,
+        trunk_radius: 1,
+        crown_radius,
+        trunk_color: if species == 1 { [0.78, 0.75, 0.65] } else { [0.38, 0.25, 0.14] },
+        foliage_color,
+        leaf_layer,
+        bark_layer,
+    })
+}
+
+fn planetary_chunk_owns_direction(
+    direction: DVec3,
+    key: PlanetChunkKey,
+    chunks_per_face: u32,
+) -> bool {
+    let direction = direction.normalize_or_zero();
+    if direction == DVec3::ZERO || chunks_per_face == 0 {
+        return false;
+    }
+    let faces = [
+        CubeFace::PositiveX,
+        CubeFace::NegativeX,
+        CubeFace::PositiveY,
+        CubeFace::NegativeY,
+        CubeFace::PositiveZ,
+        CubeFace::NegativeZ,
+    ];
+    let mut selected_face = CubeFace::PositiveX;
+    let mut best_dot = f64::NEG_INFINITY;
+    for face in faces {
+        let (normal, _, _) = face.basis();
+        let dot = direction.dot(normal);
+        if dot > best_dot {
+            best_dot = dot;
+            selected_face = face;
+        }
+    }
+    if selected_face != key.face {
+        return false;
+    }
+    let (normal, axis_u, axis_v) = key.face.basis();
+    let denominator = direction.dot(normal);
+    if denominator <= 0.0 {
+        return false;
+    }
+    let u = direction.dot(axis_u) / denominator;
+    let v = direction.dot(axis_v) / denominator;
+    let grid = chunks_per_face as f64;
+    let x = (((u + 1.0) * 0.5 * grid).floor() as i64)
+        .clamp(0, chunks_per_face as i64 - 1) as u32;
+    let y = (((v + 1.0) * 0.5 * grid).floor() as i64)
+        .clamp(0, chunks_per_face as i64 - 1) as u32;
+    x == key.x && y == key.y
+}
+
+fn append_planetary_trees(
+    vertices: &mut Vec<Vertex>,
+    key: PlanetChunkKey,
+    chunks_per_face: u32,
+    topology: &SurfaceTopology,
+    terrain: &PlanetGenerator,
+    seed: u32,
+    edits: &HashMap<u32, BlockId>,
+) {
+    let scale = WorldScale::default();
+    for cell in topology.cells() {
+        if !planetary_chunk_owns_direction(cell.center, key, chunks_per_face)
+            || edits.get(&cell.id.0) == Some(&BlockId::Air)
+        {
+            continue;
+        }
+        let sample = terrain.sample_direction(cell.center, 0.25);
+        let hash = vegetation_hash(
+            seed ^ cell.id.0.wrapping_mul(0x27D4_EB2D),
+            cell.id.0 as i32,
+            cell.id.0.rotate_left(13) as i32,
+        );
+        let Some(spec) = planet_tree_spec(sample.biome, hash) else {
+            continue;
+        };
+        let mut tree = Vec::new();
+        append_hexel_tree(
+            &mut tree,
+            CellPos::new(0, 0, 0),
+            spec.height_layers,
+            spec.trunk_radius,
+            spec.crown_radius,
+            (spec.trunk_color, spec.foliage_color),
+            spec.species,
+            hash,
+            spec.leaf_layer,
+            spec.bark_layer,
+            scale,
+        );
+        let frame = PlanetaryFrame::at(sample.surface_position);
+        for mut vertex in tree {
+            let local = Vec3::from_array(vertex.position);
+            let planet_position = frame.to_planet(DVec3::new(
+                local.x as f64,
+                local.y as f64,
+                local.z as f64,
+            ));
+            vertex.position = planet_position.as_vec3().to_array();
+            vertices.push(vertex);
+        }
     }
 }
 
