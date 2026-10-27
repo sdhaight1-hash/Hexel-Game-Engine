@@ -11,7 +11,7 @@ use glam::DVec3;
 
 use crate::{
     BlockId,
-    planet::{Biome, PlanetaryWorld as _, PlanetSample},
+    planet::{Biome, PlanetSample},
     planetary_world::PlanetaryWorld,
     topology::SurfaceCellId,
 };
@@ -221,7 +221,7 @@ mod tests {
     fn foundation_cannot_be_removed() {
         let world = world();
         let mut volume = PlanetVoxelVolume::new();
-        let pos = PlanetVoxelPos::new(world.topology().cells()[0].id, Self::BEDROCK_LAYER);
+        let pos = PlanetVoxelPos::new(world.topology().cells()[0].id, PlanetVoxelVolume::BEDROCK_LAYER);
         assert!(!volume.set_block(&world, pos, BlockId::Air));
         assert_eq!(volume.block_at(&world, pos), Some(BlockId::Foundation));
     }
