@@ -870,6 +870,87 @@ impl Renderer {
         self.planet_world.topology().cell_id_for_direction(DVec3::new(hit.x as f64, hit.y as f64, hit.z as f64)).map(|id| id.0)
     }
 
+    /// Ray-test deterministic trunk cylinders and canopy spheres before the terrain hit.
+    /// Returned IDs are stable across streamed chunk rebuilds and face seams.
+    pub fn planet_tree_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
+        let dir = direction.normalize_or_zero();
+        if dir == Vec3::ZERO { return None; }
+        let surface_id = self.planet_cell_at_ray(origin, dir)?;
+        let origin_d = DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64);
+        let dir_d = DVec3::new(dir.x as f64, dir.y as f64, dir.z as f64);
+        let radial = origin_d.normalize_or_zero();
+        let local_radius = self.planet_world.terrain()
+            .sample_direction(radial, 0.25).surface_position.length();
+        let b = origin_d.dot(dir_d);
+        let c = origin_d.length_squared() - local_radius * local_radius;
+        let disc = b * b - c;
+        if disc < 0.0 { return None; }
+        let near = -b - disc.sqrt();
+        let surface_distance = if near >= 0.0 { near } else { -b + disc.sqrt() };
+        if surface_distance < 0.0 { return None; }
+
+        let surface_cell = self.planet_world.topology()
+            .cell(hexel_engine::topology::SurfaceCellId(surface_id))?;
+        let mut candidates = HashSet::new();
+        candidates.insert(surface_id);
+        candidates.extend(surface_cell.neighbors.iter().map(|id| id.0));
+        let scale = WorldScale::default();
+        let mut best: Option<(f64, u32)> = None;
+        for id in candidates {
+            if self.removed_planet_trees.contains(&id)
+                || self.planet_world.edited_cells()
+                    .get(&hexel_engine::topology::SurfaceCellId(id)) == Some(&BlockId::Air) {
+                continue;
+            }
+            let Some(cell) = self.planet_world.topology()
+                .cell(hexel_engine::topology::SurfaceCellId(id)) else { continue; };
+            let sample = self.planet_world.terrain().sample_direction(cell.center, 0.25);
+            let hash = vegetation_hash(
+                self.seed ^ id.wrapping_mul(0x27D4_EB2D),
+                id as i32,
+                id.rotate_left(13) as i32,
+            );
+            let Some(spec) = planet_tree_spec(sample.biome, hash) else { continue; };
+            let up = sample.direction;
+            let rel = origin_d - sample.surface_position;
+            let axial_origin = rel.dot(up);
+            let axial_dir = dir_d.dot(up);
+            let perpendicular_origin = rel - up * axial_origin;
+            let perpendicular_dir = dir_d - up * axial_dir;
+            let trunk_radius = (spec.trunk_radius as f64 * scale.hex_radius as f64 * 0.72).max(0.28);
+            let trunk_top = spec.height_layers as f64 * scale.hexel_height as f64 * 2.0 / 3.0;
+            let a = perpendicular_dir.length_squared();
+            if a > 1.0e-10 {
+                let bb = 2.0 * perpendicular_origin.dot(perpendicular_dir);
+                let cc = perpendicular_origin.length_squared() - trunk_radius * trunk_radius;
+                let discriminant = bb * bb - 4.0 * a * cc;
+                if discriminant >= 0.0 {
+                    for t in [(-bb - discriminant.sqrt()) / (2.0 * a), (-bb + discriminant.sqrt()) / (2.0 * a)] {
+                        let height = axial_origin + t * axial_dir;
+                        if t >= 0.0 && t < surface_distance && (0.0..=trunk_top).contains(&height)
+                            && best.is_none_or(|(distance, _)| t < distance) {
+                            best = Some((t, id));
+                        }
+                    }
+                }
+            }
+            let crown_center = sample.surface_position + up * (trunk_top * 0.78);
+            let crown_radius = (spec.crown_radius as f64 * scale.hex_radius as f64 * 1.35).max(0.8);
+            let sphere_offset = origin_d - crown_center;
+            let sphere_b = sphere_offset.dot(dir_d);
+            let sphere_c = sphere_offset.length_squared() - crown_radius * crown_radius;
+            let sphere_disc = sphere_b * sphere_b - sphere_c;
+            if sphere_disc >= 0.0 {
+                let t = -sphere_b - sphere_disc.sqrt();
+                if t >= 0.0 && t < surface_distance
+                    && best.is_none_or(|(distance, _)| t < distance) {
+                    best = Some((t, id));
+                }
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
     fn build_planet_cell_outline(&self, id: u32) -> Vec<Vertex> {
         let Some(cell) = self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)) else { return Vec::new(); };
         let mut vertices = Vec::with_capacity(cell.boundary.len() * 2);
