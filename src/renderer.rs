@@ -490,8 +490,8 @@ impl Renderer {
         // Build the globe's geodesic surface as the active world mesh. Nearby
         // streamed patches add detail while the whole-planet mesh remains visible.
         let planet_config = PlanetConfig {
-            radius: 180.0,
-            elevation_scale: 14.0,
+            radius: 6_371_000.0,
+            elevation_scale: 4_500.0,
             axial_tilt_degrees: 23.5,
         };
         let planet_world = PlanetaryWorld::new(seed, 16, planet_config)
@@ -534,7 +534,7 @@ impl Renderer {
         // Give every geodesic surface cell a visible inward-facing side wall.
         // The top remains terrain-displaced; the lower ring is inset radially so
         // adjacent cells read as hexel/pentagon prisms at ground level.
-        const CELL_WALL_DEPTH: f64 = 2.4;
+        const CELL_WALL_DEPTH: f64 = 1.0;
         let mut planet_cell_wall_ranges = HashMap::new();
         for cell in topology.cells() {
             let wall_start = planet_vertices.len();
@@ -786,7 +786,7 @@ impl Renderer {
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
-        let offset = -(top_layer as f64) * 2.4;
+        let offset = -(top_layer as f64) * 1.0;
         let color = planet_block_color(block);
         for vertex in &mut self.planet_vertices[first..end_index] {
             let direction = Vec3::from_array(vertex.position).normalize_or_zero();
@@ -805,7 +805,7 @@ impl Renderer {
             self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)),
             self.planet_cell_wall_ranges.get(&id).copied(),
         ) {
-            const BLOCK_DEPTH: f64 = 2.4;
+            const BLOCK_DEPTH: f64 = 1.0;
             let mut deepest_neighbor = (-top_layer).max(0) as f64 * BLOCK_DEPTH;
             for neighbor in &cell.neighbors {
                 let neighbor_layer = self.planet_top_solid_layer(neighbor.0);
@@ -922,7 +922,7 @@ impl Renderer {
         let surface = self.planet_world.topology().cell_id_for_direction(radial)
             .map(|id| {
                 let (layer, _) = self.planet_top_solid_voxel(id.0);
-                sample.surface_position + sample.direction * (layer as f64 * 2.4)
+                sample.surface_position + sample.direction * (layer as f64 * 1.0)
             })
             .unwrap_or(sample.surface_position);
         surface.as_vec3()
@@ -945,14 +945,14 @@ impl Renderer {
             let cell_id = hexel_engine::topology::SurfaceCellId(*id);
             let Some(cell) = self.planet_world.topology().cell(cell_id) else { continue; };
             let layer = self.planet_top_solid_layer(*id);
-            let offset = layer as f64 * 2.4;
+            let offset = layer as f64 * 1.0;
             let mut max_extent = offset.abs();
             for neighbor in &cell.neighbors {
-                let neighbor_extent = self.planet_top_solid_layer(neighbor.0).abs() as f64 * 2.4;
+                let neighbor_extent = self.planet_top_solid_layer(neighbor.0).abs() as f64 * 1.0;
                 max_extent = max_extent.max(neighbor_extent);
             }
             let center = (cell.center * radius + cell.center * (offset * 0.5)).as_vec3();
-            let bound_radius = radius * 0.18 + elevation + max_extent + offset.abs() * 0.5 + 2.4;
+            let bound_radius = radius * 0.18 + elevation + max_extent + offset.abs() * 0.5 + 1.0;
             let Some(bound_hit) = ray_sphere_distance(origin, dir, center, bound_radius as f32) else {
                 continue;
             };
@@ -1146,7 +1146,7 @@ impl Renderer {
                     .cell_id_for_direction(source.normal)
                     .map(|id| self.planet_block_at(id.0));
                 let surface_position = if cell_block == Some(BlockId::Air) {
-                    source.position - source.normal * 2.4
+                    source.position - source.normal * 1.0
                 } else {
                     source.position
                 };
