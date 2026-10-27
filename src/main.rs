@@ -82,6 +82,7 @@ impl HexelApp {
         save.selected_hotbar = self.inventory.selected_hotbar();
         save.inventory = *self.inventory.slots();
         save.planet_edits = renderer.planet_edits_snapshot();
+        save.planet_voxel_edits = renderer.planet_voxel_edits_snapshot();
         match std::fs::write("hexel-world.save", save.encode()) {
             Ok(()) => println!("Saved Hexel world to hexel-world.save"),
             Err(error) => eprintln!("Could not save Hexel world: {error}"),
@@ -323,6 +324,7 @@ impl ApplicationHandler for HexelApp {
             Ok(mut renderer) => {
                 if let Some(save) = loaded_save.as_ref() {
                     renderer.restore_planet_edits(&save.planet_edits);
+                    renderer.restore_planet_voxel_edits(&save.planet_voxel_edits);
                     self.player_feet = Vec3::from_array(save.player_position);
                     self.camera.yaw = save.yaw;
                     self.camera.pitch = save.pitch.clamp(-1.52, 1.52);
