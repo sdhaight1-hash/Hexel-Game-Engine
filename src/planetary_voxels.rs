@@ -258,6 +258,41 @@ mod tests {
     }
 
     #[test]
+    fn vertical_building_is_bounded_and_persisted() {
+        let world = world();
+        let mut volume = PlanetVoxelVolume::new();
+        let cell = world.topology().cells()[0].id;
+        let top = PlanetVoxelPos::new(cell, PlanetVoxelVolume::MAX_BUILD_HEIGHT);
+        assert!(volume.set_block(&world, top, BlockId::Stone));
+        assert_eq!(volume.block_at(&world, top), Some(BlockId::Stone));
+        let out_of_range = PlanetVoxelPos::new(cell, PlanetVoxelVolume::MAX_BUILD_HEIGHT + 1);
+        assert!(!volume.set_block(&world, out_of_range, BlockId::Stone));
+        assert_eq!(volume.block_at(&world, out_of_range), None);
+
+        let mut invalid_save = volume.save();
+        invalid_save.edits.push((out_of_range, BlockId::Stone));
+        let before = volume.save();
+        assert!(volume.load_save(&world, &invalid_save).is_err());
+        assert_eq!(volume.save(), before);
+    }
+
+    #[test]
+    fn neighboring_surface_cells_keep_independent_vertical_columns() {
+        let world = world();
+        let mut volume = PlanetVoxelVolume::new();
+        let cell = world.topology().cells()[0].id;
+        let neighbor = world.topology().cell(cell).unwrap().neighbors[0];
+        let a = PlanetVoxelPos::new(cell, -1);
+        let b = PlanetVoxelPos::new(neighbor, -1);
+        assert!(volume.set_block(&world, a, BlockId::Air));
+        assert_eq!(volume.block_at(&world, a), Some(BlockId::Air));
+        assert!(volume.block_at(&world, b).unwrap().is_solid());
+        assert!(volume.set_block(&world, b, BlockId::Dirt));
+        assert_eq!(volume.block_at(&world, b), Some(BlockId::Dirt));
+        assert_eq!(volume.block_at(&world, a), Some(BlockId::Air));
+    }
+
+    #[test]
     fn voxel_centres_remain_on_radial_column() {
         let world = world();
         let volume = PlanetVoxelVolume::new();
