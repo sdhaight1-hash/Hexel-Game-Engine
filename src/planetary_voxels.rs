@@ -114,7 +114,7 @@ impl PlanetVoxelVolume {
         let cell = world.topology().cell(pos.cell)?;
         let surface = world.terrain().sample_direction(cell.center, 0.0).surface_position;
         let radial = cell.center.normalize();
-        let offset = (pos.layer as f64 + 0.5) * block_height;
+        let offset = (pos.layer as f64 - 0.5) * block_height;
         Some(surface + radial * offset)
     }
 
