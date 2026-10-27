@@ -99,23 +99,39 @@ impl HexelApp {
     }
 
     fn update_planet_player(&mut self, dt: f32) {
-        let Some(renderer) = self.renderer.as_ref() else { return; };
+        let Some(renderer) = self.renderer.as_ref() else {
+            return;
+        };
         let dt = dt.min(0.04);
         let radial = self.player_feet.normalize_or_zero();
-        if radial == Vec3::ZERO { return; }
+        if radial == Vec3::ZERO {
+            return;
+        }
         let forward = self.camera.forward();
         let tangent_forward = (forward - radial * forward.dot(radial)).normalize_or_zero();
         let tangent_right = tangent_forward.cross(radial).normalize_or_zero();
         let mut direction = Vec3::ZERO;
-        if self.pressed.contains(&KeyCode::KeyW) { direction += tangent_forward; }
-        if self.pressed.contains(&KeyCode::KeyS) { direction -= tangent_forward; }
-        if self.pressed.contains(&KeyCode::KeyD) { direction += tangent_right; }
-        if self.pressed.contains(&KeyCode::KeyA) { direction -= tangent_right; }
+        if self.pressed.contains(&KeyCode::KeyW) {
+            direction += tangent_forward;
+        }
+        if self.pressed.contains(&KeyCode::KeyS) {
+            direction -= tangent_forward;
+        }
+        if self.pressed.contains(&KeyCode::KeyD) {
+            direction += tangent_right;
+        }
+        if self.pressed.contains(&KeyCode::KeyA) {
+            direction -= tangent_right;
+        }
         direction = direction.normalize_or_zero();
         let surface = renderer.planet_surface_position(radial);
         let radius = surface.length().max(1.0);
         let altitude = (self.player_feet.length() - surface.length()).max(0.0);
-        let next_radial = if direction == Vec3::ZERO { radial } else { (radial + direction * (self.camera.speed * dt / radius)).normalize_or_zero() };
+        let next_radial = if direction == Vec3::ZERO {
+            radial
+        } else {
+            (radial + direction * (self.camera.speed * dt / radius)).normalize_or_zero()
+        };
         let mut height = altitude;
         if self.jump_requested && self.grounded {
             self.vertical_velocity = JUMP_SPEED;
@@ -283,7 +299,9 @@ impl HexelApp {
     }
 
     fn update_planet_harvesting(&mut self, dt: f32) {
-        let Some(renderer) = self.renderer.as_mut() else { return; };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
         let hit = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward());
         if !self.harvest_held {
             self.planet_harvest_target = None;
@@ -307,7 +325,10 @@ impl HexelApp {
             BlockId::Grass => 0.55,
             BlockId::Dirt => 0.8,
             BlockId::Stone => 1.8,
-            BlockId::Foundation | BlockId::Air => { self.harvest_progress = 0.0; return; }
+            BlockId::Foundation | BlockId::Air => {
+                self.harvest_progress = 0.0;
+                return;
+            }
         };
         self.harvest_progress += dt.max(0.0);
         if self.harvest_progress >= seconds {
@@ -323,8 +344,14 @@ impl HexelApp {
     }
 
     fn edit_planet_target(&mut self) {
-        let Some(renderer) = self.renderer.as_mut() else { return; };
-        let Some(target) = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward()) else { return; };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let Some(target) = renderer
+            .planet_cell_at_ray(self.camera.position, self.camera.forward())
+        else {
+            return;
+        };
         if renderer.planet_block_at(target) == BlockId::Air {
             renderer.edit_planet_cell(target, BlockId::Grass);
         }
@@ -343,9 +370,22 @@ impl HexelApp {
             return;
         };
         if self.planet_preview_active() {
-            let message = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward())
-                .map(|id| format!("Hexel Engine | PLANET | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB break / RMB place | F3 flat", renderer.planet_block_at(id), self.inventory.selected_hotbar() + 1, self.inventory.selected_stack().map(|s| format!("{:?} x{}", s.item, s.count)).unwrap_or_else(|| "Empty".to_string())))
-                .unwrap_or_else(|| format!("Hexel Engine | PLANET | WASD move | Space jump | E inventory | F3 flat"));
+            let message = renderer
+                .planet_cell_at_ray(self.camera.position, self.camera.forward())
+                .map(|id| {
+                    format!(
+                        "Hexel Engine | PLANET | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB break / RMB place | F3 flat",
+                        renderer.planet_block_at(id),
+                        self.inventory.selected_hotbar() + 1,
+                        self.inventory
+                            .selected_stack()
+                            .map(|s| format!("{:?} x{}", s.item, s.count))
+                            .unwrap_or_else(|| "Empty".to_string())
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "Hexel Engine | PLANET | WASD move | Space jump | E inventory | F3 flat".to_string()
+                });
             window.set_title(&message);
             return;
         }
