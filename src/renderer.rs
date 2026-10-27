@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{DVec3, Mat4, Vec3};
 use hexel_engine::{
     BlockId, CellPos, ChunkPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
@@ -106,6 +106,7 @@ struct CameraUniform {
 
 pub struct Camera {
     pub position: Vec3,
+    pub up: Vec3,
     pub yaw: f32,
     pub pitch: f32,
     pub speed: f32,
@@ -114,6 +115,7 @@ impl Default for Camera {
     fn default() -> Self {
         Self {
             position: Vec3::new(0.0, 15.0, -10.0),
+            up: Vec3::Y,
             yaw: 0.0,
             pitch: -0.15,
             speed: 6.5,
@@ -121,26 +123,23 @@ impl Default for Camera {
     }
 }
 impl Camera {
+    fn tangent_frame(&self) -> (Vec3, Vec3, Vec3) {
+        let up = self.up.normalize_or_zero();
+        let up = if up == Vec3::ZERO { Vec3::Y } else { up };
+        let reference = if up.dot(Vec3::Y).abs() < 0.99 { Vec3::Y } else { Vec3::Z };
+        let north = (reference - up * reference.dot(up)).normalize_or_zero();
+        let east = up.cross(north).normalize_or_zero();
+        (east, north, up)
+    }
     pub fn forward(&self) -> Vec3 {
-        Vec3::new(
-            self.yaw.sin() * self.pitch.cos(),
-            self.pitch.sin(),
-            self.yaw.cos() * self.pitch.cos(),
-        )
-        .normalize_or_zero()
+        let (east, north, up) = self.tangent_frame();
+        (east * self.yaw.sin() * self.pitch.cos() + north * self.yaw.cos() * self.pitch.cos() + up * self.pitch.sin()).normalize_or_zero()
     }
     fn view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
         let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
-        Mat4::perspective_rh(70.0_f32.to_radians(), aspect, 0.1, 900.0)
-            * Mat4::look_to_rh(self.position, self.forward(), Vec3::Y)
+        Mat4::perspective_rh(70.0_f32.to_radians(), aspect, 0.05, 900.0)
+            * Mat4::look_to_rh(self.position, self.forward(), self.up.normalize_or_zero())
     }
-}
-
-fn planet_preview_view_projection(size: PhysicalSize<u32>, angle: f32) -> Mat4 {
-    let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
-    let eye = Vec3::new(angle.sin() * 105.0, 20.0, angle.cos() * 105.0);
-    Mat4::perspective_rh(55.0_f32.to_radians(), aspect, 0.1, 900.0)
-        * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y)
 }
 
 struct MeshJob {
@@ -171,6 +170,9 @@ pub struct Renderer {
     target_buffer: wgpu::Buffer,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
+    planet_topology: SurfaceTopology,
+    planet_terrain: PlanetGenerator,
+    planet_radius: f32,
     planet_preview: bool,
     planet_preview_angle: f32,
     chunks: HashMap<ChunkPos, ChunkMesh>,
@@ -624,6 +626,9 @@ impl Renderer {
             target_buffer,
             planet_vertex_buffer,
             planet_vertex_count,
+            planet_topology: topology,
+            planet_terrain: terrain,
+            planet_radius: planet_config.radius as f32,
             planet_preview: false,
             planet_preview_angle: 0.0,
             chunks: HashMap::new(),
@@ -1092,14 +1097,7 @@ impl Renderer {
         item_counts: [u16; 36],
     ) -> Result<(), wgpu::SurfaceError> {
         self.poll_mesh_results();
-        let view_proj = if self.planet_preview {
-            // A preview-only orbital camera makes the cell network inspectable
-            // without changing the live flat-world camera or movement behavior.
-            self.planet_preview_angle = (self.planet_preview_angle + 0.004) % std::f32::consts::TAU;
-            planet_preview_view_projection(self.size, self.planet_preview_angle)
-        } else {
-            camera.view_projection(self.size)
-        };
+        let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
         };
