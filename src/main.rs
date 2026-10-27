@@ -446,7 +446,7 @@ impl ApplicationHandler for HexelApp {
                                 }
                                 if let Some(window) = self.window.as_ref() {
                                     window.set_title(if preview {
-                                        "Hexel Engine | Spherical planet preview | F3 to return"
+                                        "Hexel Engine | Geodesic planet: 642 cells, 12 pentagons, 630 hexagons | F3 to return"
                                     } else {
                                         "Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse"
                                     });
