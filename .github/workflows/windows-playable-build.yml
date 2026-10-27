@@ -1,0 +1,55 @@
+name: Windows playable build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build playable release
+        run: cargo build --release --bin hexel-engine
+      - name: Package executable and runtime assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/HexelEngine | Out-Null
+          Copy-Item target/release/hexel-engine.exe dist/HexelEngine/HexelEngine.exe
+          Copy-Item assets dist/HexelEngine/assets -Recurse
+          @'
+          HEXEL ENGINE - WINDOWS PLAYTEST
+          ===============================
+
+          Run HexelEngine.exe from this folder.
+
+          Controls:
+            WASD        Move
+            Mouse       Look
+            Space       Jump
+            Left mouse  Hold to harvest/break
+            Right mouse Place grass
+            1-9         Select hotbar slot
+            E           Toggle inventory HUD
+            F3          Toggle planetary surface / flat world
+            F5          Save world
+            Esc         Release / capture mouse
+
+          Your progress is saved to hexel-world.save in the current working directory.
+          Keep this file beside the executable when backing up your world.
+
+          This is an active development playtest, not the finished large-scale planetary sandbox.
+          '@ | Set-Content -Encoding utf8 dist/HexelEngine/PLAYTEST.txt
+          Compress-Archive -Path dist/HexelEngine/* -DestinationPath dist/HexelEngine-Windows.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HexelEngine-Windows-Playtest
+          path: dist/HexelEngine-Windows.zip
+          if-no-files-found: error
+          retention-days: 30
