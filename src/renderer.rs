@@ -1,10 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{
-        Arc,
-        mpsc::{self, Receiver, Sender},
-    },
-    thread,
+    sync::Arc,
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -13,20 +9,14 @@ use hexel_engine::{
     planetary_chunks::{CubeFace, PlanetChunkKey, PlanetChunkMesh},
     planetary_frame::PlanetaryFrame,
     planetary_world::PlanetaryWorld,
-    BlockId, CellPos, ChunkPos, WorldScale,
+    BlockId, CellPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
-    raycast_prism,
     surface_mesh::SurfaceMesh,
-    terrain_height,
     topology::SurfaceTopology,
 };
-use noise::{NoiseFn, Perlin};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-const CHUNK_SIZE: i32 = 16;
-const MAX_EDIT_HEIGHT: i32 = 12;
-const STREAM_RADIUS_CHUNKS: i32 = 5;
 
 const SHADER: &str = r#"
 struct Camera { view_proj: mat4x4<f32>, };
@@ -144,21 +134,6 @@ impl Camera {
     }
 }
 
-struct MeshJob {
-    revision: u64,
-    seed: u32,
-    edits: HashMap<CellPos, BlockId>,
-    chunks: Vec<ChunkPos>,
-}
-struct MeshResult {
-    revision: u64,
-    chunks: Vec<(ChunkPos, Vec<Vertex>)>,
-}
-struct ChunkMesh {
-    buffer: wgpu::Buffer,
-    vertex_count: u32,
-}
-
 struct PlanetGpuChunk {
     buffer: wgpu::Buffer,
     vertex_count: u32,
@@ -180,7 +155,6 @@ pub struct Renderer {
     planet_world: PlanetaryWorld,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
-    chunks: HashMap<ChunkPos, ChunkMesh>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     foliage_bind_group: wgpu::BindGroup,
@@ -188,14 +162,6 @@ pub struct Renderer {
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     seed: u32,
-    edits: HashMap<CellPos, BlockId>,
-    mesh_job_tx: Sender<MeshJob>,
-    mesh_result_rx: Receiver<MeshResult>,
-    dirty_chunks: HashSet<ChunkPos>,
-    edit_revision: u64,
-    pending_mesh_chunks: VecDeque<(u64, ChunkPos, Vec<Vertex>)>,
-    pending_mesh_count: usize,
-    pending_mesh_revision: u64,
 }
 impl Renderer {
     pub async fn new(window: Arc<Window>, seed: u32) -> Result<Self, String> {
@@ -642,32 +608,6 @@ impl Renderer {
         });
 
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
-        let (mesh_job_tx, mesh_job_rx) = mpsc::channel::<MeshJob>();
-        let (mesh_result_tx, mesh_result_rx) = mpsc::channel::<MeshResult>();
-        thread::Builder::new()
-            .name("hexel-mesh-worker".into())
-            .spawn(move || {
-                while let Ok(mut job) = mesh_job_rx.recv() {
-                    while let Ok(newer) = mesh_job_rx.try_recv() {
-                        job = newer;
-                    }
-                    let chunks = job
-                        .chunks
-                        .iter()
-                        .map(|pos| (*pos, build_chunk_mesh(job.seed, &job.edits, *pos)))
-                        .collect();
-                    if mesh_result_tx
-                        .send(MeshResult {
-                            revision: job.revision,
-                            chunks,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
-            .map_err(|e| format!("Could not start mesh worker: {e}"))?;
         let renderer = Self {
             surface,
             device,
@@ -685,7 +625,6 @@ impl Renderer {
             planet_world,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
-            chunks: HashMap::new(),
             camera_buffer,
             camera_bind_group,
             foliage_bind_group,
@@ -693,58 +632,12 @@ impl Renderer {
             _depth_texture: depth_texture,
             depth_view,
             seed,
-            edits: HashMap::new(),
-            mesh_job_tx,
-            mesh_result_rx,
-            dirty_chunks: HashSet::new(),
-            edit_revision: 0,
-            pending_mesh_chunks: VecDeque::new(),
-            pending_mesh_count: 0,
-            pending_mesh_revision: 0,
         };
         Ok(renderer)
     }
 
-    pub fn cell_from_world(position: Vec3) -> CellPos {
-        let scale = WorldScale::default();
-        let r_float = position.z / (scale.hex_radius * 1.5);
-        let q_float = position.x / (scale.hex_radius * 3.0_f32.sqrt()) - r_float * 0.5;
-
-        // Axial hex coordinates must be rounded together in cube space. Rounding q
-        // and r independently misclassifies points near hex corners, which can make
-        // both collision samples and block targeting select the wrong column.
-        let s_float = -q_float - r_float;
-        let mut q = q_float.round();
-        let mut r = r_float.round();
-        let s = s_float.round();
-        let q_error = (q - q_float).abs();
-        let r_error = (r - r_float).abs();
-        let s_error = (s - s_float).abs();
-        if q_error > r_error && q_error > s_error {
-            q = -r - s;
-        } else if r_error > s_error {
-            r = -q - s;
-        }
-        CellPos::new(
-            q as i32,
-            r as i32,
-            (position.y / scale.hexel_height).floor() as i32,
-        )
-    }
     pub fn world_seed(&self) -> u32 {
         self.seed
-    }
-
-    pub fn flat_edits_snapshot(&self) -> Vec<(CellPos, BlockId)> {
-        let mut edits = self.edits.iter().map(|(cell, block)| (*cell, *block)).collect::<Vec<_>>();
-        edits.sort_by_key(|(cell, _)| (cell.q, cell.r, cell.y));
-        edits
-    }
-
-    pub fn restore_flat_edits(&mut self, edits: &[(CellPos, BlockId)]) {
-        for (cell, block) in edits {
-            self.edit_block(*cell, *block);
-        }
     }
 
     pub fn planet_edits_snapshot(&self) -> Vec<(u32, BlockId)> {
@@ -1674,20 +1567,6 @@ fn planet_vertex_color(sample: PlanetSample) -> [f32; 3] {
     }
 }
 
-fn generated_block_from_height(cell: CellPos, height: i32) -> BlockId {
-    if cell.y < 0 {
-        BlockId::Foundation
-    } else if cell.y > height {
-        BlockId::Air
-    } else if cell.y == height {
-        BlockId::Grass
-    } else if cell.y >= height - 3 {
-        BlockId::Dirt
-    } else {
-        BlockId::Stone
-    }
-}
-
 fn create_depth_target(
     device: &wgpu::Device,
     width: u32,
@@ -1710,258 +1589,6 @@ fn create_depth_target(
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
-fn affected_chunks_for_cell(cell: CellPos) -> Vec<ChunkPos> {
-    let mut affected = cell
-        .neighbors()
-        .into_iter()
-        .map(|neighbor| neighbor.chunk_and_local().0)
-        .collect::<Vec<_>>();
-    affected.push(cell.chunk_and_local().0);
-    affected.sort_by_key(|p| (p.q, p.r, p.y));
-    affected.dedup();
-    affected
-}
-
-fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPos) -> Vec<Vertex> {
-    let scale = WorldScale::default();
-    let q_start = chunk.q * CHUNK_SIZE;
-    let r_start = chunk.r * CHUNK_SIZE;
-    let y_start = chunk.y * CHUNK_SIZE;
-    let q_end = q_start + CHUNK_SIZE;
-    let r_end = r_start + CHUNK_SIZE;
-    let y_end = y_start + CHUNK_SIZE;
-    let mut vertices = Vec::with_capacity(70_000);
-    let noise = Perlin::new(seed);
-    let mut heights = HashMap::with_capacity(((CHUNK_SIZE + 2) * (CHUNK_SIZE + 2)) as usize);
-    for q in (q_start - 1)..=q_end {
-        for r in (r_start - 1)..=r_end {
-            let height = (8.0 + noise.get([q as f64 / 28.0, r as f64 / 28.0]) * 5.0).round() as i32;
-            heights.insert((q, r), height);
-        }
-    }
-    let block_at = |cell: CellPos| {
-        edits.get(&cell).copied().unwrap_or_else(|| {
-            if cell.y < 0 {
-                return BlockId::Foundation;
-            }
-            let height = *heights.get(&(cell.q, cell.r)).unwrap_or(&0);
-            if cell.y > height {
-                BlockId::Air
-            } else if cell.y == height {
-                BlockId::Grass
-            } else if cell.y >= height - 3 {
-                BlockId::Dirt
-            } else {
-                BlockId::Stone
-            }
-        })
-    };
-    let mut edited_tops = HashMap::<(i32, i32), i32>::new();
-    for cell in edits.keys() {
-        if (q_start..q_end).contains(&cell.q) && (r_start..r_end).contains(&cell.r) {
-            edited_tops
-                .entry((cell.q, cell.r))
-                .and_modify(|top| *top = (*top).max(cell.y))
-                .or_insert(cell.y);
-        }
-    }
-    for q in q_start..q_end {
-        for r in r_start..r_end {
-            let terrain_top = *heights.get(&(q, r)).unwrap_or(&0);
-            let edited_top = edited_tops.get(&(q, r)).copied().unwrap_or(terrain_top);
-            let min_y = y_start.max(0);
-            let max_y = y_end.min(
-                (terrain_top + MAX_EDIT_HEIGHT)
-                    .max(edited_top)
-                    .max(terrain_top)
-                    .min(256)
-                    + 1,
-            );
-            for y in min_y..max_y {
-                let cell = CellPos::new(q, r, y);
-                let block = block_at(cell);
-                if block == BlockId::Air {
-                    continue;
-                }
-                let center = scale.prism_center(cell);
-                let bottom_y = y as f32 * scale.hexel_height;
-                let top_y = (y + 1) as f32 * scale.hexel_height;
-                let ring = std::array::from_fn::<_, 6, _>(|i| {
-                    let angle = (30.0_f32 + i as f32 * 60.0).to_radians();
-                    Vec3::new(
-                        center.x + angle.cos() * scale.hex_radius,
-                        center.y,
-                        center.z + angle.sin() * scale.hex_radius,
-                    )
-                });
-                let base = block_color_at(block, cell, seed);
-                if !block_at(CellPos::new(q, r, y + 1)).is_solid() {
-                    let top = [
-                        (base[0] * 1.12).min(1.0),
-                        (base[1] * 1.12).min(1.0),
-                        (base[2] * 1.12).min(1.0),
-                    ];
-                    for i in 0..6 {
-                        push_triangle(
-                            &mut vertices,
-                            Vec3::new(center.x, top_y, center.z),
-                            Vec3::new(ring[i].x, top_y, ring[i].z),
-                            Vec3::new(ring[(i + 1) % 6].x, top_y, ring[(i + 1) % 6].z),
-                            top,
-                        );
-                    }
-                }
-                let neighbors = [(0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0)];
-                for (i, (dq, dr)) in neighbors.into_iter().enumerate() {
-                    let nq = q + dq;
-                    let nr = r + dr;
-                    if block_at(CellPos::new(nq, nr, y)).is_solid() {
-                        continue;
-                    }
-                    let a = ring[i];
-                    let b = ring[(i + 1) % 6];
-                    let shade = 0.48 + ((i * 7 % 6) as f32) * 0.055;
-                    let side = [base[0] * shade, base[1] * shade, base[2] * shade];
-                    push_triangle(
-                        &mut vertices,
-                        Vec3::new(a.x, bottom_y, a.z),
-                        Vec3::new(a.x, top_y, a.z),
-                        Vec3::new(b.x, top_y, b.z),
-                        side,
-                    );
-                    push_triangle(
-                        &mut vertices,
-                        Vec3::new(a.x, bottom_y, a.z),
-                        Vec3::new(b.x, top_y, b.z),
-                        Vec3::new(b.x, bottom_y, b.z),
-                        side,
-                    );
-                }
-            }
-        }
-    }
-    // Coordinate-hashed trees are stable across chunk reloads.
-    let vegetation_climate = Perlin::new(seed.wrapping_add(0x51ED_270B));
-    for q in q_start..q_end {
-        for r in r_start..r_end {
-            let height = *heights.get(&(q, r)).unwrap_or(&0);
-            if height < 0 || chunk.y != height.div_euclid(CHUNK_SIZE) {
-                continue;
-            }
-            let hash = vegetation_hash(seed, q, r);
-            if !hash.is_multiple_of(29) {
-                continue;
-            } // Reduced baseline density; biome patches are tuned below.
-            let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
-            let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
-            let conifer = warmth < -0.25 || wetness < -0.32;
-            let tropical = warmth > 0.38 && wetness > 0.05;
-            let roll = (hash >> 16) % 1000;
-            // Adult height ranges are metres, converted to hexel layers below.
-            let (species, min_m, max_m, trunk_radius, crown_radius, giant) = if tropical {
-                if roll < 22 {
-                    (4_u8, 55.0_f32, 95.0, 2, 4, true)
-                } else if roll < 105 {
-                    (5, 25.0, 45.0, 1, 3, false)
-                } else {
-                    (3, 16.0, 32.0, 1, 3, false)
-                }
-            } else if conifer {
-                if roll < 8 {
-                    (4, 55.0_f32, 95.0, 2, 4, true)
-                } else if roll < 570 {
-                    (2, 18.0, 38.0, 1, 2, false)
-                } else {
-                    (1, 10.0, 24.0, 1, 2, false)
-                }
-            } else if wetness > 0.25 {
-                if roll < 9 {
-                    (4, 55.0_f32, 95.0, 2, 4, true)
-                } else if roll < 590 {
-                    (0, 18.0, 32.0, 1, 3, false)
-                } else {
-                    (1, 10.0, 24.0, 1, 2, false)
-                }
-            } else {
-                (6, 6.0, 16.0, 1, 2, false)
-            };
-            let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
-            let mut height_m = min_m + (max_m - min_m) * variance;
-            if giant && !(hash >> 28).is_multiple_of(4) {
-                height_m = min_m * 0.55;
-            }
-            let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
-            let trunk = if species == 1 {
-                [0.78, 0.75, 0.65]
-            } else {
-                [0.38, 0.25, 0.14]
-            };
-            let foliage = match species {
-                1 => [0.24, 0.40, 0.19],
-                2 => [0.12, 0.30, 0.15],
-                4 => [0.07, 0.31, 0.11],
-                5 => [0.10, 0.39, 0.13],
-                6 => [0.30, 0.39, 0.17],
-                _ => [0.18, 0.46, 0.15],
-            };
-            let (leaf_layer, bark_layer) = match species {
-                0 => (7, 22),             // oak
-                1 => (3, 17),             // birch
-                2 => (8, 23),             // pine
-                3 if tropical => (5, 19), // kapok
-                3 => (0, 15),             // acacia-like
-                4 if tropical => (9, 24), // purpleheart
-                4 => (7, 22),             // large temperate tree
-                5 => (1, 16),             // bald cypress
-                6 => (6, 21),             // maple
-                _ => (7, 22),
-            };
-            append_hexel_tree(
-                &mut vertices,
-                CellPos::new(q, r, height + 1),
-                layers,
-                trunk_radius,
-                crown_radius,
-                (trunk, foliage),
-                species,
-                hash,
-                leaf_layer,
-                bark_layer,
-                scale,
-            );
-        }
-    }
-    vertices
-}
-fn block_color_at(block: BlockId, cell: CellPos, seed: u32) -> [f32; 3] {
-    let hash = vegetation_hash(
-        seed ^ (cell.y as u32).wrapping_mul(0x27D4_EB2D),
-        cell.q,
-        cell.r,
-    );
-    match block {
-        BlockId::Grass => match hash % 9 {
-            0 => [0.34, 0.52, 0.24],
-            1 => [0.43, 0.57, 0.29],
-            _ => [0.25, 0.66, 0.25],
-        },
-        BlockId::Dirt => match hash % 5 {
-            0 => [0.38, 0.25, 0.15],
-            1 => [0.55, 0.39, 0.24],
-            2 => [0.31, 0.22, 0.15],
-            _ => [0.47, 0.29, 0.16],
-        },
-        BlockId::Stone => match cell.y.rem_euclid(11) {
-            0..=2 => [0.49, 0.48, 0.43],
-            3..=5 => [0.43, 0.46, 0.49],
-            6..=8 => [0.53, 0.50, 0.45],
-            _ => [0.38, 0.40, 0.43],
-        },
-        BlockId::Foundation => [0.22, 0.23, 0.27],
-        BlockId::Air => [0.0, 0.0, 0.0],
-    }
-}
-
 fn vegetation_hash(seed: u32, q: i32, r: i32) -> u32 {
     let mut x = seed ^ (q as u32).wrapping_mul(0x9E37_79B9) ^ (r as u32).wrapping_mul(0x85EB_CA6B);
     x ^= x >> 16;
@@ -2259,17 +1886,6 @@ fn append_hexel_prism(
         }
     }
 }
-fn push_triangle(vertices: &mut Vec<Vertex>, a: Vec3, b: Vec3, c: Vec3, color: [f32; 3]) {
-    for point in [a, b, c] {
-        vertices.push(Vertex {
-            position: point.to_array(),
-            color,
-            uv: [0.0, 0.0],
-            textured: 0.0,
-        });
-    }
-}
-
 fn push_textured_triangle(
     vertices: &mut Vec<Vertex>,
     points: [(Vec3, [f32; 2]); 3],
@@ -2435,22 +2051,5 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
     pixels
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn edit_invalidates_diagonal_axial_neighbor_chunk() {
-        // The (q + 1, r - 1) neighbor crosses both chunk axes here.
-        let chunks = affected_chunks_for_cell(CellPos::new(15, 16, 4));
-        assert!(chunks.contains(&ChunkPos { q: 1, r: 0, y: 0 }));
-    }
-
-    #[test]
-    fn edit_invalidates_vertical_chunks_at_layer_boundaries() {
-        let below = affected_chunks_for_cell(CellPos::new(4, 4, 16));
-        let above = affected_chunks_for_cell(CellPos::new(4, 4, 15));
-        assert!(below.contains(&ChunkPos { q: 0, r: 0, y: 0 }));
-        assert!(above.contains(&ChunkPos { q: 0, r: 0, y: 1 }));
-    }
 }
