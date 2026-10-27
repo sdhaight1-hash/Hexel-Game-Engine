@@ -564,6 +564,50 @@ impl Renderer {
                 .or_insert((start, end));
         }
 
+        // Give every geodesic surface cell a visible inward-facing side wall.
+        // The top remains terrain-displaced; the lower ring is inset radially so
+        // adjacent cells read as hexel/pentagon prisms at ground level.
+        const CELL_WALL_DEPTH: f64 = 2.4;
+        for cell in topology.cells() {
+            let side_color = [0.16_f32, 0.18, 0.17];
+            for index in 0..cell.boundary.len() {
+                let next = (index + 1) % cell.boundary.len();
+                let top_a = terrain
+                    .sample_direction(cell.boundary[index], 0.25)
+                    .surface_position;
+                let top_b = terrain
+                    .sample_direction(cell.boundary[next], 0.25)
+                    .surface_position;
+                let bottom_a = top_a.normalize() * (top_a.length() - CELL_WALL_DEPTH).max(1.0);
+                let bottom_b = top_b.normalize() * (top_b.length() - CELL_WALL_DEPTH).max(1.0);
+                let mut quad = [
+                    top_a.as_vec3(),
+                    bottom_a.as_vec3(),
+                    top_b.as_vec3(),
+                    top_b.as_vec3(),
+                    bottom_a.as_vec3(),
+                    bottom_b.as_vec3(),
+                ];
+                // Orient each wall triangle consistently toward the outside.
+                for tri in quad.chunks_exact_mut(3) {
+                    let a = tri[0];
+                    let b = tri[1];
+                    let c = tri[2];
+                    if (b - a).cross(c - a).dot((a + b + c) / 3.0) < 0.0 {
+                        tri.swap(1, 2);
+                    }
+                }
+                for position in quad {
+                    planet_vertices.push(Vertex {
+                        position: position.to_array(),
+                        color: side_color,
+                        uv: [0.0, 0.0],
+                        textured: 0.0,
+                    });
+                }
+            }
+        }
+
         // Draw a narrow, slightly raised ribbon along every topology edge. This
         // makes the actual pentagon/hexagon partition visible instead of showing
         // a smooth biome-colored sphere that only happens to use topology inside.
