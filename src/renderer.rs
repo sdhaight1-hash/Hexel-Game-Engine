@@ -1474,6 +1474,29 @@ fn append_planetary_trees(
     }
 }
 
+fn ray_triangle_distance(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
+    let edge_ab = b - a;
+    let edge_ac = c - a;
+    let p = direction.cross(edge_ac);
+    let determinant = edge_ab.dot(p);
+    if determinant.abs() < 1.0e-7 {
+        return None;
+    }
+    let inverse = determinant.recip();
+    let from_a = origin - a;
+    let u = from_a.dot(p) * inverse;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = from_a.cross(edge_ab);
+    let v = direction.dot(q) * inverse;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let distance = edge_ac.dot(q) * inverse;
+    (distance > 0.001 && distance.is_finite()).then_some(distance)
+}
+
 fn planet_block_color(block: BlockId) -> [f32; 3] {
     match block {
         BlockId::Air => [0.025, 0.055, 0.10],
