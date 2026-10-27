@@ -24,8 +24,6 @@ use winit::{
 };
 
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
-const PLAYER_RADIUS: f32 = 0.30;
-const PLAYER_HEIGHT: f32 = 1.80;
 const GRAVITY: f32 = 22.0;
 const JUMP_SPEED: f32 = 8.5;
 
@@ -172,150 +170,6 @@ impl HexelApp {
         self.camera.position = self.player_feet + next_radial * PLAYER_EYE_HEIGHT;
     }
 
-    fn update_player(&mut self, dt: f32) {
-        let Some(renderer) = self.renderer.as_ref() else {
-            return;
-        };
-        let dt = dt.min(0.04);
-        let forward =
-            Vec3::new(self.camera.yaw.sin(), 0.0, self.camera.yaw.cos()).normalize_or_zero();
-        // `look_to_rh` defines screen-right as forward × world-up. With yaw=0
-        // the camera looks along +Z, so its actual right vector is -X, not +X.
-        // Keep this basis independent from mouse input: yaw only orients movement.
-        let right =
-            Vec3::new(-self.camera.yaw.cos(), 0.0, self.camera.yaw.sin()).normalize_or_zero();
-        let mut direction = Vec3::ZERO;
-        if self.pressed.contains(&KeyCode::KeyW) {
-            direction += forward;
-        }
-        if self.pressed.contains(&KeyCode::KeyS) {
-            direction -= forward;
-        }
-        if self.pressed.contains(&KeyCode::KeyD) {
-            direction += right;
-        }
-        if self.pressed.contains(&KeyCode::KeyA) {
-            direction -= right;
-        }
-        direction = direction.normalize_or_zero();
-        let proposed = self.player_feet + direction * self.camera.speed * dt;
-
-        // Keep the capsule outside higher terrain. Eight footprint samples catch hex
-        // corners; axis-separated fallback lets the player slide along a blocked face
-        // instead of becoming stuck whenever a diagonal step is obstructed.
-        let current_cell = Renderer::cell_from_world(self.player_feet + Vec3::new(0.0, 0.01, 0.0));
-        let current_ground = renderer.ground_height(current_cell.q, current_cell.r);
-        let diagonal = PLAYER_RADIUS * std::f32::consts::FRAC_1_SQRT_2;
-        let footprint_offsets = [
-            (PLAYER_RADIUS, 0.0),
-            (-PLAYER_RADIUS, 0.0),
-            (0.0, PLAYER_RADIUS),
-            (0.0, -PLAYER_RADIUS),
-            (diagonal, diagonal),
-            (diagonal, -diagonal),
-            (-diagonal, diagonal),
-            (-diagonal, -diagonal),
-        ];
-        let can_move_to = |x: f32, z: f32| {
-            let candidate = Vec3::new(x, self.player_feet.y, z);
-            let next_cell = Renderer::cell_from_world(candidate + Vec3::new(0.0, 0.01, 0.0));
-            let next_ground = renderer.ground_height(next_cell.q, next_cell.r);
-            let blocked_by_step = footprint_offsets.iter().any(|(ox, oz)| {
-                let sample = Renderer::cell_from_world(candidate + Vec3::new(*ox, 0.01, *oz));
-                renderer.ground_height(sample.q, sample.r) > current_ground + 0.65
-            });
-            let blocked_by_tree =
-                renderer.tree_blocks_player(candidate, PLAYER_RADIUS, PLAYER_HEIGHT);
-            !blocked_by_tree
-                && ((!blocked_by_step && next_ground <= current_ground + 0.65)
-                    || self.player_feet.y > next_ground + 0.1)
-        };
-        if can_move_to(proposed.x, proposed.z) {
-            self.player_feet.x = proposed.x;
-            self.player_feet.z = proposed.z;
-        } else {
-            if can_move_to(proposed.x, self.player_feet.z) {
-                self.player_feet.x = proposed.x;
-            }
-            if can_move_to(self.player_feet.x, proposed.z) {
-                self.player_feet.z = proposed.z;
-            }
-        }
-
-        if self.jump_requested && self.grounded {
-            self.vertical_velocity = JUMP_SPEED;
-            self.grounded = false;
-        }
-        self.jump_requested = false;
-        self.vertical_velocity -= GRAVITY * dt;
-        self.player_feet.y += self.vertical_velocity * dt;
-
-        let cell = Renderer::cell_from_world(self.player_feet + Vec3::new(0.0, 0.01, 0.0));
-        let ground = renderer.ground_height(cell.q, cell.r);
-        if self.player_feet.y <= ground {
-            self.player_feet.y = ground;
-            self.vertical_velocity = 0.0;
-            self.grounded = true;
-        } else {
-            self.grounded = false;
-        }
-        self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.update_streaming(self.player_feet);
-        }
-    }
-    fn update_harvesting(&mut self, dt: f32) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
-        let hit = renderer
-            .raycast(self.camera.position, self.camera.forward(), 8.0)
-            .map(|(cell, _)| cell);
-        if !self.harvest_held {
-            self.harvest_target = None;
-            self.harvest_progress = 0.0;
-            return;
-        }
-        if hit != self.harvest_target {
-            self.harvest_target = hit;
-            self.harvest_progress = 0.0;
-        }
-        let Some(target) = hit else {
-            self.harvest_progress = 0.0;
-            return;
-        };
-        let block = renderer.block_at(target);
-        if !block.is_solid() || block.is_indestructible() {
-            self.harvest_progress = 0.0;
-            return;
-        }
-        let seconds = match block {
-            BlockId::Grass => 0.55,
-            BlockId::Dirt => 0.8,
-            BlockId::Stone => 1.8,
-            BlockId::Foundation | BlockId::Air => {
-                self.harvest_progress = 0.0;
-                return;
-            }
-        };
-        self.harvest_progress += dt.max(0.0);
-        if self.harvest_progress >= seconds {
-            let item = match block {
-                BlockId::Grass => Some(ItemId::GrassFiber),
-                BlockId::Dirt => None,
-                BlockId::Stone => None,
-                BlockId::Foundation | BlockId::Air => None,
-            };
-            renderer.edit_block(target, BlockId::Air);
-            if let Some(item) = item {
-                let _overflow = self.inventory.add(item, 1);
-            }
-            self.harvest_held = false;
-            self.harvest_target = None;
-            self.harvest_progress = 0.0;
-        }
-    }
-
     fn update_planet_harvesting(&mut self, dt: f32) {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
@@ -459,31 +313,7 @@ impl HexelApp {
         };
         window.set_title(&message);
     }
-    fn edit_target(&mut self, remove: bool) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
-        let Some((hit, placement)) =
-            renderer.raycast(self.camera.position, self.camera.forward(), 8.0)
-        else {
-            return;
-        };
-        let target = if remove { hit } else { placement };
-        if !remove {
-            let player_cell =
-                Renderer::cell_from_world(self.player_feet + Vec3::Y * (PLAYER_HEIGHT * 0.5));
-            if target.q == player_cell.q
-                && target.r == player_cell.r
-                && (target.y - player_cell.y).abs() <= 2
-            {
-                return;
-            }
-            if renderer.block_at(target).is_solid() {
-                return;
-            }
-        }
-        renderer.edit_block(target, if remove { BlockId::Air } else { BlockId::Grass });
-    }
+
 }
 
 impl ApplicationHandler for HexelApp {
