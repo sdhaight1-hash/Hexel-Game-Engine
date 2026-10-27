@@ -183,6 +183,7 @@ pub struct Renderer {
     planet_terrain: PlanetGenerator,
     planet_preview: bool,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
+    planet_stream_pending: VecDeque<PlanetChunkKey>,
     chunks: HashMap<ChunkPos, ChunkMesh>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -645,6 +646,7 @@ impl Renderer {
             planet_terrain: terrain,
             planet_preview: false,
             planet_stream_chunks: HashMap::new(),
+            planet_stream_pending: VecDeque::new(),
             chunks: HashMap::new(),
             camera_buffer,
             camera_bind_group,
@@ -1203,21 +1205,27 @@ impl Renderer {
         const CHUNKS_PER_FACE: u32 = 24;
         const MESH_RESOLUTION: u32 = 10;
         const ANGULAR_RADIUS_COS: f64 = 0.9637708963658905; // cos(0.27 radians)
+        const MAX_NEW_CHUNKS_PER_FRAME: usize = 3;
 
         let radial = DVec3::new(
             player_position.x as f64,
             player_position.y as f64,
             player_position.z as f64,
-        ).normalize_or_zero();
+        )
+        .normalize_or_zero();
         if radial == DVec3::ZERO {
             return;
         }
 
         let mut wanted = HashSet::new();
+        let mut prioritized = Vec::new();
         for face in [
-            CubeFace::PositiveX, CubeFace::NegativeX,
-            CubeFace::PositiveY, CubeFace::NegativeY,
-            CubeFace::PositiveZ, CubeFace::NegativeZ,
+            CubeFace::PositiveX,
+            CubeFace::NegativeX,
+            CubeFace::PositiveY,
+            CubeFace::NegativeY,
+            CubeFace::PositiveZ,
+            CubeFace::NegativeZ,
         ] {
             let (normal, axis_u, axis_v) = face.basis();
             for y in 0..CHUNKS_PER_FACE {
@@ -1225,16 +1233,35 @@ impl Renderer {
                 for x in 0..CHUNKS_PER_FACE {
                     let u = -1.0 + 2.0 * (x as f64 + 0.5) / CHUNKS_PER_FACE as f64;
                     let direction = (normal + axis_u * u + axis_v * v).normalize();
-                    if direction.dot(radial) >= ANGULAR_RADIUS_COS {
-                        wanted.insert(PlanetChunkKey { face, x, y });
+                    let dot = direction.dot(radial);
+                    if dot >= ANGULAR_RADIUS_COS {
+                        let key = PlanetChunkKey { face, x, y };
+                        wanted.insert(key);
+                        prioritized.push((dot, key));
                     }
                 }
             }
         }
 
         self.planet_stream_chunks.retain(|key, _| wanted.contains(key));
-        for key in wanted {
-            if self.planet_stream_chunks.contains_key(&key) {
+        self.planet_stream_pending.retain(|key| {
+            wanted.contains(key) && !self.planet_stream_chunks.contains_key(key)
+        });
+
+        prioritized.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (_, key) in prioritized {
+            if !self.planet_stream_chunks.contains_key(&key)
+                && !self.planet_stream_pending.contains(&key)
+            {
+                self.planet_stream_pending.push_back(key);
+            }
+        }
+
+        for _ in 0..MAX_NEW_CHUNKS_PER_FRAME {
+            let Some(key) = self.planet_stream_pending.pop_front() else {
+                break;
+            };
+            if !wanted.contains(&key) || self.planet_stream_chunks.contains_key(&key) {
                 continue;
             }
             let Ok(mesh) = PlanetChunkMesh::generate(
@@ -1266,10 +1293,13 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-            self.planet_stream_chunks.insert(key, PlanetGpuChunk {
-                buffer,
-                vertex_count: vertices.len() as u32,
-            });
+            self.planet_stream_chunks.insert(
+                key,
+                PlanetGpuChunk {
+                    buffer,
+                    vertex_count: vertices.len() as u32,
+                },
+            );
         }
     }
 
