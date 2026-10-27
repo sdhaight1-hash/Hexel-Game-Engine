@@ -41,6 +41,7 @@ struct HexelApp {
     cursor_locked: bool,
     harvest_held: bool,
     harvest_target: Option<hexel_engine::CellPos>,
+    planet_harvest_target: Option<u32>,
     harvest_progress: f32,
     target_ui_tick: f32,
     inventory: Inventory,
@@ -61,6 +62,7 @@ impl Default for HexelApp {
             cursor_locked: false,
             harvest_held: false,
             harvest_target: None,
+            planet_harvest_target: None,
             harvest_progress: 0.0,
             target_ui_tick: 0.0,
             inventory: Inventory::default(),
@@ -97,26 +99,59 @@ impl HexelApp {
     }
 
     fn update_planet_player(&mut self, dt: f32) {
-        let Some(renderer) = self.renderer.as_ref() else { return; };
+        let Some(renderer) = self.renderer.as_ref() else {
+            return;
+        };
         let dt = dt.min(0.04);
         let radial = self.player_feet.normalize_or_zero();
-        if radial == Vec3::ZERO { return; }
+        if radial == Vec3::ZERO {
+            return;
+        }
         let forward = self.camera.forward();
         let tangent_forward = (forward - radial * forward.dot(radial)).normalize_or_zero();
         let tangent_right = tangent_forward.cross(radial).normalize_or_zero();
         let mut direction = Vec3::ZERO;
-        if self.pressed.contains(&KeyCode::KeyW) { direction += tangent_forward; }
-        if self.pressed.contains(&KeyCode::KeyS) { direction -= tangent_forward; }
-        if self.pressed.contains(&KeyCode::KeyD) { direction += tangent_right; }
-        if self.pressed.contains(&KeyCode::KeyA) { direction -= tangent_right; }
+        if self.pressed.contains(&KeyCode::KeyW) {
+            direction += tangent_forward;
+        }
+        if self.pressed.contains(&KeyCode::KeyS) {
+            direction -= tangent_forward;
+        }
+        if self.pressed.contains(&KeyCode::KeyD) {
+            direction += tangent_right;
+        }
+        if self.pressed.contains(&KeyCode::KeyA) {
+            direction -= tangent_right;
+        }
         direction = direction.normalize_or_zero();
         let surface = renderer.planet_surface_position(radial);
         let radius = surface.length().max(1.0);
-        let next_radial = if direction == Vec3::ZERO { radial } else { (radial + direction * (self.camera.speed * dt / radius)).normalize_or_zero() };
-        self.player_feet = renderer.planet_surface_position(next_radial);
+        let altitude = (self.player_feet.length() - surface.length()).max(0.0);
+        let next_radial = if direction == Vec3::ZERO {
+            radial
+        } else {
+            (radial + direction * (self.camera.speed * dt / radius)).normalize_or_zero()
+        };
+        let mut height = altitude;
+        if self.jump_requested && self.grounded {
+            self.vertical_velocity = JUMP_SPEED;
+            self.grounded = false;
+        }
+        self.jump_requested = false;
+        if !self.grounded || self.vertical_velocity > 0.0 {
+            self.vertical_velocity -= GRAVITY * dt;
+            height = (altitude + self.vertical_velocity * dt).max(0.0);
+        }
+        if height <= 0.0 {
+            height = 0.0;
+            self.vertical_velocity = 0.0;
+            self.grounded = true;
+        } else {
+            self.grounded = false;
+        }
+        self.player_feet = renderer.planet_surface_position(next_radial) + next_radial * height;
         self.camera.up = next_radial;
         self.camera.position = self.player_feet + next_radial * PLAYER_EYE_HEIGHT;
-        self.grounded = true;
     }
 
     fn update_player(&mut self, dt: f32) {
@@ -263,6 +298,65 @@ impl HexelApp {
         }
     }
 
+    fn update_planet_harvesting(&mut self, dt: f32) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let hit = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward());
+        if !self.harvest_held {
+            self.planet_harvest_target = None;
+            self.harvest_progress = 0.0;
+            return;
+        }
+        if hit != self.planet_harvest_target {
+            self.planet_harvest_target = hit;
+            self.harvest_progress = 0.0;
+        }
+        let Some(target) = hit else {
+            self.harvest_progress = 0.0;
+            return;
+        };
+        let block = renderer.planet_block_at(target);
+        if !block.is_solid() || block.is_indestructible() {
+            self.harvest_progress = 0.0;
+            return;
+        }
+        let seconds = match block {
+            BlockId::Grass => 0.55,
+            BlockId::Dirt => 0.8,
+            BlockId::Stone => 1.8,
+            BlockId::Foundation | BlockId::Air => {
+                self.harvest_progress = 0.0;
+                return;
+            }
+        };
+        self.harvest_progress += dt.max(0.0);
+        if self.harvest_progress >= seconds {
+            renderer.edit_planet_cell(target, BlockId::Air);
+            if block == BlockId::Grass {
+                let _overflow = self.inventory.add(ItemId::GrassFiber, 1);
+            }
+            self.harvest_held = false;
+            self.planet_harvest_target = None;
+            self.harvest_target = None;
+            self.harvest_progress = 0.0;
+        }
+    }
+
+    fn edit_planet_target(&mut self) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let Some(target) = renderer
+            .planet_cell_at_ray(self.camera.position, self.camera.forward())
+        else {
+            return;
+        };
+        if renderer.planet_block_at(target) == BlockId::Air {
+            renderer.edit_planet_cell(target, BlockId::Grass);
+        }
+    }
+
     fn update_target_title(&mut self, dt: f32) {
         self.target_ui_tick += dt;
         if self.target_ui_tick < 0.12 {
@@ -276,9 +370,22 @@ impl HexelApp {
             return;
         };
         if self.planet_preview_active() {
-            let message = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward())
-                .map(|id| format!("Hexel Engine | PLANET WALK | Surface cell {id} | WASD move | Mouse look | F3 flat world"))
-                .unwrap_or_else(|| "Hexel Engine | PLANET WALK | Looking into space | WASD move | Mouse look | F3 flat world".to_string());
+            let message = renderer
+                .planet_cell_at_ray(self.camera.position, self.camera.forward())
+                .map(|id| {
+                    format!(
+                        "Hexel Engine | PLANET | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB break / RMB place | F3 flat",
+                        renderer.planet_block_at(id),
+                        self.inventory.selected_hotbar() + 1,
+                        self.inventory
+                            .selected_stack()
+                            .map(|s| format!("{:?} x{}", s.item, s.count))
+                            .unwrap_or_else(|| "Empty".to_string())
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "Hexel Engine | PLANET | WASD move | Space jump | E inventory | F3 flat".to_string()
+                });
             window.set_title(&message);
             return;
         }
@@ -471,6 +578,7 @@ impl ApplicationHandler for HexelApp {
                                 if preview {
                                     self.harvest_held = false;
                                     self.harvest_target = None;
+                                    self.planet_harvest_target = None;
                                     self.harvest_progress = 0.0;
                                     self.jump_requested = false;
                                     if let Some(renderer) = self.renderer.as_ref() {
@@ -514,7 +622,7 @@ impl ApplicationHandler for HexelApp {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
                 ..
-            } if self.cursor_locked && !self.planet_preview_active() => {
+            } if self.cursor_locked => {
                 self.harvest_held = true;
                 self.harvest_target = None;
                 self.harvest_progress = 0.0;
@@ -532,7 +640,9 @@ impl ApplicationHandler for HexelApp {
                 button: MouseButton::Right,
                 state: ElementState::Pressed,
                 ..
-            } if self.cursor_locked && !self.planet_preview_active() => self.edit_target(false),
+            } if self.cursor_locked => {
+                if self.planet_preview_active() { self.edit_planet_target(); } else { self.edit_target(false); }
+            },
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
@@ -584,6 +694,7 @@ impl ApplicationHandler for HexelApp {
         self.last_frame = now;
         if self.planet_preview_active() {
             self.update_planet_player(dt);
+            self.update_planet_harvesting(dt);
             self.update_target_title(dt);
         } else {
             self.update_player(dt);

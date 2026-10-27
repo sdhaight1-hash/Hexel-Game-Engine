@@ -170,9 +170,11 @@ pub struct Renderer {
     target_buffer: wgpu::Buffer,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
+    planet_vertices: Vec<Vertex>,
+    planet_cell_ranges: HashMap<u32, (u64, u64)>,
+    planet_cell_edits: HashMap<u32, BlockId>,
     planet_topology: SurfaceTopology,
     planet_terrain: PlanetGenerator,
-    planet_radius: f32,
     planet_preview: bool,
     chunks: HashMap<ChunkPos, ChunkMesh>,
     camera_buffer: wgpu::Buffer,
@@ -514,41 +516,45 @@ impl Renderer {
         // Keep the spherical preview separate from the flat-world chunk meshes.
         // It is generated once and only drawn while F3 preview mode is enabled.
         let planet_config = PlanetConfig {
-            radius: 36.0,
-            elevation_scale: 3.0,
+            radius: 180.0,
+            elevation_scale: 14.0,
             axial_tilt_degrees: 23.5,
         };
-        let topology = SurfaceTopology::generate(8, planet_config.radius)
+        let topology = SurfaceTopology::generate(16, planet_config.radius)
             .map_err(|error| format!("Could not generate planet preview topology: {error}"))?;
         let terrain = PlanetGenerator::with_config(seed, planet_config);
         let planet_mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
-        let mut planet_vertices = planet_mesh
-            .triangles
-            .into_iter()
-            .flat_map(|triangle| {
-                let is_pentagon = topology
-                    .cell(triangle.cell_id)
-                    .is_some_and(|cell| cell.boundary.len() == 5);
-                triangle.vertices.into_iter().map(move |vertex| {
-                    let mut color = planet_vertex_color(vertex.sample);
-                    if is_pentagon {
-                        // Keep biome color readable while making the twelve
-                        // topological defect cells immediately recognizable.
-                        color = [
-                            color[0] * 0.78 + 0.22,
-                            color[1] * 0.78 + 0.30,
-                            color[2] * 0.78 + 0.08,
-                        ];
-                    }
-                    Vertex {
-                        position: vertex.position.as_vec3().to_array(),
-                        color,
-                        uv: [0.0, 0.0],
-                        textured: 0.0,
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut planet_vertices = Vec::new();
+        let mut planet_cell_ranges = HashMap::new();
+        for triangle in planet_mesh.triangles {
+            let is_pentagon = topology
+                .cell(triangle.cell_id)
+                .is_some_and(|cell| cell.boundary.len() == 5);
+            let start =
+                planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
+            for vertex in triangle.vertices {
+                let mut color = planet_vertex_color(vertex.sample);
+                if is_pentagon {
+                    color = [
+                        color[0] * 0.78 + 0.22,
+                        color[1] * 0.78 + 0.30,
+                        color[2] * 0.78 + 0.08,
+                    ];
+                }
+                planet_vertices.push(Vertex {
+                    position: vertex.position.as_vec3().to_array(),
+                    color,
+                    uv: [0.0, 0.0],
+                    textured: 0.0,
+                });
+            }
+            let end =
+                planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
+            planet_cell_ranges
+                .entry(triangle.cell_id.0)
+                .and_modify(|range: &mut (u64, u64)| range.1 = end)
+                .or_insert((start, end));
+        }
 
         // Draw a narrow, slightly raised ribbon along every topology edge. This
         // makes the actual pentagon/hexagon partition visible instead of showing
@@ -583,7 +589,7 @@ impl Renderer {
         let planet_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Procedural spherical planet preview"),
             contents: bytemuck::cast_slice(&planet_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
@@ -625,9 +631,11 @@ impl Renderer {
             target_buffer,
             planet_vertex_buffer,
             planet_vertex_count,
+            planet_vertices,
+            planet_cell_ranges,
+            planet_cell_edits: HashMap::new(),
             planet_topology: topology,
             planet_terrain: terrain,
-            planet_radius: planet_config.radius as f32,
             planet_preview: false,
             chunks: HashMap::new(),
             camera_buffer,
@@ -1066,6 +1074,54 @@ impl Renderer {
             bounds_max: max,
         }
     }
+    pub fn planet_block_at(&self, id: u32) -> BlockId {
+        if let Some(block) = self.planet_cell_edits.get(&id) {
+            return *block;
+        }
+        let Some(cell) = self
+            .planet_topology
+            .cell(hexel_engine::topology::SurfaceCellId(id))
+        else {
+            return BlockId::Air;
+        };
+        let sample = self.planet_terrain.sample_direction(cell.center, 0.25);
+        use hexel_engine::planet::Biome;
+        match sample.biome {
+            Biome::DeepOcean | Biome::ShallowOcean => BlockId::Stone,
+            Biome::Mountain | Biome::PolarIce | Biome::Tundra => BlockId::Stone,
+            Biome::Desert | Biome::Savanna => BlockId::Dirt,
+            _ => BlockId::Grass,
+        }
+    }
+
+    pub fn edit_planet_cell(&mut self, id: u32, block: BlockId) {
+        if !self.planet_cell_ranges.contains_key(&id) || block == BlockId::Foundation {
+            return;
+        }
+        self.planet_cell_edits.insert(id, block);
+        let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else {
+            return;
+        };
+        let color = match block {
+            BlockId::Air => [0.025, 0.055, 0.10],
+            BlockId::Grass => [0.20, 0.62, 0.22],
+            BlockId::Dirt => [0.48, 0.29, 0.14],
+            BlockId::Stone => [0.42, 0.45, 0.49],
+            BlockId::Foundation => [0.75, 0.75, 0.78],
+        };
+        let vertex_size = std::mem::size_of::<Vertex>() as u64;
+        let first = (start / vertex_size) as usize;
+        let end_index = (end / vertex_size) as usize;
+        for vertex in &mut self.planet_vertices[first..end_index] {
+            vertex.color = color;
+        }
+        self.queue.write_buffer(
+            &self.planet_vertex_buffer,
+            start,
+            bytemuck::cast_slice(&self.planet_vertices[first..end_index]),
+        );
+    }
+
     pub fn planet_surface_position(&self, direction: Vec3) -> Vec3 {
         self.planet_terrain.sample_direction(DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64), 0.25).surface_position.as_vec3()
     }
@@ -1073,8 +1129,14 @@ impl Renderer {
     pub fn planet_cell_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
         let dir = direction.normalize_or_zero();
         if dir == Vec3::ZERO { return None; }
+        // Intersect a local-radius sphere: terrain elevation varies around the
+        // globe, so the configured base radius can put an ocean-level player inside
+        // the ideal sphere and incorrectly select the far side.
+        let local_radius = self.planet_terrain
+            .sample_direction(DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64), 0.25)
+            .surface_position.length() as f32;
         let b = origin.dot(dir);
-        let c = origin.length_squared() - self.planet_radius * self.planet_radius;
+        let c = origin.length_squared() - local_radius * local_radius;
         let discriminant = b * b - c;
         if discriminant < 0.0 { return None; }
         let root = discriminant.sqrt();
