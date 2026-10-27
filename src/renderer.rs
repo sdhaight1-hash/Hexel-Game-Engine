@@ -922,7 +922,7 @@ impl Renderer {
         let surface = self.planet_world.topology().cell_id_for_direction(radial)
             .map(|id| {
                 let (layer, _) = self.planet_top_solid_voxel(id.0);
-                sample.surface_position - sample.direction * ((-layer).max(0) as f64 * 2.4)
+                sample.surface_position + sample.direction * (layer as f64 * 2.4)
             })
             .unwrap_or(sample.surface_position);
         surface.as_vec3()
