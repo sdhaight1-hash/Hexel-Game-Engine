@@ -73,7 +73,7 @@ impl PlanetVoxelVolume {
         pos: PlanetVoxelPos,
     ) -> Option<BlockId> {
         world.topology().cell(pos.cell)?;
-        if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
+        if !(Self::BEDROCK_LAYER..=Self::MAX_BUILD_HEIGHT).contains(&pos.layer) {
             return None;
         }
         Some(self.edits.get(&pos).copied().unwrap_or_else(|| {
@@ -89,7 +89,7 @@ impl PlanetVoxelVolume {
         pos: PlanetVoxelPos,
         block: BlockId,
     ) -> bool {
-        if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
+        if !(Self::BEDROCK_LAYER..=Self::MAX_BUILD_HEIGHT).contains(&pos.layer) {
             return false;
         }
         let Some(sample) = world.sample_cell(pos.cell, 0.0).ok() else {
@@ -117,7 +117,7 @@ impl PlanetVoxelVolume {
         if !block_height.is_finite() || block_height <= 0.0 {
             return None;
         }
-        if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
+        if !(Self::BEDROCK_LAYER..=Self::MAX_BUILD_HEIGHT).contains(&pos.layer) {
             return None;
         }
         let cell = world.topology().cell(pos.cell)?;
@@ -146,7 +146,7 @@ impl PlanetVoxelVolume {
         }
         let mut restored = BTreeMap::new();
         for (pos, block) in &save.edits {
-            if pos.layer < Self::BEDROCK_LAYER || pos.layer > Self::MAX_BUILD_HEIGHT {
+            if !(Self::BEDROCK_LAYER..=Self::MAX_BUILD_HEIGHT).contains(&pos.layer) {
                 return Err("planetary voxel save contains an out-of-range layer");
             }
             let Some(sample) = world.sample_cell(pos.cell, 0.0).ok() else {
