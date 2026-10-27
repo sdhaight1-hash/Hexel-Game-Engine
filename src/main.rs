@@ -81,7 +81,6 @@ impl HexelApp {
         save.planet_mode = true;
         save.selected_hotbar = self.inventory.selected_hotbar();
         save.inventory = *self.inventory.slots();
-        save.flat_edits = renderer.flat_edits_snapshot();
         save.planet_edits = renderer.planet_edits_snapshot();
         match std::fs::write("hexel-world.save", save.encode()) {
             Ok(()) => println!("Saved Hexel world to hexel-world.save"),
@@ -300,7 +299,6 @@ impl ApplicationHandler for HexelApp {
         match pollster::block_on(Renderer::new(window.clone(), seed)) {
             Ok(mut renderer) => {
                 if let Some(save) = loaded_save.as_ref() {
-                    renderer.restore_flat_edits(&save.flat_edits);
                     renderer.restore_planet_edits(&save.planet_edits);
                     self.player_feet = Vec3::from_array(save.player_position);
                     self.camera.yaw = save.yaw;
