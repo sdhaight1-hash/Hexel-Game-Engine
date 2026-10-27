@@ -136,9 +136,9 @@ impl Camera {
     }
 }
 
-fn planet_preview_view_projection(size: PhysicalSize<u32>) -> Mat4 {
+fn planet_preview_view_projection(size: PhysicalSize<u32>, angle: f32) -> Mat4 {
     let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
-    let eye = Vec3::new(0.0, 0.0, 105.0);
+    let eye = Vec3::new(angle.sin() * 105.0, 20.0, angle.cos() * 105.0);
     Mat4::perspective_rh(55.0_f32.to_radians(), aspect, 0.1, 900.0)
         * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y)
 }
@@ -172,6 +172,7 @@ pub struct Renderer {
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
     planet_preview: bool,
+    planet_preview_angle: f32,
     chunks: HashMap<ChunkPos, ChunkMesh>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -624,6 +625,7 @@ impl Renderer {
             planet_vertex_buffer,
             planet_vertex_count,
             planet_preview: false,
+            planet_preview_angle: 0.0,
             chunks: HashMap::new(),
             camera_buffer,
             camera_bind_group,
@@ -1091,7 +1093,10 @@ impl Renderer {
     ) -> Result<(), wgpu::SurfaceError> {
         self.poll_mesh_results();
         let view_proj = if self.planet_preview {
-            planet_preview_view_projection(self.size)
+            // A preview-only orbital camera makes the cell network inspectable
+            // without changing the live flat-world camera or movement behavior.
+            self.planet_preview_angle = (self.planet_preview_angle + 0.004) % std::f32::consts::TAU;
+            planet_preview_view_projection(self.size, self.planet_preview_angle)
         } else {
             camera.view_projection(self.size)
         };
