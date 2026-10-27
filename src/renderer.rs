@@ -520,18 +520,63 @@ impl Renderer {
             .map_err(|error| format!("Could not generate planet preview topology: {error}"))?;
         let terrain = PlanetGenerator::with_config(seed, planet_config);
         let planet_mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
-        let planet_vertices = planet_mesh
+        let mut planet_vertices = planet_mesh
             .triangles
             .into_iter()
             .flat_map(|triangle| {
-                triangle.vertices.into_iter().map(|vertex| Vertex {
-                    position: vertex.position.as_vec3().to_array(),
-                    color: planet_vertex_color(vertex.sample),
-                    uv: [0.0, 0.0],
-                    textured: 0.0,
+                let is_pentagon = topology
+                    .cell(triangle.cell_id)
+                    .is_some_and(|cell| cell.boundary.len() == 5);
+                triangle.vertices.into_iter().map(move |vertex| {
+                    let mut color = planet_vertex_color(vertex.sample);
+                    if is_pentagon {
+                        // Keep biome color readable while making the twelve
+                        // topological defect cells immediately recognizable.
+                        color = [
+                            color[0] * 0.78 + 0.22,
+                            color[1] * 0.78 + 0.30,
+                            color[2] * 0.78 + 0.08,
+                        ];
+                    }
+                    Vertex {
+                        position: vertex.position.as_vec3().to_array(),
+                        color,
+                        uv: [0.0, 0.0],
+                        textured: 0.0,
+                    }
                 })
             })
             .collect::<Vec<_>>();
+
+        // Draw a narrow, slightly raised ribbon along every topology edge. This
+        // makes the actual pentagon/hexagon partition visible instead of showing
+        // a smooth biome-colored sphere that only happens to use topology inside.
+        for cell in topology.cells() {
+            let pentagon = cell.boundary.len() == 5;
+            let edge_color = if pentagon {
+                [1.0, 0.48, 0.10]
+            } else {
+                [0.035, 0.075, 0.11]
+            };
+            for index in 0..cell.boundary.len() {
+                let next = (index + 1) % cell.boundary.len();
+                let a = terrain
+                    .sample_direction(cell.boundary[index], 0.25)
+                    .surface_position
+                    .as_vec3()
+                    * 1.002;
+                let b = terrain
+                    .sample_direction(cell.boundary[next], 0.25)
+                    .surface_position
+                    .as_vec3()
+                    * 1.002;
+                let radial = (a + b).normalize_or_zero();
+                let side = (b - a).cross(radial).normalize_or_zero() * 0.035;
+                push_triangle(&mut planet_vertices, a - side, b - side, b + side, edge_color);
+                push_triangle(&mut planet_vertices, a - side, b + side, a + side, edge_color);
+            }
+        }
+
         let planet_vertex_count = planet_vertices.len() as u32;
         let planet_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Procedural spherical planet preview"),
