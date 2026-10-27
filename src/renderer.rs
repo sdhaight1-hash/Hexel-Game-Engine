@@ -6,7 +6,7 @@ use std::{
 use bytemuck::{Pod, Zeroable};
 use glam::{DVec3, Mat4, Vec3};
 use hexel_engine::{
-    planetary_chunks::{CubeFace, PlanetChunkKey, PlanetChunkMesh},
+    planetary_chunks::{chunk_keys_near_direction, CubeFace, PlanetChunkKey, PlanetChunkMesh},
     planetary_frame::PlanetaryFrame,
     planetary_world::PlanetaryWorld,
     planetary_voxels::{PlanetVoxelPos, PlanetVoxelVolume},
@@ -1064,9 +1064,12 @@ impl Renderer {
     /// The low-detail whole-planet mesh remains as a distant backdrop while these
     /// camera-near patches are rebuilt only when the desired neighborhood changes.
     fn update_planet_streaming(&mut self, player_position: Vec3) {
-        const CHUNKS_PER_FACE: u32 = 24;
-        const MESH_RESOLUTION: u32 = 10;
-        const ANGULAR_RADIUS_COS: f64 = 0.9637708963658905; // cos(0.27 radians)
+        // At Earth's radius, 400,000 cube-face patches produce roughly
+        // metre-scale patch spacing near face centers. Plan only a bounded
+        // neighborhood around the player; never enumerate the whole planet grid.
+        const CHUNKS_PER_FACE: u32 = 400_000;
+        const MESH_RESOLUTION: u32 = 32;
+        const LOCAL_PATCH_RADIUS: u32 = 5;
         const MAX_NEW_CHUNKS_PER_FRAME: usize = 3;
 
         let radial = DVec3::new(
@@ -1081,28 +1084,14 @@ impl Renderer {
 
         let mut wanted = HashSet::new();
         let mut prioritized = Vec::new();
-        for face in [
-            CubeFace::PositiveX,
-            CubeFace::NegativeX,
-            CubeFace::PositiveY,
-            CubeFace::NegativeY,
-            CubeFace::PositiveZ,
-            CubeFace::NegativeZ,
-        ] {
-            let (normal, axis_u, axis_v) = face.basis();
-            for y in 0..CHUNKS_PER_FACE {
-                let v = -1.0 + 2.0 * (y as f64 + 0.5) / CHUNKS_PER_FACE as f64;
-                for x in 0..CHUNKS_PER_FACE {
-                    let u = -1.0 + 2.0 * (x as f64 + 0.5) / CHUNKS_PER_FACE as f64;
-                    let direction = (normal + axis_u * u + axis_v * v).normalize();
-                    let dot = direction.dot(radial);
-                    if dot >= ANGULAR_RADIUS_COS {
-                        let key = PlanetChunkKey { face, x, y };
-                        wanted.insert(key);
-                        prioritized.push((dot, key));
-                    }
-                }
-            }
+        for key in chunk_keys_near_direction(radial, CHUNKS_PER_FACE, LOCAL_PATCH_RADIUS) {
+            let (normal, axis_u, axis_v) = key.face.basis();
+            let u = -1.0 + 2.0 * (key.x as f64 + 0.5) / CHUNKS_PER_FACE as f64;
+            let v = -1.0 + 2.0 * (key.y as f64 + 0.5) / CHUNKS_PER_FACE as f64;
+            let direction = (normal + axis_u * u + axis_v * v).normalize();
+            let dot = direction.dot(radial);
+            wanted.insert(key);
+            prioritized.push((dot, key));
         }
 
         self.planet_stream_chunks.retain(|key, _| wanted.contains(key));
