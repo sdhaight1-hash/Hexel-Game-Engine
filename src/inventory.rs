@@ -9,6 +9,9 @@ pub enum ItemId {
     GenericWood,
     Stick,
     GrassFiber,
+    GrassBlock,
+    DirtBlock,
+    StoneBlock,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
