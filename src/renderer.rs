@@ -1117,7 +1117,23 @@ impl Renderer {
     }
 
     pub fn planet_surface_position(&self, direction: Vec3) -> Vec3 {
-        self.planet_terrain.sample_direction(DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64), 0.25).surface_position.as_vec3()
+        let radial = DVec3::new(
+            direction.x as f64,
+            direction.y as f64,
+            direction.z as f64,
+        )
+        .normalize_or_zero();
+        let sample = self.planet_terrain.sample_direction(radial, 0.25);
+        let block = self
+            .planet_topology
+            .cell_id_for_direction(radial)
+            .map(|id| self.planet_block_at(id.0));
+        let surface = if block == Some(BlockId::Air) {
+            sample.surface_position - sample.direction * 2.4
+        } else {
+            sample.surface_position
+        };
+        surface.as_vec3()
     }
 
     pub fn planet_cell_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
