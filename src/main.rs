@@ -482,7 +482,7 @@ impl ApplicationHandler for HexelApp {
                                     self.camera.pitch = 0.0;
                                 } else {
                                     self.camera.up = Vec3::Y;
-                                    if let Some(renderer) = self.renderer.as_ref() {
+                                    if let Some(renderer) = self.renderer.as_mut() {
                                         let ground = renderer.ground_height(0, 0);
                                         self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
                                         self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
