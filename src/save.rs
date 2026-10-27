@@ -14,6 +14,8 @@ pub struct GameSave {
     pub inventory: [Option<ItemStack>; Inventory::TOTAL_SLOTS],
     pub flat_edits: Vec<(CellPos, BlockId)>,
     pub planet_edits: Vec<(u32, BlockId)>,
+    /// Vertical geodesic voxel overrides: (surface cell id, radial layer, block).
+    pub planet_voxel_edits: Vec<(u32, i32, BlockId)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +41,7 @@ impl GameSave {
             inventory: [None; Inventory::TOTAL_SLOTS],
             flat_edits: Vec::new(),
             planet_edits: Vec::new(),
+            planet_voxel_edits: Vec::new(),
         }
     }
 
@@ -62,6 +65,9 @@ impl GameSave {
         }
         for (id, block) in &self.planet_edits {
             out.push_str(&format!("planet {id} {}\n", block_code(*block)));
+        }
+        for (id, layer, block) in &self.planet_voxel_edits {
+            out.push_str(&format!("pvoxel {id} {layer} {}\n", block_code(*block)));
         }
         out
     }
@@ -145,6 +151,12 @@ impl GameSave {
                     let block = block_from_code(parse(parts.next(), "planet block")?)?;
                     save.planet_edits.push((id, block));
                 }
+                "pvoxel" => {
+                    let id = parse(parts.next(), "planet voxel cell")?;
+                    let layer = parse(parts.next(), "planet voxel layer")?;
+                    let block = block_from_code(parse(parts.next(), "planet voxel block")?)?;
+                    save.planet_voxel_edits.push((id, layer, block));
+                }
                 _ => return Err(SaveError::InvalidField("record type")),
             }
             if parts.next().is_some() {
@@ -207,6 +219,7 @@ mod tests {
         save.inventory[34] = ItemStack::new(ItemId::StoneBlock, 7);
         save.flat_edits.push((CellPos::new(-3, 8, 2), BlockId::Air));
         save.planet_edits.push((42, BlockId::Stone));
+        save.planet_voxel_edits.push((42, -3, BlockId::Air));
         let decoded = GameSave::decode(&save.encode()).unwrap();
         assert_eq!(decoded, save);
     }
