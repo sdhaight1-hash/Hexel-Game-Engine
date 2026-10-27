@@ -2024,3 +2024,39 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
     }
     pixels
 }
+
+
+#[cfg(test)]
+mod raycast_tests {
+    use super::*;
+
+    #[test]
+    fn ray_triangle_intersection_returns_nearest_positive_distance() {
+        let hit = ray_triangle_distance(
+            Vec3::new(0.2, 0.2, -1.0),
+            Vec3::Z,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+        );
+        assert!((hit.unwrap() - 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn ray_triangle_intersection_rejects_misses_and_behind_origin() {
+        assert!(ray_triangle_distance(
+            Vec3::new(2.0, 2.0, -1.0),
+            Vec3::Z,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+        ).is_none());
+        assert!(ray_triangle_distance(
+            Vec3::new(0.2, 0.2, 1.0),
+            Vec3::Z,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+        ).is_none());
+    }
+}
