@@ -78,7 +78,7 @@ impl HexelApp {
         save.player_position = [self.player_feet.x, self.player_feet.y, self.player_feet.z];
         save.yaw = self.camera.yaw;
         save.pitch = self.camera.pitch;
-        save.planet_mode = renderer.planet_preview_enabled();
+        save.planet_mode = true;
         save.selected_hotbar = self.inventory.selected_hotbar();
         save.inventory = *self.inventory.slots();
         save.flat_edits = renderer.flat_edits_snapshot();
@@ -392,7 +392,7 @@ impl HexelApp {
                 .planet_cell_at_ray(self.camera.position, self.camera.forward())
                 .map(|id| {
                     format!(
-                        "Hexel Engine | PLANET | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB break / RMB place | F3 flat",
+                        "Hexel Engine | Globe | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB harvest / RMB place",
                         renderer.planet_block_at(id),
                         self.inventory.selected_hotbar() + 1,
                         self.inventory
@@ -402,7 +402,7 @@ impl HexelApp {
                     )
                 })
                 .unwrap_or_else(|| {
-                    "Hexel Engine | PLANET | WASD move | Space jump | E inventory | F3 flat".to_string()
+                    "Hexel Engine | Globe | WASD move | Space jump | E inventory".to_string()
                 });
             window.set_title(&message);
             return;
@@ -532,18 +532,26 @@ impl ApplicationHandler for HexelApp {
                     }
                     self.inventory.select_hotbar(save.selected_hotbar);
                     if save.planet_mode {
-                        renderer.toggle_planet_preview();
                         self.camera.up = self.player_feet.normalize_or_zero();
                         if self.camera.up == Vec3::ZERO { self.camera.up = Vec3::X; }
+                        self.camera.position = self.player_feet + self.camera.up * PLAYER_EYE_HEIGHT;
                     } else {
-                        self.camera.up = Vec3::Y;
+                        // Legacy flat-world coordinates are not planet-centred coordinates.
+                        // Keep the player's inventory and planetary edits, but spawn safely
+                        // on the globe instead of silently placing them at an arbitrary location.
+                        self.player_feet = renderer.planet_surface_position(Vec3::X);
+                        self.camera.up = Vec3::X;
+                        self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
+                        self.camera.yaw = 0.0;
+                        self.camera.pitch = -0.15;
                     }
-                    self.camera.position = self.player_feet + self.camera.up * PLAYER_EYE_HEIGHT;
                     println!("Loaded saved Hexel world.");
                 } else {
-                    let ground = renderer.ground_height(0, 0);
-                    self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
-                    self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
+                    self.player_feet = renderer.planet_surface_position(Vec3::X);
+                    self.camera.up = Vec3::X;
+                    self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
+                    self.camera.yaw = 0.0;
+                    self.camera.pitch = -0.15;
                 }
                 info!(
                     seed,
@@ -622,45 +630,6 @@ impl ApplicationHandler for HexelApp {
                             KeyCode::F5 => {
                                 self.save_game();
                             }
-                            KeyCode::F3 if !self.pressed.contains(&code) => {
-                                let preview = if let Some(renderer) = self.renderer.as_mut() {
-                                    renderer.toggle_planet_preview();
-                                    renderer.planet_preview_enabled()
-                                } else {
-                                    false
-                                };
-                                if preview {
-                                    self.harvest_held = false;
-                                    self.harvest_target = None;
-                                    self.planet_harvest_target = None;
-                                    self.harvest_progress = 0.0;
-                                    self.jump_requested = false;
-                                    if let Some(renderer) = self.renderer.as_ref() {
-                                        self.player_feet = renderer.planet_surface_position(Vec3::X);
-                                        self.camera.up = Vec3::X;
-                                        self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
-                                    }
-                                    self.camera.yaw = 0.0;
-                                    self.camera.pitch = -0.15;
-                                } else {
-                                    self.camera.up = Vec3::Y;
-                                    if let Some(renderer) = self.renderer.as_mut() {
-                                        let ground = renderer.ground_height(0, 0);
-                                        self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
-                                        self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
-                                        renderer.update_streaming(self.player_feet);
-                                    }
-                                    self.camera.yaw = 0.0;
-                                    self.camera.pitch = -0.15;
-                                }
-                                if let Some(window) = self.window.as_ref() {
-                                    window.set_title(if preview {
-                                        "Hexel Engine | PLANET WALK | WASD move | Mouse look | F3 flat world"
-                                    } else {
-                                        "Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse"
-                                    });
-                                }
-                            }
                             _ => {}
                         }
                         if code == KeyCode::Space && !self.pressed.contains(&code) {
@@ -695,7 +664,7 @@ impl ApplicationHandler for HexelApp {
                 state: ElementState::Pressed,
                 ..
             } if self.cursor_locked => {
-                if self.planet_preview_active() { self.edit_planet_target(); } else { self.edit_target(false); }
+                self.edit_planet_target();
             },
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
@@ -746,15 +715,9 @@ impl ApplicationHandler for HexelApp {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
-        if self.planet_preview_active() {
-            self.update_planet_player(dt);
-            self.update_planet_harvesting(dt);
-            self.update_target_title(dt);
-        } else {
-            self.update_player(dt);
-            self.update_harvesting(dt);
-            self.update_target_title(dt);
-        }
+        self.update_planet_player(dt);
+        self.update_planet_harvesting(dt);
+        self.update_target_title(dt);
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
