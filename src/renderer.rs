@@ -10,6 +10,7 @@ use std::{
 use bytemuck::{Pod, Zeroable};
 use glam::{DVec3, Mat4, Vec3};
 use hexel_engine::{
+    planetary_chunks::{CubeFace, PlanetChunkKey, PlanetChunkMesh},
     BlockId, CellPos, ChunkPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
     raycast_prism,
@@ -158,6 +159,11 @@ struct ChunkMesh {
     bounds_min: Vec3,
     bounds_max: Vec3,
 }
+
+struct PlanetGpuChunk {
+    buffer: wgpu::Buffer,
+    vertex_count: u32,
+}
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -176,6 +182,7 @@ pub struct Renderer {
     planet_topology: SurfaceTopology,
     planet_terrain: PlanetGenerator,
     planet_preview: bool,
+    planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     chunks: HashMap<ChunkPos, ChunkMesh>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -637,6 +644,7 @@ impl Renderer {
             planet_topology: topology,
             planet_terrain: terrain,
             planet_preview: false,
+            planet_stream_chunks: HashMap::new(),
             chunks: HashMap::new(),
             camera_buffer,
             camera_bind_group,
@@ -1188,6 +1196,83 @@ impl Renderer {
         vertices
     }
 
+    /// Keep detailed cube-sphere terrain patches around the player's current location.
+    /// The low-detail whole-planet mesh remains as a distant backdrop while these
+    /// camera-near patches are rebuilt only when the desired neighborhood changes.
+    fn update_planet_streaming(&mut self, player_position: Vec3) {
+        const CHUNKS_PER_FACE: u32 = 24;
+        const MESH_RESOLUTION: u32 = 10;
+        const ANGULAR_RADIUS_COS: f64 = 0.9637708963658905; // cos(0.27 radians)
+
+        let radial = DVec3::new(
+            player_position.x as f64,
+            player_position.y as f64,
+            player_position.z as f64,
+        ).normalize_or_zero();
+        if radial == DVec3::ZERO {
+            return;
+        }
+
+        let mut wanted = HashSet::new();
+        for face in [
+            CubeFace::PositiveX, CubeFace::NegativeX,
+            CubeFace::PositiveY, CubeFace::NegativeY,
+            CubeFace::PositiveZ, CubeFace::NegativeZ,
+        ] {
+            let (normal, axis_u, axis_v) = face.basis();
+            for y in 0..CHUNKS_PER_FACE {
+                let v = -1.0 + 2.0 * (y as f64 + 0.5) / CHUNKS_PER_FACE as f64;
+                for x in 0..CHUNKS_PER_FACE {
+                    let u = -1.0 + 2.0 * (x as f64 + 0.5) / CHUNKS_PER_FACE as f64;
+                    let direction = (normal + axis_u * u + axis_v * v).normalize();
+                    if direction.dot(radial) >= ANGULAR_RADIUS_COS {
+                        wanted.insert(PlanetChunkKey { face, x, y });
+                    }
+                }
+            }
+        }
+
+        self.planet_stream_chunks.retain(|key, _| wanted.contains(key));
+        for key in wanted {
+            if self.planet_stream_chunks.contains_key(&key) {
+                continue;
+            }
+            let Ok(mesh) = PlanetChunkMesh::generate(
+                &self.planet_terrain,
+                key,
+                CHUNKS_PER_FACE,
+                MESH_RESOLUTION,
+                0.25,
+            ) else {
+                continue;
+            };
+            let mut vertices = Vec::with_capacity(mesh.indices.len());
+            for index in mesh.indices {
+                let source = mesh.vertices[index as usize];
+                let position = source.position + source.normal * 0.035;
+                let sample = self.planet_terrain.sample_direction(source.normal, 0.25);
+                vertices.push(Vertex {
+                    position: position.as_vec3().to_array(),
+                    color: planet_vertex_color(sample),
+                    uv: [0.0, 0.0],
+                    textured: 0.0,
+                });
+            }
+            if vertices.is_empty() {
+                continue;
+            }
+            let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Streamed planetary terrain chunk"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            self.planet_stream_chunks.insert(key, PlanetGpuChunk {
+                buffer,
+                vertex_count: vertices.len() as u32,
+            });
+        }
+    }
+
     pub fn toggle_planet_preview(&mut self) {
         self.planet_preview = !self.planet_preview;
     }
@@ -1217,6 +1302,9 @@ impl Renderer {
         item_counts: [u16; 36],
     ) -> Result<(), wgpu::SurfaceError> {
         self.poll_mesh_results();
+        if self.planet_preview {
+            self.update_planet_streaming(camera.position);
+        }
         let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
@@ -1365,6 +1453,11 @@ impl Renderer {
             if self.planet_preview {
                 pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
                 pass.draw(0..self.planet_vertex_count, 0..1);
+                for chunk in self.planet_stream_chunks.values() {
+                    if chunk.vertex_count == 0 { continue; }
+                    pass.set_vertex_buffer(0, chunk.buffer.slice(..));
+                    pass.draw(0..chunk.vertex_count, 0..1);
+                }
                 if !target_vertices.is_empty() {
                     pass.set_pipeline(&self.outline_pipeline);
                     pass.set_vertex_buffer(0, self.target_buffer.slice(..));
