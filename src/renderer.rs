@@ -1296,7 +1296,7 @@ impl Renderer {
                 key,
                 CHUNKS_PER_FACE,
                 self.planet_world.topology(),
-                &self.planet_world.terrain(),
+                self.planet_world.terrain(),
                 self.seed,
                 self.planet_world.edited_cells(),
             );
