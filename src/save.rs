@@ -16,6 +16,8 @@ pub struct GameSave {
     pub planet_edits: Vec<(u32, BlockId)>,
     /// Vertical geodesic voxel overrides: (surface cell id, radial layer, block).
     pub planet_voxel_edits: Vec<(u32, i32, BlockId)>,
+    /// Deterministically generated tree roots explicitly harvested by the player.
+    pub planet_removed_trees: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +44,7 @@ impl GameSave {
             flat_edits: Vec::new(),
             planet_edits: Vec::new(),
             planet_voxel_edits: Vec::new(),
+            planet_removed_trees: Vec::new(),
         }
     }
 
@@ -68,6 +71,9 @@ impl GameSave {
         }
         for (id, layer, block) in &self.planet_voxel_edits {
             out.push_str(&format!("pvoxel {id} {layer} {}\n", block_code(*block)));
+        }
+        for id in &self.planet_removed_trees {
+            out.push_str(&format!("ptree {id}\n"));
         }
         out
     }
@@ -157,6 +163,9 @@ impl GameSave {
                     let block = block_from_code(parse(parts.next(), "planet voxel block")?)?;
                     save.planet_voxel_edits.push((id, layer, block));
                 }
+                "ptree" => {
+                    save.planet_removed_trees.push(parse(parts.next(), "planet tree cell")?);
+                }
                 _ => return Err(SaveError::InvalidField("record type")),
             }
             if parts.next().is_some() {
@@ -220,6 +229,7 @@ mod tests {
         save.flat_edits.push((CellPos::new(-3, 8, 2), BlockId::Air));
         save.planet_edits.push((42, BlockId::Stone));
         save.planet_voxel_edits.push((42, -3, BlockId::Air));
+        save.planet_removed_trees.push(81);
         let decoded = GameSave::decode(&save.encode()).unwrap();
         assert_eq!(decoded, save);
     }
