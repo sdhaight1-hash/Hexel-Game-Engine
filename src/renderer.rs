@@ -974,7 +974,6 @@ impl Renderer {
         inventory_open: bool,
         item_counts: [u16; 36],
     ) -> Result<(), wgpu::SurfaceError> {
-        self.poll_mesh_results();
         self.update_planet_streaming(camera.position);
         let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
