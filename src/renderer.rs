@@ -530,7 +530,8 @@ impl Renderer {
             let is_pentagon = topology
                 .cell(triangle.cell_id)
                 .is_some_and(|cell| cell.boundary.len() == 5);
-            let start = planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
+            let start =
+                planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
             for vertex in triangle.vertices {
                 let mut color = planet_vertex_color(vertex.sample);
                 if is_pentagon {
@@ -547,7 +548,8 @@ impl Renderer {
                     textured: 0.0,
                 });
             }
-            let end = planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
+            let end =
+                planet_vertices.len() as u64 * std::mem::size_of::<Vertex>() as u64;
             planet_cell_ranges
                 .entry(triangle.cell_id.0)
                 .and_modify(|range: &mut (u64, u64)| range.1 = end)
@@ -1076,7 +1078,10 @@ impl Renderer {
         if let Some(block) = self.planet_cell_edits.get(&id) {
             return *block;
         }
-        let Some(cell) = self.planet_topology.cell(hexel_engine::topology::SurfaceCellId(id)) else {
+        let Some(cell) = self
+            .planet_topology
+            .cell(hexel_engine::topology::SurfaceCellId(id))
+        else {
             return BlockId::Air;
         };
         let sample = self.planet_terrain.sample_direction(cell.center, 0.25);
@@ -1094,7 +1099,9 @@ impl Renderer {
             return;
         }
         self.planet_cell_edits.insert(id, block);
-        let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else { return; };
+        let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else {
+            return;
+        };
         let color = match block {
             BlockId::Air => [0.025, 0.055, 0.10],
             BlockId::Grass => [0.20, 0.62, 0.22],
