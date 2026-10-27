@@ -208,7 +208,8 @@ impl HexelApp {
         };
         self.harvest_progress += dt.max(0.0);
         if self.harvest_progress >= seconds {
-            if renderer.edit_planet_cell(target, BlockId::Air) {
+            let (layer, _) = renderer.planet_top_solid_voxel(target);
+            if renderer.edit_planet_voxel(target, layer, BlockId::Air) {
                 let recovered = match block {
                     BlockId::Grass => Some(ItemId::GrassBlock),
                     BlockId::Dirt => Some(ItemId::DirtBlock),
@@ -248,8 +249,8 @@ impl HexelApp {
             ItemId::OakWood | ItemId::BirchWood | ItemId::PineWood
             | ItemId::GenericWood | ItemId::Stick | ItemId::GrassFiber => return,
         };
-        if renderer.planet_block_at(target) == BlockId::Air
-            && renderer.edit_planet_cell(target, block)
+        if renderer.planet_voxel_block_at(target, 0) == BlockId::Air
+            && renderer.edit_planet_voxel(target, 0, block)
         {
             let slot = self.inventory.selected_hotbar();
             self.inventory.remove_from_slot(slot, 1);
