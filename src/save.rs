@@ -160,8 +160,9 @@ impl GameSave {
                 "pvoxel" => {
                     let id = parse(parts.next(), "planet voxel cell")?;
                     let layer: i32 = parse(parts.next(), "planet voxel layer")?;
-                    if layer < crate::planetary_voxels::PlanetVoxelVolume::BEDROCK_LAYER
-                        || layer > crate::planetary_voxels::PlanetVoxelVolume::MAX_BUILD_HEIGHT {
+                    if !(crate::planetary_voxels::PlanetVoxelVolume::BEDROCK_LAYER
+                        ..=crate::planetary_voxels::PlanetVoxelVolume::MAX_BUILD_HEIGHT)
+                        .contains(&layer) {
                         return Err(SaveError::InvalidField("planet voxel layer"));
                     }
                     let block = block_from_code(parse(parts.next(), "planet voxel block")?)?;
