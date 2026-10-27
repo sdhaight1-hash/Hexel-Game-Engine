@@ -57,6 +57,8 @@ impl PlanetVoxelVolume {
     pub const DEFAULT_BLOCK_HEIGHT: f64 = 2.4;
     /// A non-removable bedrock layer bounds downward digging.
     pub const BEDROCK_LAYER: i32 = -64;
+    /// Bound vertical construction above the procedural surface.
+    pub const MAX_BUILD_HEIGHT: i32 = 64;
 
     pub fn new() -> Self { Self::default() }
 
