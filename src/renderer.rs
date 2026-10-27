@@ -1278,9 +1278,15 @@ impl Renderer {
                 let source = mesh.vertices[index as usize];
                 let position = source.position + source.normal * 0.035;
                 let sample = self.planet_terrain.sample_direction(source.normal, 0.25);
+                let color = self
+                    .planet_topology
+                    .cell_id_for_direction(source.normal)
+                    .map(|id| self.planet_block_at(id.0))
+                    .map(planet_block_color)
+                    .unwrap_or_else(|| planet_vertex_color(sample));
                 vertices.push(Vertex {
                     position: position.as_vec3().to_array(),
-                    color: planet_vertex_color(sample),
+                    color,
                     uv: [0.0, 0.0],
                     textured: 0.0,
                 });
@@ -1539,6 +1545,16 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         frame.present();
         Ok(())
+    }
+}
+
+fn planet_block_color(block: BlockId) -> [f32; 3] {
+    match block {
+        BlockId::Air => [0.025, 0.055, 0.10],
+        BlockId::Grass => [0.20, 0.62, 0.22],
+        BlockId::Dirt => [0.48, 0.29, 0.14],
+        BlockId::Stone => [0.42, 0.45, 0.49],
+        BlockId::Foundation => [0.75, 0.75, 0.78],
     }
 }
 
