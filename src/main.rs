@@ -479,7 +479,7 @@ impl ApplicationHandler for HexelApp {
                                         self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
                                     }
                                     self.camera.yaw = 0.0;
-                                    self.camera.pitch = 0.0;
+                                    self.camera.pitch = -0.15;
                                 } else {
                                     self.camera.up = Vec3::Y;
                                     if let Some(renderer) = self.renderer.as_mut() {
