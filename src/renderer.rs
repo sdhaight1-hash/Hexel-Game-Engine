@@ -784,6 +784,34 @@ impl Renderer {
             (position.y / scale.hexel_height).floor() as i32,
         )
     }
+    pub fn world_seed(&self) -> u32 {
+        self.seed
+    }
+
+    pub fn flat_edits_snapshot(&self) -> Vec<(CellPos, BlockId)> {
+        let mut edits = self.edits.iter().map(|(cell, block)| (*cell, *block)).collect::<Vec<_>>();
+        edits.sort_by_key(|(cell, _)| (cell.q, cell.r, cell.y));
+        edits
+    }
+
+    pub fn restore_flat_edits(&mut self, edits: &[(CellPos, BlockId)]) {
+        for (cell, block) in edits {
+            self.edit_block(*cell, *block);
+        }
+    }
+
+    pub fn planet_edits_snapshot(&self) -> Vec<(u32, BlockId)> {
+        let mut edits = self.planet_cell_edits.iter().map(|(id, block)| (*id, *block)).collect::<Vec<_>>();
+        edits.sort_by_key(|(id, _)| *id);
+        edits
+    }
+
+    pub fn restore_planet_edits(&mut self, edits: &[(u32, BlockId)]) {
+        for (id, block) in edits {
+            self.edit_planet_cell(*id, *block);
+        }
+    }
+
     pub fn block_at(&self, cell: CellPos) -> BlockId {
         self.edits.get(&cell).copied().unwrap_or_else(|| {
             generated_block_from_height(cell, terrain_height(self.seed, cell.q, cell.r))
