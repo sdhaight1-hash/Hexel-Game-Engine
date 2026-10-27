@@ -518,15 +518,15 @@ impl Renderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // Keep the spherical preview separate from the flat-world chunk meshes.
-        // It is generated once and only drawn while F3 preview mode is enabled.
+        // Build the globe's geodesic surface as the active world mesh. Nearby
+        // streamed patches add detail while the whole-planet mesh remains visible.
         let planet_config = PlanetConfig {
             radius: 180.0,
             elevation_scale: 14.0,
             axial_tilt_degrees: 23.5,
         };
         let topology = SurfaceTopology::generate(16, planet_config.radius)
-            .map_err(|error| format!("Could not generate planet preview topology: {error}"))?;
+            .map_err(|error| format!("Could not generate planetary world topology: {error}"))?;
         let terrain = PlanetGenerator::with_config(seed, planet_config);
         let planet_mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
         let mut planet_vertices = Vec::new();
@@ -636,7 +636,7 @@ impl Renderer {
 
         let planet_vertex_count = planet_vertices.len() as u32;
         let planet_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Procedural spherical planet preview"),
+            label: Some("Procedural planetary world surface"),
             contents: bytemuck::cast_slice(&planet_vertices),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
