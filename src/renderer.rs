@@ -971,7 +971,7 @@ impl Renderer {
                 best = Some((*id, distance));
             }
         }
-        best
+        best.filter(|(_, distance)| *distance <= 8.0)
     }
 
     /// Ray-test deterministic trunk cylinders and canopy spheres before the terrain hit.
@@ -1044,7 +1044,7 @@ impl Renderer {
                 }
             }
         }
-        best.map(|(_, id)| id)
+        best.filter(|(distance, _)| *distance <= 8.0).map(|(_, id)| id)
     }
 
     fn build_planet_cell_outline(&self, id: u32) -> Vec<Vertex> {
