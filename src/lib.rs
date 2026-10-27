@@ -7,6 +7,7 @@ pub mod inventory;
 pub mod planet;
 pub mod planetary_frame;
 pub mod planetary_world;
+pub mod planetary_voxels;
 pub mod planetary_chunks;
 pub mod soil;
 pub mod surface_navigation;
