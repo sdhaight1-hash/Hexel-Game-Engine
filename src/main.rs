@@ -164,6 +164,26 @@ impl HexelApp {
         } else {
             self.grounded = false;
         }
+        let next_surface = renderer.planet_surface_position(next_radial);
+        if next_radial != radial {
+            let current_floor = surface.length();
+            let next_floor = next_surface.length();
+            if next_floor > current_floor + 0.65 && height <= 0.05 {
+                // A cell wall taller than a normal step blocks horizontal motion.
+                next_radial = radial;
+                height = altitude;
+                self.grounded = altitude <= 0.05;
+            } else if next_floor < current_floor - 0.65 && height <= 0.05 {
+                // Preserve world-space height when stepping over a drop; gravity
+                // then brings the player down into the edited cell instead of snapping.
+                height = (self.player_feet.length() - next_floor).max(0.0);
+                self.grounded = height <= 0.05;
+            } else if next_floor > self.player_feet.length() + 0.65 {
+                next_radial = radial;
+                height = altitude;
+                self.grounded = altitude <= 0.05;
+            }
+        }
         let proposed_feet =
             renderer.planet_surface_position(next_radial) + next_radial * height;
         if renderer.planet_tree_blocks_player(proposed_feet, PLAYER_RADIUS, PLAYER_HEIGHT) {
