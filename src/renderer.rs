@@ -184,7 +184,6 @@ pub struct Renderer {
     planet_preview: bool,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
-    planet_stream_pending: VecDeque<PlanetChunkKey>,
     chunks: HashMap<ChunkPos, ChunkMesh>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -647,7 +646,6 @@ impl Renderer {
             planet_terrain: terrain,
             planet_preview: false,
             planet_stream_chunks: HashMap::new(),
-            planet_stream_pending: VecDeque::new(),
             planet_stream_pending: VecDeque::new(),
             chunks: HashMap::new(),
             camera_buffer,
@@ -1201,12 +1199,12 @@ impl Renderer {
     }
 
     /// Keep detailed cube-sphere terrain patches around the player's current location.
-    /// The low-detail whole-planet mesh remains as a distant     fn update_planet_streaming(&mut self, player_position: Vec3) {
+    /// The low-detail whole-planet mesh remains as a distant backdrop while these
+    /// camera-near patches are rebuilt only when the desired neighborhood changes.
+    fn update_planet_streaming(&mut self, player_position: Vec3) {
         const CHUNKS_PER_FACE: u32 = 24;
         const MESH_RESOLUTION: u32 = 10;
         const ANGULAR_RADIUS_COS: f64 = 0.9637708963658905; // cos(0.27 radians)
-        // Bound mesh generation and GPU uploads per frame to avoid a large hitch
-        // when entering planetary mode or crossing a cube-face seam.
         const MAX_NEW_CHUNKS_PER_FRAME: usize = 3;
 
         let radial = DVec3::new(
@@ -1246,10 +1244,10 @@ impl Renderer {
         }
 
         self.planet_stream_chunks.retain(|key, _| wanted.contains(key));
-        self.planet_stream_pending
-            .retain(|key| wanted.contains(key) && !self.planet_stream_chunks.contains_key(key));
+        self.planet_stream_pending.retain(|key| {
+            wanted.contains(key) && !self.planet_stream_chunks.contains_key(key)
+        });
 
-        // Build closest patches first so the immediate play area fills before distant detail.
         prioritized.sort_by(|a, b| b.0.total_cmp(&a.0));
         for (_, key) in prioritized {
             if !self.planet_stream_chunks.contains_key(&key)
