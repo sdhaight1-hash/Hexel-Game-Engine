@@ -207,9 +207,19 @@ impl HexelApp {
         };
         self.harvest_progress += dt.max(0.0);
         if self.harvest_progress >= seconds {
-            renderer.edit_planet_cell(target, BlockId::Air);
-            if block == BlockId::Grass {
-                let _overflow = self.inventory.add(ItemId::GrassFiber, 1);
+            if renderer.edit_planet_cell(target, BlockId::Air) {
+                let recovered = match block {
+                    BlockId::Grass => Some(ItemId::GrassBlock),
+                    BlockId::Dirt => Some(ItemId::DirtBlock),
+                    BlockId::Stone => Some(ItemId::StoneBlock),
+                    BlockId::Foundation | BlockId::Air => None,
+                };
+                if let Some(item) = recovered {
+                    let _overflow = self.inventory.add(item, 1);
+                }
+                if block == BlockId::Grass {
+                    let _overflow = self.inventory.add(ItemId::GrassFiber, 1);
+                }
             }
             self.harvest_held = false;
             self.planet_harvest_target = None;
@@ -227,8 +237,21 @@ impl HexelApp {
         else {
             return;
         };
-        if renderer.planet_block_at(target) == BlockId::Air {
-            renderer.edit_planet_cell(target, BlockId::Grass);
+        let Some(stack) = self.inventory.selected_stack() else {
+            return;
+        };
+        let block = match stack.item {
+            ItemId::GrassBlock => BlockId::Grass,
+            ItemId::DirtBlock => BlockId::Dirt,
+            ItemId::StoneBlock => BlockId::Stone,
+            ItemId::OakWood | ItemId::BirchWood | ItemId::PineWood
+            | ItemId::GenericWood | ItemId::Stick | ItemId::GrassFiber => return,
+        };
+        if renderer.planet_block_at(target) == BlockId::Air
+            && renderer.edit_planet_cell(target, block)
+        {
+            let slot = self.inventory.selected_hotbar();
+            self.inventory.remove_from_slot(slot, 1);
         }
     }
 
