@@ -670,10 +670,10 @@ impl Renderer {
             .set_block(hexel_engine::topology::SurfaceCellId(id), block)
             .is_err()
         {
-            return;
+            return false;
         }
         let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else {
-            return;
+            return false;
         };
         let color = planet_block_color(block);
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
