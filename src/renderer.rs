@@ -155,6 +155,7 @@ pub struct Renderer {
     planet_cell_ranges: HashMap<u32, (u64, u64)>,
     planet_world: PlanetaryWorld,
     planet_voxels: PlanetVoxelVolume,
+    removed_planet_trees: HashSet<u32>,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
     camera_buffer: wgpu::Buffer,
@@ -625,6 +626,7 @@ impl Renderer {
             planet_vertices,
             planet_cell_ranges,
             planet_voxels: PlanetVoxelVolume::new(),
+            removed_planet_trees: HashSet::new(),
             planet_world,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
@@ -668,6 +670,31 @@ impl Renderer {
         for (id, layer, block) in edits {
             self.edit_planet_voxel(*id, *layer, *block);
         }
+    }
+
+    pub fn planet_removed_trees_snapshot(&self) -> Vec<u32> {
+        let mut ids = self.removed_planet_trees.iter().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    }
+
+    pub fn restore_planet_removed_trees(&mut self, ids: &[u32]) {
+        self.removed_planet_trees.extend(ids.iter().copied());
+        self.planet_stream_chunks.clear();
+        self.planet_stream_pending.clear();
+    }
+
+    pub fn remove_planet_tree(&mut self, id: u32) -> bool {
+        let Some(cell) = self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)) else { return false; };
+        let sample = self.planet_world.terrain().sample_direction(cell.center, 0.25);
+        let hash = vegetation_hash(self.seed ^ id.wrapping_mul(0x27D4_EB2D), id as i32, id.rotate_left(13) as i32);
+        if planet_tree_spec(sample.biome, hash).is_none() || self.removed_planet_trees.contains(&id) {
+            return false;
+        }
+        self.removed_planet_trees.insert(id);
+        self.planet_stream_chunks.clear();
+        self.planet_stream_pending.clear();
+        true
     }
 
     pub fn planet_voxel_block_at(&self, id: u32, layer: i32) -> BlockId {
@@ -766,7 +793,8 @@ impl Renderer {
         candidates.insert(current_id.0);
         candidates.extend(current_cell.neighbors.iter().map(|id| id.0));
         for id in candidates {
-            if self.planet_world.edited_cells().get(&hexel_engine::topology::SurfaceCellId(id)) == Some(&BlockId::Air) {
+            if self.removed_planet_trees.contains(&id)
+                || self.planet_world.edited_cells().get(&hexel_engine::topology::SurfaceCellId(id)) == Some(&BlockId::Air) {
                 continue;
             }
             let Some(cell) = self.planet_world.topology().cell(
@@ -969,6 +997,7 @@ impl Renderer {
                 self.planet_world.terrain(),
                 self.seed,
                 self.planet_world.edited_cells(),
+                &self.removed_planet_trees,
             );
             if vertices.is_empty() {
                 continue;
@@ -1272,10 +1301,12 @@ fn append_planetary_trees(
     terrain: &PlanetGenerator,
     seed: u32,
     edits: &std::collections::BTreeMap<hexel_engine::topology::SurfaceCellId, BlockId>,
+    removed_trees: &HashSet<u32>,
 ) {
     let scale = WorldScale::default();
     for cell in topology.cells() {
         if !planetary_chunk_owns_direction(cell.center, key, chunks_per_face)
+            || removed_trees.contains(&cell.id.0)
             || edits.get(&cell.id) == Some(&BlockId::Air)
         {
             continue;
