@@ -644,7 +644,7 @@ impl Renderer {
             planet_cell_edits: HashMap::new(),
             planet_topology: topology,
             planet_terrain: terrain,
-            planet_preview: false,
+            planet_preview: true,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
             chunks: HashMap::new(),
