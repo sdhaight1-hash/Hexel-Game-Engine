@@ -182,7 +182,6 @@ pub struct Renderer {
     planet_cell_edits: HashMap<u32, BlockId>,
     planet_topology: SurfaceTopology,
     planet_terrain: PlanetGenerator,
-    planet_preview: bool,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
     chunks: HashMap<ChunkPos, ChunkMesh>,
@@ -689,7 +688,6 @@ impl Renderer {
             planet_cell_edits: HashMap::new(),
             planet_topology: topology,
             planet_terrain: terrain,
-            planet_preview: true,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
             chunks: HashMap::new(),
@@ -1367,10 +1365,6 @@ impl Renderer {
         }
     }
 
-    pub fn planet_preview_enabled(&self) -> bool {
-        self.planet_preview
-    }
-
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 {
             return;
@@ -1392,24 +1386,17 @@ impl Renderer {
         item_counts: [u16; 36],
     ) -> Result<(), wgpu::SurfaceError> {
         self.poll_mesh_results();
-        if self.planet_preview {
-            self.update_planet_streaming(camera.position);
-        }
+        self.update_planet_streaming(camera.position);
         let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
         };
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
-        let target_vertices = if self.planet_preview {
-            self.planet_cell_at_ray(camera.position, camera.forward())
-                .map(|id| self.build_planet_cell_outline(id))
-                .unwrap_or_default()
-        } else {
-            self.raycast(camera.position, camera.forward(), 8.0)
-                .map(|(cell, _)| build_target_outline(cell))
-                .unwrap_or_default()
-        };
+        let target_vertices = self
+            .planet_cell_at_ray(camera.position, camera.forward())
+            .map(|id| self.build_planet_cell_outline(id))
+            .unwrap_or_default();
         if !target_vertices.is_empty() {
             self.queue.write_buffer(
                 &self.target_buffer,
@@ -1508,20 +1495,11 @@ impl Renderer {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(if self.planet_preview {
-                            wgpu::Color {
-                                r: 0.008,
-                                g: 0.012,
-                                b: 0.035,
-                                a: 1.0,
-                            }
-                        } else {
-                            wgpu::Color {
-                                r: 0.52,
-                                g: 0.72,
-                                b: 0.88,
-                                a: 1.0,
-                            }
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.008,
+                            g: 0.012,
+                            b: 0.035,
+                            a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -1540,36 +1518,17 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.foliage_bind_group, &[]);
-            if self.planet_preview {
-                pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
-                pass.draw(0..self.planet_vertex_count, 0..1);
-                for chunk in self.planet_stream_chunks.values() {
-                    if chunk.vertex_count == 0 { continue; }
-                    pass.set_vertex_buffer(0, chunk.buffer.slice(..));
-                    pass.draw(0..chunk.vertex_count, 0..1);
-                }
-                if !target_vertices.is_empty() {
-                    pass.set_pipeline(&self.outline_pipeline);
-                    pass.set_vertex_buffer(0, self.target_buffer.slice(..));
-                    pass.draw(0..target_vertices.len() as u32, 0..1);
-                }
-            } else {
-                let forward = camera.forward();
-                for chunk in self.chunks.values() {
-                    if chunk.vertex_count == 0
-                        || !chunk_visible(view_proj, camera.position, forward, chunk)
-                    {
-                        continue;
-                    }
-                    pass.set_vertex_buffer(0, chunk.buffer.slice(..));
-                    pass.draw(0..chunk.vertex_count, 0..1);
-                }
-                if !target_vertices.is_empty() {
-                    pass.set_pipeline(&self.outline_pipeline);
-                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                    pass.set_vertex_buffer(0, self.target_buffer.slice(..));
-                    pass.draw(0..target_vertices.len() as u32, 0..1);
-                }
+            pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
+            pass.draw(0..self.planet_vertex_count, 0..1);
+            for chunk in self.planet_stream_chunks.values() {
+                if chunk.vertex_count == 0 { continue; }
+                pass.set_vertex_buffer(0, chunk.buffer.slice(..));
+                pass.draw(0..chunk.vertex_count, 0..1);
+            }
+            if !target_vertices.is_empty() {
+                pass.set_pipeline(&self.outline_pipeline);
+                pass.set_vertex_buffer(0, self.target_buffer.slice(..));
+                pass.draw(0..target_vertices.len() as u32, 0..1);
             }
         }
         {
