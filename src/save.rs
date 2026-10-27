@@ -244,7 +244,7 @@ mod tests {
         let corrupt = "HEXEL_SAVE 1\nseed 1\nplayer 0 0 0\nlook 0 0\nmode flat\nhotbar 0\nflat 0 0 0 99\n";
         assert_eq!(GameSave::decode(corrupt), Err(SaveError::InvalidBlock(99)));
         assert_eq!(
-            GameSave::decode("HEXEL_SAVE 1\\npvoxel 0 65 1\\n"),
+            GameSave::decode("HEXEL_SAVE 1\npvoxel 0 65 1\n"),
             Err(SaveError::InvalidField("planet voxel layer")),
         );
     }
