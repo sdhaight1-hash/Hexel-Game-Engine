@@ -10,6 +10,7 @@ pub mod planetary_chunks;
 pub mod soil;
 pub mod surface_navigation;
 pub mod surface_mesh;
+pub mod save;
 pub mod topology;
 pub mod trees;
 pub mod tree_blocks;
