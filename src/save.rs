@@ -178,12 +178,14 @@ fn item_code(item: ItemId) -> u8 {
     match item {
         ItemId::OakWood => 0, ItemId::BirchWood => 1, ItemId::PineWood => 2,
         ItemId::GenericWood => 3, ItemId::Stick => 4, ItemId::GrassFiber => 5,
+        ItemId::GrassBlock => 6, ItemId::DirtBlock => 7, ItemId::StoneBlock => 8,
     }
 }
 fn item_from_code(code: u8) -> Result<ItemId, SaveError> {
     match code {
         0 => Ok(ItemId::OakWood), 1 => Ok(ItemId::BirchWood), 2 => Ok(ItemId::PineWood),
         3 => Ok(ItemId::GenericWood), 4 => Ok(ItemId::Stick), 5 => Ok(ItemId::GrassFiber),
+        6 => Ok(ItemId::GrassBlock), 7 => Ok(ItemId::DirtBlock), 8 => Ok(ItemId::StoneBlock),
         _ => Err(SaveError::InvalidItem(code)),
     }
 }
