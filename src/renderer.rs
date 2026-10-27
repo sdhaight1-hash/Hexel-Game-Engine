@@ -1245,9 +1245,11 @@ impl Renderer {
             ) else {
                 continue;
             };
-            let mut vertices = Vec::with_capacity(mesh.indices.len());
-            for index in mesh.indices {
-                let source = mesh.vertices[index as usize];
+            // Resolve cell ownership once per patch-grid vertex, not once per
+            // expanded triangle index. Nearest-cell lookup is linear in topology
+            // size, so this avoids repeating that work for shared mesh vertices.
+            let mut grid_vertices = Vec::with_capacity(mesh.vertices.len());
+            for source in &mesh.vertices {
                 let sample = self.planet_terrain.sample_direction(source.normal, 0.25);
                 let cell_block = self
                     .planet_topology
@@ -1262,13 +1264,18 @@ impl Renderer {
                 let color = cell_block
                     .map(planet_block_color)
                     .unwrap_or_else(|| planet_vertex_color(sample));
-                vertices.push(Vertex {
+                grid_vertices.push(Vertex {
                     position: position.as_vec3().to_array(),
                     color,
                     uv: [0.0, 0.0],
                     textured: 0.0,
                 });
             }
+            let vertices = mesh
+                .indices
+                .iter()
+                .map(|index| grid_vertices[*index as usize])
+                .collect::<Vec<_>>();
             if vertices.is_empty() {
                 continue;
             }
