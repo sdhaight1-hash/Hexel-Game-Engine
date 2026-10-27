@@ -24,6 +24,8 @@ use winit::{
 };
 
 const PLAYER_EYE_HEIGHT: f32 = 1.55;
+const PLAYER_RADIUS: f32 = 0.30;
+const PLAYER_HEIGHT: f32 = 1.80;
 const GRAVITY: f32 = 22.0;
 const JUMP_SPEED: f32 = 8.5;
 
@@ -143,7 +145,7 @@ impl HexelApp {
         let surface = renderer.planet_surface_position(radial);
         let radius = surface.length().max(1.0);
         let altitude = (self.player_feet.length() - surface.length()).max(0.0);
-        let next_radial = if direction == Vec3::ZERO {
+        let mut next_radial = if direction == Vec3::ZERO {
             radial
         } else {
             (radial + direction * (self.camera.speed * dt / radius)).normalize_or_zero()
@@ -164,6 +166,14 @@ impl HexelApp {
             self.grounded = true;
         } else {
             self.grounded = false;
+        }
+        let proposed_feet =
+            renderer.planet_surface_position(next_radial) + next_radial * height;
+        if renderer.planet_tree_blocks_player(proposed_feet, PLAYER_RADIUS, PLAYER_HEIGHT) {
+            // Stop horizontal movement at tree trunks while preserving the current
+            // radial position; the same deterministic rule builds the visible trees.
+            next_radial = radial;
+            height = altitude;
         }
         self.player_feet = renderer.planet_surface_position(next_radial) + next_radial * height;
         self.camera.up = next_radial;
