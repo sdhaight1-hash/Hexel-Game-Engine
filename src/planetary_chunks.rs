@@ -21,7 +21,7 @@ pub enum CubeFace {
 }
 
 impl CubeFace {
-    const fn basis(self) -> (DVec3, DVec3, DVec3) {
+    fn basis(self) -> (DVec3, DVec3, DVec3) {
         // (face normal, increasing-u axis, increasing-v axis). All bases are
         // axis-aligned so adjacent faces describe identical shared edge directions.
         match self {
