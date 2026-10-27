@@ -1140,7 +1140,7 @@ impl Renderer {
         .normalize_or_zero();
         let sample = self.planet_world.terrain().sample_direction(radial, 0.25);
         let block = self
-            .planet_topology
+            .planet_world.topology()
             .cell_id_for_direction(radial)
             .map(|id| self.planet_block_at(id.0));
         let surface = if block == Some(BlockId::Air) {
@@ -1267,7 +1267,7 @@ impl Renderer {
             for source in &mesh.vertices {
                 let sample = self.planet_world.terrain().sample_direction(source.normal, 0.25);
                 let cell_block = self
-                    .planet_topology
+                    .planet_world.topology()
                     .cell_id_for_direction(source.normal)
                     .map(|id| self.planet_block_at(id.0));
                 let surface_position = if cell_block == Some(BlockId::Air) {
