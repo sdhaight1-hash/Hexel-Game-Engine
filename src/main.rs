@@ -96,6 +96,29 @@ impl HexelApp {
             .is_some_and(Renderer::planet_preview_enabled)
     }
 
+    fn update_planet_player(&mut self, dt: f32) {
+        let Some(renderer) = self.renderer.as_ref() else { return; };
+        let dt = dt.min(0.04);
+        let radial = self.player_feet.normalize_or_zero();
+        if radial == Vec3::ZERO { return; }
+        let forward = self.camera.forward();
+        let tangent_forward = (forward - radial * forward.dot(radial)).normalize_or_zero();
+        let tangent_right = radial.cross(tangent_forward).normalize_or_zero();
+        let mut direction = Vec3::ZERO;
+        if self.pressed.contains(&KeyCode::KeyW) { direction += tangent_forward; }
+        if self.pressed.contains(&KeyCode::KeyS) { direction -= tangent_forward; }
+        if self.pressed.contains(&KeyCode::KeyD) { direction += tangent_right; }
+        if self.pressed.contains(&KeyCode::KeyA) { direction -= tangent_right; }
+        direction = direction.normalize_or_zero();
+        let surface = renderer.planet_surface_position(radial);
+        let radius = surface.length().max(1.0);
+        let next_radial = if direction == Vec3::ZERO { radial } else { (radial + direction * (self.camera.speed * dt / radius)).normalize_or_zero() };
+        self.player_feet = renderer.planet_surface_position(next_radial);
+        self.camera.up = next_radial;
+        self.camera.position = self.player_feet + next_radial * PLAYER_EYE_HEIGHT;
+        self.grounded = true;
+    }
+
     fn update_player(&mut self, dt: f32) {
         let Some(renderer) = self.renderer.as_ref() else {
             return;
@@ -252,6 +275,13 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_ref() else {
             return;
         };
+        if self.planet_preview_active() {
+            let message = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward())
+                .map(|id| format!("Hexel Engine | PLANET WALK | Surface cell {id} | WASD move | Mouse look | F3 flat world"))
+                .unwrap_or_else(|| "Hexel Engine | PLANET WALK | Looking into space | WASD move | Mouse look | F3 flat world".to_string());
+            window.set_title(&message);
+            return;
+        }
         let message = if let Some((cell, _)) =
             renderer.raycast(self.camera.position, self.camera.forward(), 8.0)
         {
@@ -443,10 +473,27 @@ impl ApplicationHandler for HexelApp {
                                     self.harvest_target = None;
                                     self.harvest_progress = 0.0;
                                     self.jump_requested = false;
+                                    if let Some(renderer) = self.renderer.as_ref() {
+                                        self.player_feet = renderer.planet_surface_position(Vec3::X);
+                                        self.camera.up = Vec3::X;
+                                        self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
+                                    }
+                                    self.camera.yaw = 0.0;
+                                    self.camera.pitch = 0.0;
+                                } else {
+                                    self.camera.up = Vec3::Y;
+                                    if let Some(renderer) = self.renderer.as_ref() {
+                                        let ground = renderer.ground_height(0, 0);
+                                        self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
+                                        self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
+                                        renderer.update_streaming(self.player_feet);
+                                    }
+                                    self.camera.yaw = 0.0;
+                                    self.camera.pitch = -0.15;
                                 }
                                 if let Some(window) = self.window.as_ref() {
                                     window.set_title(if preview {
-                                        "Hexel Engine | Geodesic planet: 642 cells, 12 pentagons, 630 hexagons | F3 to return"
+                                        "Hexel Engine | PLANET WALK | WASD move | Mouse look | F3 flat world"
                                     } else {
                                         "Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse"
                                     });
@@ -524,7 +571,6 @@ impl ApplicationHandler for HexelApp {
         event: DeviceEvent,
     ) {
         if self.cursor_locked
-            && !self.planet_preview_active()
             && let DeviceEvent::MouseMotion { delta: (dx, dy) } = event
         {
             let sensitivity = 0.0022;
@@ -536,7 +582,10 @@ impl ApplicationHandler for HexelApp {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
-        if !self.planet_preview_active() {
+        if self.planet_preview_active() {
+            self.update_planet_player(dt);
+            self.update_target_title(dt);
+        } else {
             self.update_player(dt);
             self.update_harvesting(dt);
             self.update_target_title(dt);
