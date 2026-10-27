@@ -717,6 +717,12 @@ impl Renderer {
 
     fn planet_top_solid_layer(&self, id: u32) -> i32 {
         let cell = hexel_engine::topology::SurfaceCellId(id);
+        for layer in (1..=PlanetVoxelVolume::MAX_BUILD_HEIGHT).rev() {
+            let pos = PlanetVoxelPos::new(cell, layer);
+            if self.planet_voxels.edited_voxels().get(&pos).is_some_and(|block| block.is_solid()) {
+                return layer;
+            }
+        }
         if self.planet_world.edited_cells().get(&cell) != Some(&BlockId::Air) {
             return 0;
         }
@@ -780,7 +786,7 @@ impl Renderer {
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
-        let offset = (-top_layer).max(0) as f64 * 2.4;
+        let offset = -(top_layer as f64) * 2.4;
         let color = planet_block_color(block);
         for vertex in &mut self.planet_vertices[first..end_index] {
             let direction = Vec3::from_array(vertex.position).normalize_or_zero();
@@ -805,7 +811,8 @@ impl Renderer {
                 let neighbor_layer = self.planet_top_solid_layer(neighbor.0);
                 deepest_neighbor = deepest_neighbor.max((-neighbor_layer).max(0) as f64 * BLOCK_DEPTH);
             }
-            let wall_depth = (deepest_neighbor + BLOCK_DEPTH - offset).max(BLOCK_DEPTH);
+            let top_offset = top_layer as f64 * BLOCK_DEPTH;
+            let wall_depth = (top_offset + deepest_neighbor + BLOCK_DEPTH).max(BLOCK_DEPTH);
             let mut wall_positions = Vec::with_capacity(wall_end - wall_start);
             for index in 0..cell.boundary.len() {
                 let next = (index + 1) % cell.boundary.len();
@@ -938,16 +945,14 @@ impl Renderer {
             let cell_id = hexel_engine::topology::SurfaceCellId(*id);
             let Some(cell) = self.planet_world.topology().cell(cell_id) else { continue; };
             let layer = self.planet_top_solid_layer(*id);
-            let depth = (-layer).max(0) as f64 * 2.4;
-            let mut deepest = depth;
+            let offset = layer as f64 * 2.4;
+            let mut max_extent = offset.abs();
             for neighbor in &cell.neighbors {
-                if self.planet_world.edited_cells().get(neighbor) == Some(&BlockId::Air) {
-                    let neighbor_depth = (-self.planet_top_solid_layer(neighbor.0)).max(0) as f64 * 2.4;
-                    deepest = deepest.max(neighbor_depth);
-                }
+                let neighbor_extent = self.planet_top_solid_layer(neighbor.0).abs() as f64 * 2.4;
+                max_extent = max_extent.max(neighbor_extent);
             }
-            let center = (cell.center * radius - cell.center * (depth * 0.5)).as_vec3();
-            let bound_radius = radius * 0.18 + elevation + deepest + 2.4 - depth * 0.5;
+            let center = (cell.center * radius + cell.center * (offset * 0.5)).as_vec3();
+            let bound_radius = radius * 0.18 + elevation + max_extent + offset.abs() * 0.5 + 2.4;
             let Some(bound_hit) = ray_sphere_distance(origin, dir, center, bound_radius as f32) else {
                 continue;
             };
