@@ -153,6 +153,7 @@ pub struct Renderer {
     planet_vertex_count: u32,
     planet_vertices: Vec<Vertex>,
     planet_cell_ranges: HashMap<u32, (u64, u64)>,
+    planet_cell_wall_ranges: HashMap<u32, (usize, usize)>,
     planet_world: PlanetaryWorld,
     planet_voxels: PlanetVoxelVolume,
     removed_planet_trees: HashSet<u32>,
@@ -534,7 +535,9 @@ impl Renderer {
         // The top remains terrain-displaced; the lower ring is inset radially so
         // adjacent cells read as hexel/pentagon prisms at ground level.
         const CELL_WALL_DEPTH: f64 = 2.4;
+        let mut planet_cell_wall_ranges = HashMap::new();
         for cell in topology.cells() {
+            let wall_start = planet_vertices.len();
             let side_color = [0.16_f32, 0.18, 0.17];
             for index in 0..cell.boundary.len() {
                 let next = (index + 1) % cell.boundary.len();
@@ -572,6 +575,7 @@ impl Renderer {
                     });
                 }
             }
+            planet_cell_wall_ranges.insert(cell.id.0, (wall_start, planet_vertices.len()));
         }
 
         // Draw a narrow, slightly raised ribbon along every topology edge. This
@@ -625,6 +629,7 @@ impl Renderer {
             planet_vertex_count,
             planet_vertices,
             planet_cell_ranges,
+            planet_cell_wall_ranges,
             planet_voxels: PlanetVoxelVolume::new(),
             removed_planet_trees: HashSet::new(),
             planet_world,
@@ -765,6 +770,45 @@ impl Renderer {
             start,
             bytemuck::cast_slice(&self.planet_vertices[first..end_index]),
         );
+
+        if let (Some(cell), Some((wall_start, wall_end))) = (
+            self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)),
+            self.planet_cell_wall_ranges.get(&id).copied(),
+        ) {
+            const WALL_DEPTH: f64 = 2.4;
+            let mut wall_positions = Vec::with_capacity(wall_end - wall_start);
+            for index in 0..cell.boundary.len() {
+                let next = (index + 1) % cell.boundary.len();
+                let raw_a = self.planet_world.terrain().sample_direction(cell.boundary[index], 0.25).surface_position;
+                let raw_b = self.planet_world.terrain().sample_direction(cell.boundary[next], 0.25).surface_position;
+                let top_a = raw_a - raw_a.normalize() * offset;
+                let top_b = raw_b - raw_b.normalize() * offset;
+                let bottom_a = top_a - top_a.normalize() * WALL_DEPTH;
+                let bottom_b = top_b - top_b.normalize() * WALL_DEPTH;
+                let mut quad = [
+                    top_a.as_vec3(), bottom_a.as_vec3(), top_b.as_vec3(),
+                    top_b.as_vec3(), bottom_a.as_vec3(), bottom_b.as_vec3(),
+                ];
+                for tri in quad.as_chunks_mut::<3>().0 {
+                    let a = tri[0];
+                    let b = tri[1];
+                    let c = tri[2];
+                    if (b - a).cross(c - a).dot((a + b + c) / 3.0) < 0.0 {
+                        tri.swap(1, 2);
+                    }
+                }
+                wall_positions.extend(quad);
+            }
+            for (vertex, position) in self.planet_vertices[wall_start..wall_end].iter_mut().zip(wall_positions) {
+                vertex.position = position.to_array();
+            }
+            let byte_offset = wall_start as u64 * std::mem::size_of::<Vertex>() as u64;
+            self.queue.write_buffer(
+                &self.planet_vertex_buffer,
+                byte_offset,
+                bytemuck::cast_slice(&self.planet_vertices[wall_start..wall_end]),
+            );
+        }
         self.planet_stream_chunks.clear();
         self.planet_stream_pending.clear();
     }
