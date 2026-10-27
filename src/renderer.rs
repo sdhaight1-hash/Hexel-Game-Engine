@@ -884,10 +884,10 @@ impl Renderer {
             ) - sample.surface_position;
             let vertical = delta.dot(up);
             let tangent = delta - up * vertical;
+            let trunk_fraction = if spec.species == 4 { 1.0 } else { 2.0 / 3.0 };
             let trunk_top = spec.height_layers as f64
                 * WorldScale::default().hexel_height as f64
-                * 2.0
-                / 3.0;
+                * trunk_fraction;
             if tangent.length() < player_radius as f64 + 0.48
                 && vertical + player_height as f64 > 0.0
                 && vertical < trunk_top
@@ -998,7 +998,8 @@ impl Renderer {
             let perpendicular_origin = rel - up * axial_origin;
             let perpendicular_dir = dir_d - up * axial_dir;
             let trunk_radius = (spec.trunk_radius as f64 * scale.hex_radius as f64 * 0.72).max(0.28);
-            let trunk_top = spec.height_layers as f64 * scale.hexel_height as f64 * 2.0 / 3.0;
+            let trunk_fraction = if spec.species == 4 { 1.0 } else { 2.0 / 3.0 };
+            let trunk_top = spec.height_layers as f64 * scale.hexel_height as f64 * trunk_fraction;
             let a = perpendicular_dir.length_squared();
             if a > 1.0e-10 {
                 let bb = 2.0 * perpendicular_origin.dot(perpendicular_dir);
