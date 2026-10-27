@@ -184,6 +184,7 @@ pub struct Renderer {
     planet_preview: bool,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
+    planet_stream_pending: VecDeque<PlanetChunkKey>,
     chunks: HashMap<ChunkPos, ChunkMesh>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -646,6 +647,7 @@ impl Renderer {
             planet_terrain: terrain,
             planet_preview: false,
             planet_stream_chunks: HashMap::new(),
+            planet_stream_pending: VecDeque::new(),
             planet_stream_pending: VecDeque::new(),
             chunks: HashMap::new(),
             camera_buffer,
@@ -1300,11 +1302,6 @@ impl Renderer {
                     vertex_count: vertices.len() as u32,
                 },
             );
-        }
-    }
-            buffer,
-                vertex_count: vertices.len() as u32,
-            });
         }
     }
 
