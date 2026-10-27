@@ -668,7 +668,7 @@ impl Renderer {
                 }
             })
             .map_err(|e| format!("Could not start mesh worker: {e}"))?;
-        let mut renderer = Self {
+        let renderer = Self {
             surface,
             device,
             queue,
@@ -1252,7 +1252,7 @@ impl Renderer {
                 continue;
             }
             let Ok(mesh) = PlanetChunkMesh::generate(
-                &self.planet_world.terrain(),
+                self.planet_world.terrain(),
                 key,
                 CHUNKS_PER_FACE,
                 MESH_RESOLUTION,
@@ -1295,7 +1295,7 @@ impl Renderer {
                 &mut vertices,
                 key,
                 CHUNKS_PER_FACE,
-                &self.planet_world.topology(),
+                self.planet_world.topology(),
                 &self.planet_world.terrain(),
                 self.seed,
                 self.planet_world.edited_cells(),
