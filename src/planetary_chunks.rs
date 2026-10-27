@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn every_triangle_faces_outward() {
         let mesh = PlanetChunkMesh::generate(&terrain(), key(CubeFace::PositiveZ, 0, 0), 3, 7, 0.25).unwrap();
-        for triangle in mesh.indices.chunks_exact(3) {
+        for triangle in mesh.indices.as_chunks::<3>().0 {
             let a = mesh.vertices[triangle[0] as usize].position;
             let b = mesh.vertices[triangle[1] as usize].position;
             let c = mesh.vertices[triangle[2] as usize].position;
