@@ -296,7 +296,7 @@ impl HexelApp {
             ItemId::OakWood | ItemId::BirchWood | ItemId::PineWood
             | ItemId::GenericWood | ItemId::Stick | ItemId::GrassFiber => return,
         };
-        if (-16..=16).contains(&place_cell.y)
+        if (0..=255).contains(&place_cell.y)
             && renderer.edit_planet_hexel(place_cell, block) {
             let slot = self.inventory.selected_hotbar();
             self.inventory.remove_from_slot(slot, 1);
