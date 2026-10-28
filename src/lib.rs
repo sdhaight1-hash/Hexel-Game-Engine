@@ -263,6 +263,19 @@ mod tests {
         let n = CellPos::new(0, 0, 0).neighbors();
         assert_eq!(n.len(), 8);
         assert_eq!(n.iter().filter(|p| p.y == 0).count(), 6);
+        assert_eq!(
+            &n[..6],
+            &[
+                CellPos::new(1, 0, 0),
+                CellPos::new(1, -1, 0),
+                CellPos::new(0, -1, 0),
+                CellPos::new(-1, 0, 0),
+                CellPos::new(-1, 1, 0),
+                CellPos::new(0, 1, 0),
+            ],
+        );
+        assert_eq!(n[6], CellPos::new(0, 0, 1));
+        assert_eq!(n[7], CellPos::new(0, 0, -1));
     }
 
     #[test]
