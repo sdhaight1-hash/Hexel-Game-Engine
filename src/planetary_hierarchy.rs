@@ -122,6 +122,20 @@ mod tests {
     }
 
     #[test]
+    fn active_render_window_is_centered_and_configurable() {
+        let keys = chunks_in_render_region(7, 3, -2, 1, RenderRegionConfig {
+            horizontal_radius_chunks: 1,
+            vertical_radius_chunks: 1,
+        });
+        assert_eq!(keys.len(), 27);
+        assert!(keys.iter().all(|key| key.anchor_cell == 7));
+        assert!(keys.iter().any(|key| key.q == 3 && key.r == -2 && key.y == 1));
+        assert!(keys.iter().all(|key| (2..=4).contains(&key.q)));
+        assert!(keys.iter().all(|key| (-3..=-1).contains(&key.r)));
+        assert!(keys.iter().all(|key| (0..=2).contains(&key.y)));
+    }
+
+    #[test]
     fn hierarchy_sizes_are_consistent() {
         assert_eq!(CHUNKS_PER_HYPER_REGION, 64);
         assert_eq!(CHUNKS_PER_REGION.pow(3), 512);
