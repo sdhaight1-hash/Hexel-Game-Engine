@@ -165,6 +165,21 @@ mod tests {
     }
 
     #[test]
+    fn batch_rebase_keeps_metre_scale_offsets_at_earth_radius() {
+        let frame = PlanetaryFrame::at(DVec3::X * EARTH_RADIUS);
+        let points = [
+            frame.to_planet(DVec3::new(0.0, 0.0, 0.0)),
+            frame.to_planet(DVec3::new(1.0, 0.0, 0.0)),
+            frame.to_planet(DVec3::new(0.0, 0.0, 1.0)),
+        ];
+        let local = frame.rebase_points_f32(points);
+        assert_eq!(local.len(), 3);
+        assert!((local[1] - local[0] - Vec3::X).length() < 1e-5);
+        assert!((local[2] - local[0] - Vec3::Z).length() < 1e-5);
+        assert!((frame.distance_squared_to_origin(points[1]) - 1.0).abs() < 1e-7);
+    }
+
+    #[test]
     fn tangent_move_preserves_earth_radius_and_advances_expected_distance() {
         let frame = PlanetaryFrame::at(DVec3::X * EARTH_RADIUS);
         let moved = frame.move_tangent(1_000.0, 0.0);
