@@ -138,8 +138,11 @@ mod tests {
         let adjacent = origin + frame.east * 1.0 + frame.up * 2.0 + frame.north * 3.0;
         let local = frame.to_local_f32(adjacent);
         assert!((local - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
-        // Absolute f32 conversion is not the path under test: only the rebased
-        // coordinates are required to preserve these local metre-scale offsets.
+        // Casting the absolute coordinates first quantizes away metre-scale offsets
+        // at Earth's radius. Keep this regression guard so rendering code must rebase
+        // in f64 before converting to GPU f32 coordinates.
+        let absolute_delta = adjacent.as_vec3() - origin.as_vec3();
+        assert!((absolute_delta - Vec3::new(1.0, 2.0, 3.0)).length() > 0.1);
         assert!(local.is_finite());
     }
 
