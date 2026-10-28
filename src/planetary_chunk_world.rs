@@ -14,7 +14,7 @@ use crate::{
     planetary_chunks::{PlanetHexChunkKey, PlanetHexChunkPlacement},
     planetary_frame::PlanetaryFrame,
     planet::{Biome, PlanetGenerator},
-    world_profile::{HEXEL_HEIGHT_METRES, HEXELS_PER_CHUNK, PlanetaryWorldProfile},
+    world_profile::{HEXEL_HEIGHT_METRES, HEXELS_PER_CHUNK, SEA_LEVEL_Y, WORLD_MAX_Y, WORLD_MIN_Y, PlanetaryWorldProfile},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,18 +189,16 @@ impl PlanetaryChunkWorld {
                 // grows above it; negative layers remain solid foundation below it.
                 // Keep the generated surface several Hexels above bedrock so the
                 // base never peeks through ordinary rolling relief.
-                let surface_layer = (8.0
-                    + (local_elevation - chunk_base_elevation)
-                        / self.scale.hexel_height as f64)
-                    .round() as i32;
-                let surface_layer = surface_layer.clamp(2, 30);
+                let broad_relief = ((local_elevation - chunk_base_elevation) / 4_500.0 * 40.0).round() as i32;
+                let fine_relief = ((relief * 2.1 + secondary * 0.55) / self.scale.hexel_height as f64).round() as i32;
+                let surface_layer = (SEA_LEVEL_Y + broad_relief + fine_relief).clamp(WORLD_MIN_Y + 1, WORLD_MAX_Y - 1);
                 let sample_biome = chunk_biome;
                 for local_y in 0..16usize {
                     let world_y = chunk.y * 16 + local_y as i32;
                     let depth_below_surface = surface_layer - world_y;
-                    let block = if world_y <= 0 {
+                    let block = if world_y == WORLD_MIN_Y {
                         BlockId::Foundation
-                    } else if depth_below_surface < 0 {
+                    } else if !(WORLD_MIN_Y..=WORLD_MAX_Y).contains(&world_y) || depth_below_surface < 0 {
                         BlockId::Air
                     } else if depth_below_surface == 0 {
                         surface_block(sample_biome)
