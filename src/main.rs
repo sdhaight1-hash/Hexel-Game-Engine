@@ -77,7 +77,7 @@ impl HexelApp {
     fn save_game(&self) {
         let Some(renderer) = self.renderer.as_ref() else { return; };
         let mut save = GameSave::fresh(renderer.world_seed());
-        save.player_position = [self.player_feet.x, self.player_feet.y, self.player_feet.z];
+        save.player_position = [self.player_feet.x as f64, self.player_feet.y as f64, self.player_feet.z as f64];
         save.yaw = self.camera.yaw;
         save.pitch = self.camera.pitch;
         save.planet_mode = true;
@@ -377,7 +377,7 @@ impl ApplicationHandler for HexelApp {
                     renderer.restore_planet_edits(&save.planet_edits);
                     renderer.restore_planet_voxel_edits(&save.planet_voxel_edits);
                     renderer.restore_planet_removed_trees(&save.planet_removed_trees);
-                    self.player_feet = Vec3::from_array(save.player_position);
+                    self.player_feet = Vec3::new(save.player_position[0] as f32, save.player_position[1] as f32, save.player_position[2] as f32);
                     self.camera.yaw = save.yaw;
                     self.camera.pitch = save.pitch.clamp(-1.52, 1.52);
                     self.inventory = Inventory::default();
