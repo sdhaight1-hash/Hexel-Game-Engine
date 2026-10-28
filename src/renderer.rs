@@ -1316,24 +1316,42 @@ impl Renderer {
                 // Lift slightly above the smooth backdrop to avoid z-fighting.
                 let top_y = layer * step_height + 0.075;
                 let bottom_y = top_y - step_height;
-                let color = planet_vertex_color(sample);
+                // Keep neighbouring Hexels individually legible: a narrow dark
+                // perimeter separates their top faces instead of blending into a blob.
+                let variation = if (q - r).rem_euclid(2) == 0 { 1.035 } else { 0.965 };
+                let color = planet_vertex_color(sample).map(|c| (c * variation).min(1.0));
+                let edge_color = [color[0] * 0.34, color[1] * 0.34, color[2] * 0.34];
                 let center = Vec3::new(x as f32, top_y as f32, z as f32);
                 let mut corners = [Vec3::ZERO; 6];
+                let mut inner_corners = [Vec3::ZERO; 6];
+                // A 30-degree offset matches the pointy-top axial grid used by WorldScale.
                 for i in 0..6 {
                     let angle = (i as f64 * 60.0 + 30.0).to_radians();
+                    let dx = angle.cos();
+                    let dz = angle.sin();
                     corners[i] = Vec3::new(
-                        (x + radius * angle.cos()) as f32,
+                        (x + radius * dx) as f32,
                         top_y as f32,
-                        (z + radius * angle.sin()) as f32,
+                        (z + radius * dz) as f32,
+                    );
+                    let inset = radius * 0.90;
+                    inner_corners[i] = Vec3::new(
+                        (x + inset * dx) as f32,
+                        (top_y + 0.004) as f32,
+                        (z + inset * dz) as f32,
                     );
                 }
                 for i in 0..6 {
-                    push_triangle(&mut vertices, center, corners[i], corners[(i + 1) % 6], color);
+                    let next = (i + 1) % 6;
+                    // Dark bevel/rim on top makes each one-metre cell visible at a glance.
+                    push_triangle(&mut vertices, corners[i], inner_corners[i], inner_corners[next], edge_color);
+                    push_triangle(&mut vertices, corners[i], inner_corners[next], corners[next], edge_color);
+                    push_triangle(&mut vertices, center, inner_corners[i], inner_corners[next], color);
                     let lower_a = Vec3::new(corners[i].x, bottom_y as f32, corners[i].z);
-                    let lower_b = Vec3::new(corners[(i + 1) % 6].x, bottom_y as f32, corners[(i + 1) % 6].z);
-                    let side_color = [color[0] * 0.72, color[1] * 0.72, color[2] * 0.72];
-                    push_triangle(&mut vertices, corners[i], lower_a, corners[(i + 1) % 6], side_color);
-                    push_triangle(&mut vertices, corners[(i + 1) % 6], lower_a, lower_b, side_color);
+                    let lower_b = Vec3::new(corners[next].x, bottom_y as f32, corners[next].z);
+                    let side_color = [color[0] * 0.58, color[1] * 0.58, color[2] * 0.58];
+                    push_triangle(&mut vertices, corners[i], lower_a, corners[next], side_color);
+                    push_triangle(&mut vertices, corners[next], lower_a, lower_b, side_color);
                 }
             }
         }
