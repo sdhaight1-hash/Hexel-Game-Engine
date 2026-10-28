@@ -257,10 +257,12 @@ mod tests {
     fn generated_chunk_has_surface_dirt_and_stone_layers() {
         let mut world = store();
         let surface = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
-        assert!(matches!(surface.data.get([0, 0, 0]), BlockId::Grass | BlockId::Dirt | BlockId::Stone));
+        assert_eq!(surface.data.get([0, 0, 0]), BlockId::Foundation);
+        assert!(matches!(surface.data.get([0, 0, 8]), BlockId::Grass | BlockId::Dirt | BlockId::Stone));
+        assert_eq!(surface.data.get([0, 0, 7]), BlockId::Dirt);
         let underground = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: -1 }).unwrap();
-        assert_eq!(underground.data.get([0, 0, 15]), BlockId::Dirt);
-        assert_eq!(underground.data.get([0, 0, 0]), BlockId::Stone);
+        assert_eq!(underground.data.get([0, 0, 15]), BlockId::Foundation);
+        assert_eq!(underground.data.get([0, 0, 0]), BlockId::Foundation);
         let sky = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: 1 }).unwrap();
         assert_eq!(sky.data.get([0, 0, 0]), BlockId::Air);
     }
