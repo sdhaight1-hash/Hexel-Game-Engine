@@ -170,6 +170,7 @@ pub struct Renderer {
     planet_shell_vertex_buffer: wgpu::Buffer,
     planet_shell_vertex_count: u32,
     planet_shell_cell_ranges: HashMap<u32, (u32, u32)>,
+    exposed_shell_cells: HashSet<u32>,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
     planet_vertices: Vec<Vertex>,
@@ -630,6 +631,7 @@ impl Renderer {
             planet_shell_vertex_buffer,
             planet_shell_vertex_count,
             planet_shell_cell_ranges,
+            exposed_shell_cells: HashSet::new(),
             planet_vertex_buffer,
             planet_vertex_count,
             planet_vertices,
@@ -792,6 +794,11 @@ impl Renderer {
     fn refresh_planet_cell(&mut self, id: u32) {
         let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else { return; };
         let (top_layer, block) = self.planet_top_solid_voxel(id);
+        if top_layer <= PlanetVoxelVolume::BEDROCK_LAYER {
+            self.exposed_shell_cells.insert(id);
+        } else {
+            self.exposed_shell_cells.remove(&id);
+        }
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
@@ -1594,8 +1601,8 @@ impl Renderer {
             // The shell is normally culled; draw only cells whose radial column has
             // reached immutable bedrock, keeping exposed shell rendering local.
             pass.set_vertex_buffer(0, self.planet_shell_vertex_buffer.slice(..));
-            for (&cell_id, &(first, count)) in &self.planet_shell_cell_ranges {
-                if self.planet_top_solid_layer(cell_id) <= PlanetVoxelVolume::BEDROCK_LAYER {
+            for cell_id in &self.exposed_shell_cells {
+                if let Some(&(first, count)) = self.planet_shell_cell_ranges.get(cell_id) {
                     pass.draw(first..first + count, 0..1);
                 }
             }
