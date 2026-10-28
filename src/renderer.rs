@@ -1068,7 +1068,7 @@ impl Renderer {
     /// camera-near patches are rebuilt only when the desired neighborhood changes.
     fn update_planet_streaming(&mut self, player_position: Vec3) {
         // At Earth's radius, 400,000 cube-face patches produce roughly
-        // metre-scale patch spacing near face centers. Plan only a bounded
+        // 30-metre patch spacing near face centers. Plan a generous bounded
         // neighborhood around the player; never enumerate the whole planet grid.
         const CHUNKS_PER_FACE: u32 = 400_000;
         const MESH_RESOLUTION: u32 = 32;
