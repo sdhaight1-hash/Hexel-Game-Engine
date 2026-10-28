@@ -281,8 +281,8 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        let Some(target) = renderer
-            .planet_hexel_at_ray(self.camera.position, self.camera.forward())
+        let Some(place_cell) = renderer
+            .planet_hexel_placement_at_ray(self.camera.position, self.camera.forward())
         else {
             return;
         };
@@ -296,8 +296,8 @@ impl HexelApp {
             ItemId::OakWood | ItemId::BirchWood | ItemId::PineWood
             | ItemId::GenericWood | ItemId::Stick | ItemId::GrassFiber => return,
         };
-        let place_cell = hexel_engine::CellPos::new(target.q, target.r, target.y + 1);
-        if place_cell.y <= 16 && renderer.edit_planet_hexel(place_cell, block) {
+        if (-16..=16).contains(&place_cell.y)
+            && renderer.edit_planet_hexel(place_cell, block) {
             let slot = self.inventory.selected_hotbar();
             self.inventory.remove_from_slot(slot, 1);
         }
