@@ -73,6 +73,24 @@ impl PlanetaryFrame {
             + self.north * local_position.z
     }
 
+    /// Convert a planet-centred point to the local coordinates used by the renderer,
+    /// retaining the subtraction and basis projection in f64 until the final cast.
+    ///
+    /// This is the required boundary for camera-relative GPU data. Call this before
+    /// creating a Vertex; never call `as_vec3()` on an absolute planetary point.
+    pub fn rebase_points_f32(self, points: impl IntoIterator<Item = DVec3>) -> Vec<Vec3> {
+        points
+            .into_iter()
+            .map(|point| self.to_local_f32(point))
+            .collect()
+    }
+
+    /// Return the squared distance from the frame origin without down-casting.
+    /// Useful for deciding when a local render frame should be refreshed.
+    pub fn distance_squared_to_origin(self, planet_position: DVec3) -> f64 {
+        (planet_position - self.origin).length_squared()
+    }
+
     /// Move a point along the spherical surface by a local east/north displacement.
     ///
     /// The input radius is preserved, so callers can apply the generated terrain
