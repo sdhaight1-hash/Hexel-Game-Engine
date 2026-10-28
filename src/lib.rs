@@ -9,6 +9,7 @@ pub mod planetary_frame;
 pub mod planetary_world;
 pub mod planetary_voxels;
 pub mod planetary_chunks;
+pub mod planetary_chunk_world;
 pub mod soil;
 pub mod surface_navigation;
 pub mod surface_mesh;
