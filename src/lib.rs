@@ -18,6 +18,7 @@ pub mod trees;
 pub mod tree_blocks;
 
 use glam::Vec3;
+use hexx::Hex;
 use noise::{NoiseFn, Perlin};
 use std::collections::HashMap;
 
@@ -37,14 +38,19 @@ impl CellPos {
         Self { q, r, y }
     }
 
+    /// Six horizontal neighbors come from the shared `hexx` axial-grid
+    /// implementation; the final two entries are the vertical prism neighbors.
+    /// Keeping the crate's coordinate math here prevents a second hand-maintained
+    /// hex-neighbor definition from drifting away from mesh and navigation code.
     pub fn neighbors(self) -> [Self; 8] {
+        let horizontal = Hex::new(self.q, self.r).all_neighbors();
         [
-            Self::new(self.q + 1, self.r, self.y),
-            Self::new(self.q + 1, self.r - 1, self.y),
-            Self::new(self.q, self.r - 1, self.y),
-            Self::new(self.q - 1, self.r, self.y),
-            Self::new(self.q - 1, self.r + 1, self.y),
-            Self::new(self.q, self.r + 1, self.y),
+            Self::new(horizontal[0].x, horizontal[0].y, self.y),
+            Self::new(horizontal[1].x, horizontal[1].y, self.y),
+            Self::new(horizontal[2].x, horizontal[2].y, self.y),
+            Self::new(horizontal[3].x, horizontal[3].y, self.y),
+            Self::new(horizontal[4].x, horizontal[4].y, self.y),
+            Self::new(horizontal[5].x, horizontal[5].y, self.y),
             Self::new(self.q, self.r, self.y + 1),
             Self::new(self.q, self.r, self.y - 1),
         ]
