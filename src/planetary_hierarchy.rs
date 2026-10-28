@@ -11,8 +11,13 @@
 
 use crate::planetary_chunks::PlanetHexChunkKey;
 
+/// Stable metadata grouping size; this does not set active render distance.
+pub const CHUNKS_PER_REGION: i32 = 8;
+/// Number of regions along each axis of one hyper-region.
+pub const REGIONS_PER_HYPER_REGION: i32 = 8;
 /// Stable number of chunks along each axis of one hyper-region.
-pub const CHUNKS_PER_HYPER_REGION: i32 = 64;
+pub const CHUNKS_PER_HYPER_REGION: i32 =
+    CHUNKS_PER_REGION * REGIONS_PER_HYPER_REGION;
 
 /// Runtime render/streaming window measured in chunk coordinates.
 /// Tune this with the game's render-distance setting; it does not change world
@@ -66,9 +71,9 @@ impl PlanetRegionKey {
     pub const fn hyper_region(self) -> PlanetHyperRegionKey {
         PlanetHyperRegionKey {
             anchor_cell: self.anchor_cell,
-            q: self.q.div_euclid(CHUNKS_PER_HYPER_REGION),
-            r: self.r.div_euclid(CHUNKS_PER_HYPER_REGION),
-            y: self.y.div_euclid(CHUNKS_PER_HYPER_REGION),
+            q: self.q.div_euclid(REGIONS_PER_HYPER_REGION),
+            r: self.r.div_euclid(REGIONS_PER_HYPER_REGION),
+            y: self.y.div_euclid(REGIONS_PER_HYPER_REGION),
         }
     }
 }
@@ -87,9 +92,9 @@ pub struct PlanetHyperRegionKey {
 pub const fn region_for_chunk(chunk: PlanetHexChunkKey) -> PlanetRegionKey {
     PlanetRegionKey {
         anchor_cell: chunk.anchor_cell,
-        q: chunk.q.div_euclid(CHUNKS_PER_HYPER_REGION),
-        r: chunk.r.div_euclid(CHUNKS_PER_HYPER_REGION),
-        y: chunk.y.div_euclid(CHUNKS_PER_HYPER_REGION),
+        q: chunk.q.div_euclid(CHUNKS_PER_REGION),
+        r: chunk.r.div_euclid(CHUNKS_PER_REGION),
+        y: chunk.y.div_euclid(CHUNKS_PER_REGION),
     }
 }
 
@@ -102,7 +107,7 @@ mod tests {
     fn chunk_region_and_hyper_region_parentage_is_stable() {
         let chunk = PlanetHexChunkKey { anchor_cell: 17, q: 9, r: 16, y: -1 };
         let region = region_for_chunk(chunk);
-        assert_eq!(region, PlanetRegionKey { anchor_cell: 17, q: 0, r: 0, y: -1 });
+        assert_eq!(region, PlanetRegionKey { anchor_cell: 17, q: 1, r: 2, y: -1 });
         assert_eq!(region.hyper_region(), PlanetHyperRegionKey {
             anchor_cell: 17, q: 0, r: 0, y: -1,
         });
@@ -112,12 +117,14 @@ mod tests {
     fn negative_chunks_use_euclidean_parent_coordinates() {
         let chunk = PlanetHexChunkKey { anchor_cell: 2, q: -1, r: -8, y: -9 };
         assert_eq!(region_for_chunk(chunk), PlanetRegionKey {
-            anchor_cell: 2, q: -1, r: -1, y: -1,
+            anchor_cell: 2, q: -1, r: -1, y: -2,
         });
     }
 
     #[test]
     fn hierarchy_sizes_are_consistent() {
         assert_eq!(CHUNKS_PER_HYPER_REGION, 64);
+        assert_eq!(CHUNKS_PER_REGION.pow(3), 512);
+        assert_eq!(REGIONS_PER_HYPER_REGION.pow(3), 512);
     }
 }
