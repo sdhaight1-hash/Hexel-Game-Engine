@@ -178,3 +178,15 @@ cargo run
 ```
 
 The first run may take longer while Rust compiles the graphics dependencies and generates the world mesh.
+
+## Unified planetary foundation: completion plan
+
+The goal is one playable, Earth-radius hexel survival world. This plan is the acceptance checklist for the planetary branch; a green CI run alone does not mean the game is visually or mechanically complete.
+
+1. **Precision and coordinates** — keep authoritative player, terrain, and save coordinates in f64; establish one camera-relative tangent frame; rebase every terrain, tree, outline, and ray query before conversion to GPU f32. Preserve compatibility with existing save files.
+2. **One terrain authority** — make the same addressable hexel-prism data drive generated terrain, visible meshes, ray selection, collision, mining, placement, and persistence. Cube-sphere patches may stream the surface, but must not substitute square grid cells for the playable hexel topology.
+3. **Continuous streaming and traversal** — maintain neighbour continuity across patch and cube-face seams; keep a bounded local working set; make walking, jumping, gravity, tree collision, and block edits stable as the player moves around the sphere.
+4. **Survival-world presentation** — restore a readable outdoor sky and continuous terrain, with biome-aware grass/soil/rock, trees, water/shorelines, and lighting. The target is a lived-in hexel survival world, not isolated pale surface polygons on a dark void.
+5. **Persistence and regression coverage** — migrate old saves safely, test coordinate precision and seam behaviour, and exercise generation, edits, reload, and player movement. Run format, check, tests, and clippy after each coherent implementation slice.
+
+**Definition of done:** no flat/globe mode switch; one spherical world from spawn onward; human-scale editable hexels; stable local-scale geometry at Earth radius; working survival interactions and save/load; and CI green. Any unfinished item must be called out rather than described as complete.
