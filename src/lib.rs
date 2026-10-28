@@ -112,11 +112,10 @@ pub struct WorldScale {
 
 impl Default for WorldScale {
     fn default() -> Self {
-        let player_height = 1.8;
         Self {
-            player_height,
-            hexel_height: player_height * 3.0 / 5.0,
-            hex_radius: 0.5,
+            player_height: crate::world_profile::REFERENCE_PLAYER_HEIGHT_METRES,
+            hexel_height: crate::world_profile::HEXEL_HEIGHT_METRES,
+            hex_radius: crate::world_profile::HEXEL_WIDTH_METRES * 0.5,
         }
     }
 }
@@ -281,9 +280,10 @@ mod tests {
     }
 
     #[test]
-    fn hexel_height_is_three_fifths_of_player_height() {
+    fn hexel_height_is_three_vertical_steps_per_player_height() {
         let s = WorldScale::default();
-        assert!((s.hexel_height - s.player_height * 3.0 / 5.0).abs() < 1e-6);
+        assert!((s.hexel_height - 0.6).abs() < 1e-6);
+        assert!((s.player_height / s.hexel_height - 3.0).abs() < 1e-6);
     }
 
     #[test]
