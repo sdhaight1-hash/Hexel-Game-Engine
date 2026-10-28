@@ -1281,25 +1281,28 @@ impl Renderer {
                 let x = radius * 3.0_f64.sqrt() * (q as f64 + r as f64 * 0.5);
                 let z = radius * 1.5 * r as f64;
                 let approximate = origin + frame.east * x + frame.north * z;
+                // Mesh from the resident chunk cells themselves. Terrain generation
+                // may sample noise when a chunk is first created, but once resident,
+                // block identity and vertical occupancy come from chunk storage.
+                let mut top_layer = None;
+                let mut top_block = BlockId::Air;
+                for y in (-16..=16).rev() {
+                    let block = self.planet_hexel_chunks.get_loaded(
+                        anchor_cell,
+                        CellPos::new(q, r, y),
+                    );
+                    if block.is_solid() {
+                        top_layer = Some(y);
+                        top_block = block;
+                        break;
+                    }
+                }
+                let Some(layer) = top_layer.map(|y| y as f64) else {
+                    continue;
+                };
                 let direction = approximate.normalize_or_zero();
                 let sample = self.planet_world.terrain().sample_direction(direction, 0.25);
-                let layer = ((sample.elevation - base_sample.elevation) / step_height).round();
-                // Read the top material from the chunk-backed crust, not from a
-                // separate decorative material pass. Terrain generation and the
-                // visible Hexel now agree on the surface block where the chunk is loaded.
-                let stored_block = self.planet_hexel_chunks.get_loaded(
-                    anchor_cell,
-                    CellPos::new(q, r, layer as i32),
-                );
-                // Chunk data is the authority for this near-field surface cell.
-                // An air cell must not be painted back in as procedural terrain.
-                // (The global LOD still needs to be replaced with the same chunk
-                // data before digging can expose this as a true hole through the crust.)
-                if !stored_block.is_solid() {
-                    continue;
-                }
-                // Lift slightly above the distant LOD surface until the smooth
-                // backdrop is replaced by the same chunk mesh in the near field.
+                let stored_block = top_block;
                 let top_y = layer * step_height + 0.075;
                 let bottom_y = top_y - step_height;
                 let variation = if (q - r).rem_euclid(2) == 0 { 1.035 } else { 0.965 };
