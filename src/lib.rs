@@ -16,6 +16,7 @@ pub mod save;
 pub mod topology;
 pub mod trees;
 pub mod tree_blocks;
+pub mod world_profile;
 
 use glam::Vec3;
 use hexx::Hex;
