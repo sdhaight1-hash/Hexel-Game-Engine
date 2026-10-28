@@ -1035,6 +1035,46 @@ impl Renderer {
             direction.z as f64,
         ).normalize_or_zero();
         let sample = self.planet_world.terrain().sample_direction(radial, 0.25);
+
+        // Once the near-field crust is resident, movement must use the exact same
+        // Hexel tops as rendering and building—not the older smooth cell sampler.
+        if let Some(anchor) = self.planet_hexel_anchor {
+            let frame = PlanetaryFrame::at(anchor);
+            let local = frame.to_local(sample.surface_position);
+            let radius = WorldScale::default().hex_radius as f64;
+            let r_est = local.z / (1.5 * radius);
+            let q_est = local.x / (3.0_f64.sqrt() * radius) - r_est * 0.5;
+            let q0 = q_est.round() as i32;
+            let r0 = r_est.round() as i32;
+            let mut nearest = (q0, r0, f64::INFINITY);
+            for r in (r0 - 2)..=(r0 + 2) {
+                for q in (q0 - 2)..=(q0 + 2) {
+                    let x = radius * 3.0_f64.sqrt() * (q as f64 + r as f64 * 0.5);
+                    let z = radius * 1.5 * r as f64;
+                    let distance = (x - local.x).powi(2) + (z - local.z).powi(2);
+                    if distance < nearest.2 { nearest = (q, r, distance); }
+                }
+            }
+            if let Some(anchor_cell) = self.planet_world.topology()
+                .cell_id_for_direction(frame.up).map(|id| id.0)
+            {
+                for layer in (-16..=16).rev() {
+                    if self.planet_hexel_chunks
+                        .get_loaded(anchor_cell, CellPos::new(nearest.0, nearest.1, layer))
+                        .is_solid()
+                    {
+                        let top = layer as f64 * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64 + 0.34;
+                        return frame.to_planet(DVec3::new(
+                            radius * 3.0_f64.sqrt() * (nearest.0 as f64 + nearest.1 as f64 * 0.5),
+                            top,
+                            radius * 1.5 * nearest.1 as f64,
+                        )).as_vec3();
+                    }
+                }
+            }
+        }
+
+        // Safe startup fallback before the chunk-backed surface has been built.
         let surface = self.planet_world.topology().cell_id_for_direction(radial)
             .map(|id| {
                 let (layer, _) = self.planet_top_solid_voxel(id.0);
