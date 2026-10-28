@@ -1164,6 +1164,43 @@ impl Renderer {
                 .iter()
                 .map(|index| grid_vertices[*index as usize])
                 .collect::<Vec<_>>();
+
+            // Add a radial skirt around each streamed patch. Adjacent patches
+            // sample the same terrain in f64, but casting Earth-centred positions
+            // to f32 can separate their borders by fractions of a metre. The
+            // skirt extends below the terrain edge so those precision cracks
+            // cannot expose the empty background at ground level.
+            let side = mesh.resolution + 1;
+            let mut perimeter = Vec::with_capacity((mesh.resolution * 4) as usize);
+            for column in 0..mesh.resolution {
+                perimeter.push(column as usize);
+            }
+            for row in 0..mesh.resolution {
+                perimeter.push((row * side + mesh.resolution) as usize);
+            }
+            for column in (1..=mesh.resolution).rev() {
+                perimeter.push((mesh.resolution * side + column) as usize);
+            }
+            for row in (1..=mesh.resolution).rev() {
+                perimeter.push((row * side) as usize);
+            }
+            const PATCH_SKIRT_DEPTH: f32 = 12.0;
+            for edge in 0..perimeter.len() {
+                let a = grid_vertices[perimeter[edge]];
+                let b = grid_vertices[perimeter[(edge + 1) % perimeter.len()]];
+                let lower = |vertex: Vertex| {
+                    let position = Vec3::from_array(vertex.position);
+                    let radial = position.normalize_or_zero();
+                    let mut skirt = vertex;
+                    skirt.position = (position - radial * PATCH_SKIRT_DEPTH).to_array();
+                    skirt.color = [vertex.color[0] * 0.72, vertex.color[1] * 0.72, vertex.color[2] * 0.72];
+                    skirt
+                };
+                let lower_a = lower(a);
+                let lower_b = lower(b);
+                vertices.extend_from_slice(&[a, lower_a, b, b, lower_a, lower_b]);
+            }
+
             append_planetary_trees(
                 &mut vertices,
                 key,
