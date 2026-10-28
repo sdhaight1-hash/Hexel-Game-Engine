@@ -103,7 +103,7 @@ mod tests {
     fn vertical_budget_requires_an_explicit_consistent_split() {
         let valid = PlanetaryWorldProfile {
             below_datum_metres: 80.0,
-            above_datum_metres: 176.0,
+            above_datum_metres: 73.0,
             ..PlanetaryWorldProfile::default()
         };
         assert!(valid.is_valid());
