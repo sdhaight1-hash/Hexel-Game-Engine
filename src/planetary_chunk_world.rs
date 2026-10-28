@@ -35,6 +35,8 @@ pub struct PlanetaryChunkWorld {
     terrain: PlanetGenerator,
     scale: WorldScale,
     chunks: HashMap<PlanetHexChunkKey, LoadedPlanetHexChunk>,
+    // Player edits outlive residency; evicting a chunk must never erase changes.
+    overrides: HashMap<PlanetHexChunkKey, HashMap<[usize; 3], BlockId>>,
 }
 
 impl PlanetaryChunkWorld {
@@ -54,6 +56,7 @@ impl PlanetaryChunkWorld {
                 hex_radius: 0.5,
             },
             chunks: HashMap::new(),
+            overrides: HashMap::new(),
         })
     }
 
@@ -108,6 +111,11 @@ impl PlanetaryChunkWorld {
             // Using each chunk's own sampled elevation here made neighbouring chunks
             // disagree about which y-layer a surface cell occupies, creating seams.
             self.generate_chunk_cells(&mut data, anchor_frame, anchor_sample.elevation, chunk);
+            if let Some(edits) = self.overrides.get(&key) {
+                for (local, block) in edits {
+                    data.set(*local, *block);
+                }
+            }
             self.chunks.insert(key, LoadedPlanetHexChunk { placement, data });
         }
         Ok(self.chunks.get(&key).expect("chunk inserted above"))
@@ -126,6 +134,7 @@ impl PlanetaryChunkWorld {
         let key = PlanetHexChunkKey { anchor_cell, q: chunk.q, r: chunk.r, y: chunk.y };
         if let Some(loaded) = self.chunks.get_mut(&key) {
             loaded.data.set(local, block);
+            self.overrides.entry(key).or_default().insert(local, block);
             true
         } else {
             false
@@ -246,6 +255,20 @@ mod tests {
         assert_eq!(world.loaded_chunk_count(), 1);
         assert!(world.loaded_chunk(PlanetHexChunkKey { anchor_cell: 5, q: 1, r: 0, y: 0 }).is_some());
         assert!(world.loaded_chunk(PlanetHexChunkKey { anchor_cell: 5, q: 0, r: 0, y: 0 }).is_none());
+    }
+
+    #[test]
+    fn edits_survive_chunk_eviction_and_reload() {
+        let mut world = store();
+        let key = PlanetHexChunkKey { anchor_cell: 5, q: 0, r: 0, y: 0 };
+        world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
+        assert!(world.set_loaded(5, CellPos::new(0, 0, 0), BlockId::Air));
+        let keep = HashSet::new();
+        world.retain_chunks(&keep);
+        assert_eq!(world.loaded_chunk_count(), 0);
+        world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
+        assert_eq!(world.get_loaded(5, CellPos::new(0, 0, 0)), BlockId::Air);
+        assert!(world.loaded_chunk(key).is_some());
     }
 
     #[test]
