@@ -1072,8 +1072,11 @@ impl Renderer {
         // neighborhood around the player; never enumerate the whole planet grid.
         const CHUNKS_PER_FACE: u32 = 400_000;
         const MESH_RESOLUTION: u32 = 32;
-        const LOCAL_PATCH_RADIUS: u32 = 5;
-        const MAX_NEW_CHUNKS_PER_FRAME: usize = 3;
+        // The old 5-patch radius left most of the near-ground view on the
+        // coarse global mesh. Keep detailed terrain several hundred metres
+        // around the player so the horizon and nearby ground share one surface.
+        const LOCAL_PATCH_RADIUS: u32 = 14;
+        const MAX_NEW_CHUNKS_PER_FRAME: usize = 8;
 
         let radial = DVec3::new(
             player_position.x as f64,
