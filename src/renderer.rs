@@ -1427,8 +1427,6 @@ impl Renderer {
             for q in -GRID_RADIUS..=GRID_RADIUS {
                 let x = radius * 3.0_f64.sqrt() * (q as f64 + r as f64 * 0.5);
                 let z = radius * 1.5 * r as f64;
-                let approximate = origin + frame.east * x + frame.north * z;
-                let direction = approximate.normalize_or_zero();
                 let mut occupied_layers = Vec::new();
                 for y in (-16..=16).rev() {
                     let block = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, y));
