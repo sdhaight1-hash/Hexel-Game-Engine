@@ -175,6 +175,8 @@ pub struct Renderer {
     removed_planet_trees: HashSet<u32>,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
+    planet_hexel_surface: Option<PlanetGpuChunk>,
+    planet_hexel_anchor: Option<DVec3>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     camera_layout: wgpu::BindGroupLayout,
@@ -653,6 +655,8 @@ impl Renderer {
             planet_world,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
+            planet_hexel_surface: None,
+            planet_hexel_anchor: None,
             camera_buffer,
             camera_bind_group,
             camera_layout,
@@ -1274,6 +1278,97 @@ impl Renderer {
         }
     }
 
+
+    /// Build the near-field gameplay ground from real six-sided Hexel prisms.
+    /// The smooth cube-sphere mesh remains a distant backdrop; this local mesh is
+    /// camera-relative and regenerated only after the player has crossed its radius.
+    fn update_planet_hexel_surface(&mut self, player_position: Vec3) {
+        const GRID_RADIUS: i32 = 24;
+        const REBUILD_DISTANCE: f64 = 7.0;
+        let player_d = DVec3::new(
+            player_position.x as f64,
+            player_position.y as f64,
+            player_position.z as f64,
+        );
+        let radial = player_d.normalize_or_zero();
+        if radial == DVec3::ZERO { return; }
+
+        let base_sample = self.planet_world.terrain().sample_direction(radial, 0.25);
+        let origin = base_sample.surface_position;
+        if self.planet_hexel_anchor.is_some_and(|old| (origin - old).length() < REBUILD_DISTANCE) {
+            return;
+        }
+        let frame = PlanetaryFrame::at(origin);
+        let scale = WorldScale::default();
+        let radius = scale.hex_radius as f64;
+        let step_height = scale.hexel_height as f64;
+        let mut vertices: Vec<Vertex> = Vec::with_capacity(90_000);
+
+        for r in -GRID_RADIUS..=GRID_RADIUS {
+            for q in -GRID_RADIUS..=GRID_RADIUS {
+                // Axial hex spacing: one-metre-wide cells, no square-grid approximation.
+                let x = radius * 3.0_f64.sqrt() * (q as f64 + r as f64 * 0.5);
+                let z = radius * 1.5 * r as f64;
+                let approximate = origin + frame.east * x + frame.north * z;
+                let direction = approximate.normalize_or_zero();
+                let sample = self.planet_world.terrain().sample_direction(direction, 0.25);
+                let layer = ((sample.elevation - base_sample.elevation) / step_height).round();
+                // Lift slightly above the smooth backdrop to avoid z-fighting.
+                let top_y = layer * step_height + 0.075;
+                let bottom_y = top_y - step_height;
+                let color = planet_vertex_color(sample);
+                let center = Vec3::new(x as f32, top_y as f32, z as f32);
+                let mut corners = [Vec3::ZERO; 6];
+                for i in 0..6 {
+                    let angle = (i as f64 * 60.0 + 30.0).to_radians();
+                    corners[i] = Vec3::new(
+                        (x + radius * angle.cos()) as f32,
+                        top_y as f32,
+                        (z + radius * angle.sin()) as f32,
+                    );
+                }
+                for i in 0..6 {
+                    push_triangle(&mut vertices, center, corners[i], corners[(i + 1) % 6], color);
+                    let lower_a = Vec3::new(corners[i].x, bottom_y as f32, corners[i].z);
+                    let lower_b = Vec3::new(corners[(i + 1) % 6].x, bottom_y as f32, corners[(i + 1) % 6].z);
+                    let side_color = [color[0] * 0.72, color[1] * 0.72, color[2] * 0.72];
+                    push_triangle(&mut vertices, corners[i], lower_a, corners[(i + 1) % 6], side_color);
+                    push_triangle(&mut vertices, corners[(i + 1) % 6], lower_a, lower_b, side_color);
+                }
+            }
+        }
+
+        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Near-field six-sided Hexel terrain"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let camera_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Hexel terrain camera-relative uniform"),
+            contents: bytemuck::bytes_of(&CameraUniform {
+                view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                world_offset: [0.0; 4],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Hexel terrain camera-relative bind group"),
+            layout: &self.camera_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+        self.planet_hexel_surface = Some(PlanetGpuChunk {
+            buffer,
+            vertex_count: vertices.len() as u32,
+            origin,
+            camera_buffer,
+            camera_bind_group,
+        });
+        self.planet_hexel_anchor = Some(origin);
+    }
+
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 {
             return;
@@ -1295,6 +1390,7 @@ impl Renderer {
         item_counts: [u16; 36],
     ) -> Result<(), wgpu::SurfaceError> {
         self.update_planet_streaming(camera.position);
+        self.update_planet_hexel_surface(camera.position);
         let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
@@ -1311,6 +1407,14 @@ impl Renderer {
                 world_offset: [offset.x as f32, offset.y as f32, offset.z as f32, 0.0],
             };
             self.queue.write_buffer(&chunk.camera_buffer, 0, bytemuck::bytes_of(&patch_uniform));
+        }
+        if let Some(hexels) = self.planet_hexel_surface.as_ref() {
+            let offset = hexels.origin - camera_position_d;
+            let hexel_uniform = CameraUniform {
+                view_proj: relative_view_proj.to_cols_array_2d(),
+                world_offset: [offset.x as f32, offset.y as f32, offset.z as f32, 0.0],
+            };
+            self.queue.write_buffer(&hexels.camera_buffer, 0, bytemuck::bytes_of(&hexel_uniform));
         }
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -1446,6 +1550,11 @@ impl Renderer {
                 pass.set_bind_group(0, &chunk.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, chunk.buffer.slice(..));
                 pass.draw(0..chunk.vertex_count, 0..1);
+            }
+            if let Some(hexels) = self.planet_hexel_surface.as_ref() {
+                pass.set_bind_group(0, &hexels.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, hexels.buffer.slice(..));
+                pass.draw(0..hexels.vertex_count, 0..1);
             }
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             if !target_vertices.is_empty() {
