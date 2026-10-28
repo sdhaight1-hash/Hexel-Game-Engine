@@ -1139,6 +1139,7 @@ impl Renderer {
                 } else {
                     source.position
                 };
+                // Keep the streamed surface offset small; camera-relative rebasing is handled separately.
                 let position = surface_position + source.normal * 0.035;
                 let color = cell_block
                     .map(planet_block_color)
