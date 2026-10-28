@@ -1376,7 +1376,7 @@ impl Renderer {
     /// The smooth cube-sphere mesh remains a distant backdrop; this local mesh is
     /// camera-relative and regenerated only after the player has crossed its radius.
     fn update_planet_hexel_surface(&mut self, player_position: Vec3) {
-        const GRID_RADIUS: i32 = 24;
+        const GRID_RADIUS: i32 = 40;
         const REBUILD_DISTANCE: f64 = 7.0;
         let player_d = DVec3::new(
             player_position.x as f64,
@@ -1403,9 +1403,9 @@ impl Renderer {
         // The active render region is a moving chunk window, not a permanent
         // world partition. Stable chunk addresses survive render-distance changes;
         // resident data outside this window can be released and regenerated later.
-        // A two-chunk horizontal radius covers the current 49×49 near-field mesh.
+        // A three-chunk horizontal radius supplies the expanded 81×81 near-field mesh.
         let render_config = RenderRegionConfig {
-            horizontal_radius_chunks: 2,
+            horizontal_radius_chunks: 3,
             vertical_radius_chunks: 1,
         };
         let active_chunks = chunks_in_render_region(
