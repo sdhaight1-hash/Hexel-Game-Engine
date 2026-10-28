@@ -1378,78 +1378,76 @@ impl Renderer {
 
         for r in -GRID_RADIUS..=GRID_RADIUS {
             for q in -GRID_RADIUS..=GRID_RADIUS {
-                // Axial hex spacing: one-metre-wide cells, no square-grid approximation.
                 let x = radius * 3.0_f64.sqrt() * (q as f64 + r as f64 * 0.5);
                 let z = radius * 1.5 * r as f64;
                 let approximate = origin + frame.east * x + frame.north * z;
-                // Mesh from the resident chunk cells themselves. Terrain generation
-                // may sample noise when a chunk is first created, but once resident,
-                // block identity and vertical occupancy come from chunk storage.
-                let mut top_layer = None;
-                let mut top_block = BlockId::Air;
-                for y in (-16..=16).rev() {
-                    let block = self.planet_hexel_chunks.get_loaded(
-                        anchor_cell,
-                        CellPos::new(q, r, y),
-                    );
-                    if block.is_solid() {
-                        top_layer = Some(y);
-                        top_block = block;
-                        break;
-                    }
-                }
-                let Some(layer) = top_layer.map(|y| y as f64) else {
-                    continue;
-                };
                 let direction = approximate.normalize_or_zero();
                 let sample = self.planet_world.terrain().sample_direction(direction, 0.25);
-                let stored_block = top_block;
-                // Quantized chunk layers can sit up to half a Hexel below the legacy
-                // smooth surface still used as the distant fallback. Lift the visible
-                // crust just beyond that quantization range so the chunk-backed prism
-                // tops are not depth-occluded by the old surface. This is a temporary
-                // overlap until the near-field fallback is clipped out entirely.
-                let top_y = layer * step_height + 0.34;
-                let bottom_y = top_y - step_height;
-                let variation = if (q - r).rem_euclid(2) == 0 { 1.035 } else { 0.965 };
-                let base_color = if stored_block.is_solid() {
-                    planet_block_color(stored_block)
-                } else {
-                    planet_vertex_color(sample)
-                };
-                let color = base_color.map(|c| (c * variation).min(1.0));
-                let edge_color = [color[0] * 0.34, color[1] * 0.34, color[2] * 0.34];
-                let center = Vec3::new(x as f32, top_y as f32, z as f32);
-                let mut corners = [Vec3::ZERO; 6];
-                let mut inner_corners = [Vec3::ZERO; 6];
-                // A 30-degree offset matches the pointy-top axial grid used by WorldScale.
-                for i in 0..6 {
-                    let angle = (i as f64 * 60.0 + 30.0).to_radians();
-                    let dx = angle.cos();
-                    let dz = angle.sin();
-                    corners[i] = Vec3::new(
-                        (x + radius * dx) as f32,
-                        top_y as f32,
-                        (z + radius * dz) as f32,
-                    );
-                    let inset = radius * 0.90;
-                    inner_corners[i] = Vec3::new(
-                        (x + inset * dx) as f32,
-                        (top_y + 0.004) as f32,
-                        (z + inset * dz) as f32,
-                    );
+                let mut occupied_layers = Vec::new();
+                for y in (-16..=16).rev() {
+                    let block = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, y));
+                    if block.is_solid() { occupied_layers.push((y, block)); }
                 }
-                for i in 0..6 {
-                    let next = (i + 1) % 6;
-                    // Dark bevel/rim on top makes each one-metre cell visible at a glance.
-                    push_triangle(&mut vertices, corners[i], inner_corners[i], inner_corners[next], edge_color);
-                    push_triangle(&mut vertices, corners[i], inner_corners[next], corners[next], edge_color);
-                    push_triangle(&mut vertices, center, inner_corners[i], inner_corners[next], color);
-                    let lower_a = Vec3::new(corners[i].x, bottom_y as f32, corners[i].z);
-                    let lower_b = Vec3::new(corners[next].x, bottom_y as f32, corners[next].z);
+                for (layer, block) in occupied_layers {
+                    let below = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, layer - 1));
+                    let above = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, layer + 1));
+                    let color = planet_block_color(block);
+                    let edge_color = [color[0] * 0.34, color[1] * 0.34, color[2] * 0.34];
+                    let top_y = layer as f64 * step_height + 0.34;
+                    let bottom_y = top_y - step_height;
+                    let center = Vec3::new(x as f32, top_y as f32, z as f32);
+                    let mut corners = [Vec3::ZERO; 6];
+                    let mut inner_corners = [Vec3::ZERO; 6];
+                    for i in 0..6 {
+                        let angle = (i as f64 * 60.0 + 30.0).to_radians();
+                        corners[i] = Vec3::new(
+                            (x + radius * angle.cos()) as f32, top_y as f32,
+                            (z + radius * angle.sin()) as f32,
+                        );
+                        let inset = radius * 0.90;
+                        inner_corners[i] = Vec3::new(
+                            (x + inset * angle.cos()) as f32, (top_y + 0.004) as f32,
+                            (z + inset * angle.sin()) as f32,
+                        );
+                    }
+                    if !above.is_solid() {
+                        for i in 0..6 {
+                            let next = (i + 1) % 6;
+                            push_triangle(&mut vertices, corners[i], inner_corners[i], inner_corners[next], edge_color);
+                            push_triangle(&mut vertices, corners[i], inner_corners[next], corners[next], edge_color);
+                            push_triangle(&mut vertices, center, inner_corners[i], inner_corners[next], color);
+                        }
+                    }
                     let side_color = [color[0] * 0.58, color[1] * 0.58, color[2] * 0.58];
-                    push_triangle(&mut vertices, corners[i], lower_a, corners[next], side_color);
-                    push_triangle(&mut vertices, corners[next], lower_a, lower_b, side_color);
+                    for i in 0..6 {
+                        let next = (i + 1) % 6;
+                        let neighbor = match i {
+                            0 => CellPos::new(q + 1, r, layer),
+                            1 => CellPos::new(q + 1, r - 1, layer),
+                            2 => CellPos::new(q, r - 1, layer),
+                            3 => CellPos::new(q - 1, r, layer),
+                            4 => CellPos::new(q - 1, r + 1, layer),
+                            _ => CellPos::new(q, r + 1, layer),
+                        };
+                        if self.planet_hexel_chunks.get_loaded(anchor_cell, neighbor).is_solid() {
+                            continue;
+                        }
+                        let lower_a = Vec3::new(corners[i].x, bottom_y as f32, corners[i].z);
+                        let lower_b = Vec3::new(corners[next].x, bottom_y as f32, corners[next].z);
+                        push_triangle(&mut vertices, corners[i], lower_a, corners[next], side_color);
+                        push_triangle(&mut vertices, corners[next], lower_a, lower_b, side_color);
+                    }
+                    if !below.is_solid() && layer > -16 {
+                        // The lower face is normally hidden by terrain; expose it only
+                        // when a mined cavity opens beneath a block.
+                        let lower_center = Vec3::new(x as f32, bottom_y as f32, z as f32);
+                        for i in 0..6 {
+                            let next = (i + 1) % 6;
+                            let a = Vec3::new(corners[i].x, bottom_y as f32, corners[i].z);
+                            let b = Vec3::new(corners[next].x, bottom_y as f32, corners[next].z);
+                            push_triangle(&mut vertices, lower_center, b, a, edge_color);
+                        }
+                    }
                 }
             }
         }
