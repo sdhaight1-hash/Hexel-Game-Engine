@@ -154,7 +154,6 @@ struct PlanetGpuChunk {
     origin: DVec3,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    camera_layout: wgpu::BindGroupLayout,
 }
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -178,6 +177,7 @@ pub struct Renderer {
     planet_stream_pending: VecDeque<PlanetChunkKey>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    camera_layout: wgpu::BindGroupLayout,
     foliage_bind_group: wgpu::BindGroup,
     size: PhysicalSize<u32>,
     _depth_texture: wgpu::Texture,
