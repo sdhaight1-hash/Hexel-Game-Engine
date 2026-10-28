@@ -122,6 +122,7 @@ impl PlanetaryChunkWorld {
                 &mut data,
                 anchor_frame,
                 anchor_sample.elevation,
+                chunk_surface.elevation,
                 chunk_surface.biome,
                 chunk,
             );
@@ -162,6 +163,7 @@ impl PlanetaryChunkWorld {
         data: &mut Chunk,
         anchor_frame: PlanetaryFrame,
         chunk_base_elevation: f64,
+        chunk_elevation: f64,
         chunk_biome: Biome,
         chunk: ChunkPos,
     ) {
@@ -179,7 +181,7 @@ impl PlanetaryChunkWorld {
                 ]);
                 // About 2–4 metres of rolling relief with smaller rocky variation.
                 // Absolute axial coordinates make this identical across chunk edges.
-                let local_elevation = chunk_base_elevation
+                let local_elevation = chunk_elevation
                     + relief * 2.1
                     + secondary * 0.55;
                 let surface_layer = ((local_elevation - chunk_base_elevation)
