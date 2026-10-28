@@ -195,10 +195,13 @@ mod tests {
     #[test]
     fn loading_a_planet_chunk_allocates_exactly_4096_real_hexels() {
         let mut world = store();
-        let chunk = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
-        assert_eq!(chunk.data.len(), HEXELS_PER_CHUNK);
+        let (cell_count, origin_is_finite) = {
+            let chunk = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
+            (chunk.data.len(), chunk.placement.frame.origin.is_finite())
+        };
+        assert_eq!(cell_count, HEXELS_PER_CHUNK);
         assert_eq!(world.loaded_chunk_count(), 1);
-        assert!(chunk.placement.frame.origin.is_finite());
+        assert!(origin_is_finite);
     }
 
     #[test]
