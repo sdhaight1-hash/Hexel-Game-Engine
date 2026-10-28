@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn version_one_saves_remain_loadable() {
-        let legacy = "HEXEL_SAVE 1\\nseed 9\\nplayer 6371000.0 12.0 -4.0\\nlook 0.25 -0.1\\nmode planet\\nhotbar 0\\n";
+        let legacy = "HEXEL_SAVE 1\nseed 9\nplayer 6371000.0 12.0 -4.0\nlook 0.25 -0.1\nmode planet\nhotbar 0\n";
         let decoded = GameSave::decode(legacy).unwrap();
         assert_eq!(decoded.seed, 9);
         assert_eq!(decoded.player_position, [6_371_000.0, 12.0, -4.0]);
