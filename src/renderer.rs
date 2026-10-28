@@ -121,7 +121,10 @@ impl Camera {
         let up = if up == Vec3::ZERO { Vec3::Y } else { up };
         let reference = if up.dot(Vec3::Y).abs() < 0.99 { Vec3::Y } else { Vec3::Z };
         let north = (reference - up * reference.dot(up)).normalize_or_zero();
-        let east = up.cross(north).normalize_or_zero();
+        // Match PlanetaryFrame's east = north × up convention. Keeping one
+        // handedness is essential: otherwise camera yaw and local movement reverse
+        // east/west relative to terrain rebasing and planetary chunk coordinates.
+        let east = north.cross(up).normalize_or_zero();
         (east, north, up)
     }
     pub fn forward(&self) -> Vec3 {
@@ -2096,6 +2099,44 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
 #[cfg(test)]
 mod raycast_tests {
     use super::*;
+
+
+    #[test]
+    fn camera_tangent_frame_matches_planetary_frame_handedness() {
+        for radial in [
+            Vec3::X,
+            Vec3::Y,
+            -Vec3::Y,
+            Vec3::Z,
+            Vec3::new(1.0, 2.0, -3.0).normalize(),
+        ] {
+            let camera = Camera {
+                up: radial,
+                ..Camera::default()
+            };
+            let (east, north, up) = camera.tangent_frame();
+            let planetary = PlanetaryFrame::at(DVec3::new(
+                radial.x as f64,
+                radial.y as f64,
+                radial.z as f64,
+            ));
+            assert!((east.as_dvec3() - planetary.east).length() < 1.0e-5);
+            assert!((north.as_dvec3() - planetary.north).length() < 1.0e-5);
+            assert!((up.as_dvec3() - planetary.up).length() < 1.0e-5);
+        }
+    }
+
+    #[test]
+    fn camera_yaw_zero_faces_planetary_north() {
+        let camera = Camera {
+            up: Vec3::X,
+            yaw: 0.0,
+            pitch: 0.0,
+            ..Camera::default()
+        };
+        let planetary = PlanetaryFrame::at(DVec3::X);
+        assert!((camera.forward().as_dvec3() - planetary.north).length() < 1.0e-5);
+    }
 
     #[test]
     fn ray_triangle_intersection_returns_nearest_positive_distance() {
