@@ -1070,13 +1070,15 @@ impl Renderer {
         // At Earth's radius, 400,000 cube-face patches produce roughly
         // 30-metre patch spacing near face centers. Plan a generous bounded
         // neighborhood around the player; never enumerate the whole planet grid.
-        const CHUNKS_PER_FACE: u32 = 400_000;
-        const MESH_RESOLUTION: u32 = 32;
-        // The old 5-patch radius left most of the near-ground view on the
-        // coarse global mesh. Keep detailed terrain several hundred metres
-        // around the player so the horizon and nearby ground share one surface.
-        const LOCAL_PATCH_RADIUS: u32 = 14;
-        const MAX_NEW_CHUNKS_PER_FRAME: usize = 8;
+        // Stream a coarser outer ring quickly enough to close the visible gaps
+        // in the distant surface, while retaining enough triangles for terrain
+        // relief. At Earth's radius this grid is about 120 m per patch near a
+        // cube-face centre; camera-relative vertex storage is the next precision
+        // step before pushing the grid back toward metre-scale patches.
+        const CHUNKS_PER_FACE: u32 = 100_000;
+        const MESH_RESOLUTION: u32 = 48;
+        const LOCAL_PATCH_RADIUS: u32 = 8;
+        const MAX_NEW_CHUNKS_PER_FRAME: usize = 12;
 
         let radial = DVec3::new(
             player_position.x as f64,
