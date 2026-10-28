@@ -1356,6 +1356,19 @@ impl Renderer {
             }
         }
 
+        // The generated Hexel grid is expressed in tangent-local coordinates
+        // (east=x, up=y, north=z). Rotate those offsets into planet space before
+        // uploading; leaving them in global XYZ makes the local terrain stand
+        // upright except at one special orientation, producing the wall/plane
+        // split visible in gameplay.
+        for vertex in &mut vertices {
+            let local = Vec3::from_array(vertex.position);
+            let planet_delta = frame.east * local.x as f64
+                + frame.up * local.y as f64
+                + frame.north * local.z as f64;
+            vertex.position = planet_delta.as_vec3().to_array();
+        }
+
         let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Near-field six-sided Hexel terrain"),
             contents: bytemuck::cast_slice(&vertices),
