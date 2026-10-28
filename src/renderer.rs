@@ -805,7 +805,7 @@ impl Renderer {
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
-        let offset = -(top_layer as f64) * 1.0;
+        let offset = -(top_layer as f64) * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64;
         let color = planet_block_color(block);
         for vertex in &mut self.planet_vertices[first..end_index] {
             let direction = Vec3::from_array(vertex.position).normalize_or_zero();
@@ -941,7 +941,7 @@ impl Renderer {
         let surface = self.planet_world.topology().cell_id_for_direction(radial)
             .map(|id| {
                 let (layer, _) = self.planet_top_solid_voxel(id.0);
-                sample.surface_position + sample.direction * (layer as f64 * 1.0)
+                sample.surface_position + sample.direction * (layer as f64 * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64)
             })
             .unwrap_or(sample.surface_position);
         surface.as_vec3()
@@ -964,7 +964,7 @@ impl Renderer {
             let cell_id = hexel_engine::topology::SurfaceCellId(*id);
             let Some(cell) = self.planet_world.topology().cell(cell_id) else { continue; };
             let layer = self.planet_top_solid_layer(*id);
-            let offset = layer as f64 * 1.0;
+            let offset = layer as f64 * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64;
             let mut max_extent = offset.abs();
             for neighbor in &cell.neighbors {
                 let neighbor_extent = self.planet_top_solid_layer(neighbor.0).abs() as f64 * 1.0;
