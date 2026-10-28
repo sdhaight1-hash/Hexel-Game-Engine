@@ -9,6 +9,8 @@ use hexel_engine::{
     planetary_chunks::{chunk_keys_near_direction, CubeFace, PlanetChunkKey, PlanetChunkMesh},
     planetary_frame::PlanetaryFrame,
     planetary_world::PlanetaryWorld,
+    planetary_chunk_world::PlanetaryChunkWorld,
+    world_profile::PlanetaryWorldProfile,
     planetary_voxels::{PlanetVoxelPos, PlanetVoxelVolume},
     BlockId, CellPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
@@ -171,6 +173,7 @@ pub struct Renderer {
     planet_cell_ranges: HashMap<u32, (u64, u64)>,
     planet_cell_wall_ranges: HashMap<u32, (usize, usize)>,
     planet_world: PlanetaryWorld,
+    planet_hexel_chunks: PlanetaryChunkWorld,
     planet_voxels: PlanetVoxelVolume,
     removed_planet_trees: HashSet<u32>,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
@@ -516,6 +519,11 @@ impl Renderer {
         };
         let planet_world = PlanetaryWorld::new(seed, 16, planet_config)
             .map_err(|error| format!("Could not generate planetary world: {error:?}"))?;
+        let planet_hexel_chunks = PlanetaryChunkWorld::new(
+            PlanetGenerator::with_config(seed, planet_config),
+            PlanetaryWorldProfile::default(),
+        )
+        .map_err(|error| format!("Could not initialize planetary Hexel chunks: {error:?}"))?;
         let topology = planet_world.topology();
         let terrain = planet_world.terrain();
         let planet_mesh = SurfaceMesh::generate(topology, terrain, 0.25);
@@ -653,6 +661,7 @@ impl Renderer {
             planet_voxels: PlanetVoxelVolume::new(),
             removed_planet_trees: HashSet::new(),
             planet_world,
+            planet_hexel_chunks,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
             planet_hexel_surface: None,
