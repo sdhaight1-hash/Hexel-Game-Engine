@@ -1303,7 +1303,12 @@ impl Renderer {
                 let direction = approximate.normalize_or_zero();
                 let sample = self.planet_world.terrain().sample_direction(direction, 0.25);
                 let stored_block = top_block;
-                let top_y = layer * step_height + 0.075;
+                // Quantized chunk layers can sit up to half a Hexel below the legacy
+                // smooth surface still used as the distant fallback. Lift the visible
+                // crust just beyond that quantization range so the chunk-backed prism
+                // tops are not depth-occluded by the old surface. This is a temporary
+                // overlap until the near-field fallback is clipped out entirely.
+                let top_y = layer * step_height + 0.34;
                 let bottom_y = top_y - step_height;
                 let variation = if (q - r).rem_euclid(2) == 0 { 1.035 } else { 0.965 };
                 let base_color = if stored_block.is_solid() {
