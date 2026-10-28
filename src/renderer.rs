@@ -1064,11 +1064,7 @@ impl Renderer {
                         .is_solid()
                     {
                         let top = layer as f64 * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64 + 0.34;
-                        return frame.to_planet(DVec3::new(
-                            radius * 3.0_f64.sqrt() * (nearest.0 as f64 + nearest.1 as f64 * 0.5),
-                            top,
-                            radius * 1.5 * nearest.1 as f64,
-                        )).as_vec3();
+                        return frame.to_planet(DVec3::new(local.x, top, local.z)).as_vec3();
                     }
                 }
             }
