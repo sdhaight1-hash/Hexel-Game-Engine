@@ -169,6 +169,7 @@ pub struct Renderer {
     target_buffer: wgpu::Buffer,
     planet_shell_vertex_buffer: wgpu::Buffer,
     planet_shell_vertex_count: u32,
+    planet_shell_cell_ranges: HashMap<u32, (u32, u32)>,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
     planet_vertices: Vec<Vertex>,
@@ -534,8 +535,10 @@ impl Renderer {
         // The dual topology provides shared, consistently spherical hex/pent boundaries.
         let bedrock_radius = (planet_config.radius - planet_config.elevation_scale * 1.5).max(1.0);
         let mut shell_vertices = Vec::new();
+        let mut planet_shell_cell_ranges = HashMap::new();
         let shell_color = [0.20_f32, 0.22, 0.22];
         for cell in topology.cells() {
+            let cell_start = shell_vertices.len() as u32;
             let center = cell.center.normalize() * bedrock_radius;
             for index in 0..cell.boundary.len() {
                 let next = (index + 1) % cell.boundary.len();
@@ -557,6 +560,7 @@ impl Renderer {
                     });
                 }
             }
+            planet_shell_cell_ranges.insert(cell.id.0, (cell_start, shell_vertices.len() as u32 - cell_start));
         }
         let planet_shell_vertex_count = shell_vertices.len() as u32;
         let planet_shell_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -625,6 +629,7 @@ impl Renderer {
             target_buffer,
             planet_shell_vertex_buffer,
             planet_shell_vertex_count,
+            planet_shell_cell_ranges,
             planet_vertex_buffer,
             planet_vertex_count,
             planet_vertices,
@@ -1586,9 +1591,14 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.foliage_bind_group, &[]);
-            // Draw immutable bedrock first; terrain and editable Hexels overlay it.
+            // The shell is normally culled; draw only cells whose radial column has
+            // reached immutable bedrock, keeping exposed shell rendering local.
             pass.set_vertex_buffer(0, self.planet_shell_vertex_buffer.slice(..));
-            pass.draw(0..self.planet_shell_vertex_count, 0..1);
+            for (&cell_id, &(first, count)) in &self.planet_shell_cell_ranges {
+                if self.planet_top_solid_layer(cell_id) <= PlanetVoxelVolume::BEDROCK_LAYER {
+                    pass.draw(first..first + count, 0..1);
+                }
+            }
             pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
             pass.draw(0..self.planet_vertex_count, 0..1);
             for chunk in self.planet_stream_chunks.values() {
