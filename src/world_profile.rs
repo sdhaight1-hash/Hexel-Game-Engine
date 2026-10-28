@@ -13,6 +13,13 @@ pub const HEXEL_HEIGHT_METRES: f32 = 0.6;
 pub const REFERENCE_PLAYER_HEIGHT_METRES: f32 = 1.8;
 /// Initial total playable vertical budget, in metres.
 pub const DEFAULT_VERTICAL_BUDGET_METRES: f32 = 256.0;
+/// Total playable Hexel layers, inclusive range Y=0..=255.
+pub const WORLD_HEIGHT_LEVELS: i32 = 256;
+/// Fixed sea-level datum in world Hexel coordinates.
+pub const SEA_LEVEL_Y: i32 = 110;
+/// Lowest and highest valid world Hexel layers.
+pub const WORLD_MIN_Y: i32 = 0;
+pub const WORLD_MAX_Y: i32 = WORLD_HEIGHT_LEVELS - 1;
 
 /// Authoritative chunk dimensions for editable terrain.
 pub const HEX_CHUNK_Q: usize = 16;
