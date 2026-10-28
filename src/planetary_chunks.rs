@@ -79,16 +79,8 @@ pub fn hex_chunk_horizontal_origin(chunk: ChunkPos, hex_radius_metres: f64) -> D
     DVec2::new(x, z)
 }
 
-//! On-demand cube-sphere terrain patches for planetary surface streaming.
-//!
-//! Each patch is generated independently from a face + integer chunk coordinate.
-//! Shared borders sample the same normalized cube-sphere directions, allowing a
-//! streaming manager to load/unload patches around the player without building a
-//! single planet-sized mesh. Positions stay in f64 until the renderer rebases them
-//! around the camera before converting to GPU precision.
-
-use glam::DVec3;
-
+// Legacy cube-sphere backdrop patch generation. The fixed-size Hexel chunk
+// placement primitives above are the intended gameplay terrain representation.
 use crate::planet::{Biome, PlanetGenerator};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
