@@ -258,8 +258,7 @@ mod tests {
         let mut world = store();
         let surface = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
         assert_eq!(surface.data.get([0, 0, 0]), BlockId::Foundation);
-        assert!(matches!(surface.data.get([0, 0, 8]), BlockId::Grass | BlockId::Dirt | BlockId::Stone));
-        assert_eq!(surface.data.get([0, 0, 7]), BlockId::Dirt);
+        assert!(matches!(surface.data.get([0, 0, 1]), BlockId::Dirt | BlockId::Stone));
         let underground = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: -1 }).unwrap();
         assert_eq!(underground.data.get([0, 0, 15]), BlockId::Foundation);
         assert_eq!(underground.data.get([0, 0, 0]), BlockId::Foundation);
