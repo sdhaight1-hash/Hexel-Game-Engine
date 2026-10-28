@@ -1,0 +1,33 @@
+name: Windows release build
+
+on:
+  push:
+    branches: [feat/unified-planetary-gameplay]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Build release executable
+        run: cargo build --release --locked
+      - name: Run tests
+        run: cargo test --locked
+      - name: Upload game executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexel-engine-windows-x64
+          path: target/release/hexel-engine.exe
+          if-no-files-found: error
+          retention-days: 14

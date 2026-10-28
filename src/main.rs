@@ -43,6 +43,7 @@ struct HexelApp {
     harvest_held: bool,
     harvest_target: Option<hexel_engine::CellPos>,
     planet_harvest_target: Option<u32>,
+    planet_tree_harvest_target: Option<u32>,
     harvest_progress: f32,
     target_ui_tick: f32,
     inventory: Inventory,
@@ -64,6 +65,7 @@ impl Default for HexelApp {
             harvest_held: false,
             harvest_target: None,
             planet_harvest_target: None,
+            planet_tree_harvest_target: None,
             harvest_progress: 0.0,
             target_ui_tick: 0.0,
             inventory: Inventory::default(),
@@ -75,14 +77,15 @@ impl HexelApp {
     fn save_game(&self) {
         let Some(renderer) = self.renderer.as_ref() else { return; };
         let mut save = GameSave::fresh(renderer.world_seed());
-        save.player_position = [self.player_feet.x, self.player_feet.y, self.player_feet.z];
+        save.player_position = [self.player_feet.x as f64, self.player_feet.y as f64, self.player_feet.z as f64];
         save.yaw = self.camera.yaw;
         save.pitch = self.camera.pitch;
-        save.planet_mode = renderer.planet_preview_enabled();
+        save.planet_mode = true;
         save.selected_hotbar = self.inventory.selected_hotbar();
         save.inventory = *self.inventory.slots();
-        save.flat_edits = renderer.flat_edits_snapshot();
         save.planet_edits = renderer.planet_edits_snapshot();
+        save.planet_voxel_edits = renderer.planet_voxel_edits_snapshot();
+        save.planet_removed_trees = renderer.planet_removed_trees_snapshot();
         match std::fs::write("hexel-world.save", save.encode()) {
             Ok(()) => println!("Saved Hexel world to hexel-world.save"),
             Err(error) => eprintln!("Could not save Hexel world: {error}"),
@@ -110,12 +113,6 @@ impl HexelApp {
         }
         self.cursor_locked = false;
     }
-    fn planet_preview_active(&self) -> bool {
-        self.renderer
-            .as_ref()
-            .is_some_and(Renderer::planet_preview_enabled)
-    }
-
     fn update_planet_player(&mut self, dt: f32) {
         let Some(renderer) = self.renderer.as_ref() else {
             return;
@@ -145,7 +142,7 @@ impl HexelApp {
         let surface = renderer.planet_surface_position(radial);
         let radius = surface.length().max(1.0);
         let altitude = (self.player_feet.length() - surface.length()).max(0.0);
-        let next_radial = if direction == Vec3::ZERO {
+        let mut next_radial = if direction == Vec3::ZERO {
             radial
         } else {
             (radial + direction * (self.camera.speed * dt / radius)).normalize_or_zero()
@@ -167,165 +164,74 @@ impl HexelApp {
         } else {
             self.grounded = false;
         }
+        let next_surface = renderer.planet_surface_position(next_radial);
+        if next_radial != radial {
+            let current_floor = surface.length();
+            let next_floor = next_surface.length();
+            if next_floor > current_floor + 0.65 && height <= 0.05 {
+                // A cell wall taller than a normal step blocks horizontal motion.
+                next_radial = radial;
+                height = altitude;
+                self.grounded = altitude <= 0.05;
+            } else if next_floor < current_floor - 0.65 && height <= 0.05 {
+                // Preserve world-space height when stepping over a drop; gravity
+                // then brings the player down into the edited cell instead of snapping.
+                height = (self.player_feet.length() - next_floor).max(0.0);
+                self.grounded = height <= 0.05;
+            } else if next_floor > self.player_feet.length() + 0.65 {
+                next_radial = radial;
+                height = altitude;
+                self.grounded = altitude <= 0.05;
+            }
+        }
+        let proposed_feet =
+            renderer.planet_surface_position(next_radial) + next_radial * height;
+        if renderer.planet_tree_blocks_player(proposed_feet, PLAYER_RADIUS, PLAYER_HEIGHT) {
+            // Stop horizontal movement at tree trunks while preserving the current
+            // radial position; the same deterministic rule builds the visible trees.
+            next_radial = radial;
+            height = altitude;
+        }
         self.player_feet = renderer.planet_surface_position(next_radial) + next_radial * height;
         self.camera.up = next_radial;
         self.camera.position = self.player_feet + next_radial * PLAYER_EYE_HEIGHT;
-    }
-
-    fn update_player(&mut self, dt: f32) {
-        let Some(renderer) = self.renderer.as_ref() else {
-            return;
-        };
-        let dt = dt.min(0.04);
-        let forward =
-            Vec3::new(self.camera.yaw.sin(), 0.0, self.camera.yaw.cos()).normalize_or_zero();
-        // `look_to_rh` defines screen-right as forward × world-up. With yaw=0
-        // the camera looks along +Z, so its actual right vector is -X, not +X.
-        // Keep this basis independent from mouse input: yaw only orients movement.
-        let right =
-            Vec3::new(-self.camera.yaw.cos(), 0.0, self.camera.yaw.sin()).normalize_or_zero();
-        let mut direction = Vec3::ZERO;
-        if self.pressed.contains(&KeyCode::KeyW) {
-            direction += forward;
-        }
-        if self.pressed.contains(&KeyCode::KeyS) {
-            direction -= forward;
-        }
-        if self.pressed.contains(&KeyCode::KeyD) {
-            direction += right;
-        }
-        if self.pressed.contains(&KeyCode::KeyA) {
-            direction -= right;
-        }
-        direction = direction.normalize_or_zero();
-        let proposed = self.player_feet + direction * self.camera.speed * dt;
-
-        // Keep the capsule outside higher terrain. Eight footprint samples catch hex
-        // corners; axis-separated fallback lets the player slide along a blocked face
-        // instead of becoming stuck whenever a diagonal step is obstructed.
-        let current_cell = Renderer::cell_from_world(self.player_feet + Vec3::new(0.0, 0.01, 0.0));
-        let current_ground = renderer.ground_height(current_cell.q, current_cell.r);
-        let diagonal = PLAYER_RADIUS * std::f32::consts::FRAC_1_SQRT_2;
-        let footprint_offsets = [
-            (PLAYER_RADIUS, 0.0),
-            (-PLAYER_RADIUS, 0.0),
-            (0.0, PLAYER_RADIUS),
-            (0.0, -PLAYER_RADIUS),
-            (diagonal, diagonal),
-            (diagonal, -diagonal),
-            (-diagonal, diagonal),
-            (-diagonal, -diagonal),
-        ];
-        let can_move_to = |x: f32, z: f32| {
-            let candidate = Vec3::new(x, self.player_feet.y, z);
-            let next_cell = Renderer::cell_from_world(candidate + Vec3::new(0.0, 0.01, 0.0));
-            let next_ground = renderer.ground_height(next_cell.q, next_cell.r);
-            let blocked_by_step = footprint_offsets.iter().any(|(ox, oz)| {
-                let sample = Renderer::cell_from_world(candidate + Vec3::new(*ox, 0.01, *oz));
-                renderer.ground_height(sample.q, sample.r) > current_ground + 0.65
-            });
-            let blocked_by_tree =
-                renderer.tree_blocks_player(candidate, PLAYER_RADIUS, PLAYER_HEIGHT);
-            !blocked_by_tree
-                && ((!blocked_by_step && next_ground <= current_ground + 0.65)
-                    || self.player_feet.y > next_ground + 0.1)
-        };
-        if can_move_to(proposed.x, proposed.z) {
-            self.player_feet.x = proposed.x;
-            self.player_feet.z = proposed.z;
-        } else {
-            if can_move_to(proposed.x, self.player_feet.z) {
-                self.player_feet.x = proposed.x;
-            }
-            if can_move_to(self.player_feet.x, proposed.z) {
-                self.player_feet.z = proposed.z;
-            }
-        }
-
-        if self.jump_requested && self.grounded {
-            self.vertical_velocity = JUMP_SPEED;
-            self.grounded = false;
-        }
-        self.jump_requested = false;
-        self.vertical_velocity -= GRAVITY * dt;
-        self.player_feet.y += self.vertical_velocity * dt;
-
-        let cell = Renderer::cell_from_world(self.player_feet + Vec3::new(0.0, 0.01, 0.0));
-        let ground = renderer.ground_height(cell.q, cell.r);
-        if self.player_feet.y <= ground {
-            self.player_feet.y = ground;
-            self.vertical_velocity = 0.0;
-            self.grounded = true;
-        } else {
-            self.grounded = false;
-        }
-        self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.update_streaming(self.player_feet);
-        }
-    }
-    fn update_harvesting(&mut self, dt: f32) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
-        let hit = renderer
-            .raycast(self.camera.position, self.camera.forward(), 8.0)
-            .map(|(cell, _)| cell);
-        if !self.harvest_held {
-            self.harvest_target = None;
-            self.harvest_progress = 0.0;
-            return;
-        }
-        if hit != self.harvest_target {
-            self.harvest_target = hit;
-            self.harvest_progress = 0.0;
-        }
-        let Some(target) = hit else {
-            self.harvest_progress = 0.0;
-            return;
-        };
-        let block = renderer.block_at(target);
-        if !block.is_solid() || block.is_indestructible() {
-            self.harvest_progress = 0.0;
-            return;
-        }
-        let seconds = match block {
-            BlockId::Grass => 0.55,
-            BlockId::Dirt => 0.8,
-            BlockId::Stone => 1.8,
-            BlockId::Foundation | BlockId::Air => {
-                self.harvest_progress = 0.0;
-                return;
-            }
-        };
-        self.harvest_progress += dt.max(0.0);
-        if self.harvest_progress >= seconds {
-            let item = match block {
-                BlockId::Grass => Some(ItemId::GrassFiber),
-                BlockId::Dirt => None,
-                BlockId::Stone => None,
-                BlockId::Foundation | BlockId::Air => None,
-            };
-            renderer.edit_block(target, BlockId::Air);
-            if let Some(item) = item {
-                let _overflow = self.inventory.add(item, 1);
-            }
-            self.harvest_held = false;
-            self.harvest_target = None;
-            self.harvest_progress = 0.0;
-        }
     }
 
     fn update_planet_harvesting(&mut self, dt: f32) {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        let hit = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward());
+        let tree_hit = renderer.planet_tree_at_ray(self.camera.position, self.camera.forward());
         if !self.harvest_held {
             self.planet_harvest_target = None;
+            self.planet_tree_harvest_target = None;
             self.harvest_progress = 0.0;
             return;
         }
+        if let Some(tree_id) = tree_hit {
+            if self.planet_tree_harvest_target != Some(tree_id) {
+                self.planet_tree_harvest_target = Some(tree_id);
+                self.planet_harvest_target = None;
+                self.harvest_progress = 0.0;
+            }
+            self.harvest_progress += dt.max(0.0);
+            if self.harvest_progress >= 1.1 {
+                if renderer.remove_planet_tree(tree_id) {
+                    let _overflow = self.inventory.add(ItemId::GenericWood, 3);
+                    let _overflow = self.inventory.add(ItemId::Stick, 1);
+                }
+                self.harvest_held = false;
+                self.planet_tree_harvest_target = None;
+                self.planet_harvest_target = None;
+                self.harvest_progress = 0.0;
+            }
+            return;
+        }
+        if self.planet_tree_harvest_target.take().is_some() {
+            self.planet_harvest_target = None;
+            self.harvest_progress = 0.0;
+        }
+        let hit = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward());
         if hit != self.planet_harvest_target {
             self.planet_harvest_target = hit;
             self.harvest_progress = 0.0;
@@ -350,9 +256,20 @@ impl HexelApp {
         };
         self.harvest_progress += dt.max(0.0);
         if self.harvest_progress >= seconds {
-            renderer.edit_planet_cell(target, BlockId::Air);
-            if block == BlockId::Grass {
-                let _overflow = self.inventory.add(ItemId::GrassFiber, 1);
+            let (layer, _) = renderer.planet_top_solid_voxel(target);
+            if renderer.edit_planet_voxel(target, layer, BlockId::Air) {
+                let recovered = match block {
+                    BlockId::Grass => Some(ItemId::GrassBlock),
+                    BlockId::Dirt => Some(ItemId::DirtBlock),
+                    BlockId::Stone => Some(ItemId::StoneBlock),
+                    BlockId::Foundation | BlockId::Air => None,
+                };
+                if let Some(item) = recovered {
+                    let _overflow = self.inventory.add(item, 1);
+                }
+                if block == BlockId::Grass {
+                    let _overflow = self.inventory.add(ItemId::GrassFiber, 1);
+                }
             }
             self.harvest_held = false;
             self.planet_harvest_target = None;
@@ -370,8 +287,23 @@ impl HexelApp {
         else {
             return;
         };
-        if renderer.planet_block_at(target) == BlockId::Air {
-            renderer.edit_planet_cell(target, BlockId::Grass);
+        let Some(stack) = self.inventory.selected_stack() else {
+            return;
+        };
+        let block = match stack.item {
+            ItemId::GrassBlock => BlockId::Grass,
+            ItemId::DirtBlock => BlockId::Dirt,
+            ItemId::StoneBlock => BlockId::Stone,
+            ItemId::OakWood | ItemId::BirchWood | ItemId::PineWood
+            | ItemId::GenericWood | ItemId::Stick | ItemId::GrassFiber => return,
+        };
+        let (top_layer, _) = renderer.planet_top_solid_voxel(target);
+        let place_layer = top_layer + 1;
+        if place_layer <= hexel_engine::planetary_voxels::PlanetVoxelVolume::MAX_BUILD_HEIGHT
+            && renderer.edit_planet_voxel(target, place_layer, block)
+        {
+            let slot = self.inventory.selected_hotbar();
+            self.inventory.remove_from_slot(slot, 1);
         }
     }
 
@@ -387,102 +319,23 @@ impl HexelApp {
         let Some(renderer) = self.renderer.as_ref() else {
             return;
         };
-        if self.planet_preview_active() {
-            let message = renderer
-                .planet_cell_at_ray(self.camera.position, self.camera.forward())
-                .map(|id| {
-                    format!(
-                        "Hexel Engine | PLANET | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB break / RMB place | F3 flat",
-                        renderer.planet_block_at(id),
-                        self.inventory.selected_hotbar() + 1,
-                        self.inventory
-                            .selected_stack()
-                            .map(|s| format!("{:?} x{}", s.item, s.count))
-                            .unwrap_or_else(|| "Empty".to_string())
-                    )
-                })
-                .unwrap_or_else(|| {
-                    "Hexel Engine | PLANET | WASD move | Space jump | E inventory | F3 flat".to_string()
-                });
-            window.set_title(&message);
-            return;
-        }
-        let message = if let Some((cell, _)) =
-            renderer.raycast(self.camera.position, self.camera.forward(), 8.0)
-        {
-            let block = renderer.block_at(cell);
-            let name = match block {
-                BlockId::Grass => "Grass",
-                BlockId::Dirt => "Dirt",
-                BlockId::Stone => "Stone",
-                BlockId::Foundation => "Foundation (unbreakable)",
-                BlockId::Air => "Air",
-            };
-            let progress = if self.harvest_held && self.harvest_target == Some(cell) {
+        let message = renderer
+            .planet_cell_at_ray(self.camera.position, self.camera.forward())
+            .map(|id| {
                 format!(
-                    " | Breaking: {:.0}%",
-                    (self.harvest_progress / 1.8 * 100.0).min(100.0)
+                    "Hexel Engine | Globe | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB harvest / RMB place",
+                    renderer.planet_block_at(id),
+                    self.inventory.selected_hotbar() + 1,
+                    self.inventory
+                        .selected_stack()
+                        .map(|s| format!("{:?} x{}", s.item, s.count))
+                        .unwrap_or_else(|| "Empty".to_string())
                 )
-            } else {
-                String::new()
-            };
-            format!(
-                "Hexel Engine | Looking at: {name} [{}, {}, {}]{progress} | Hotbar [{}] {} | E: {} | LMB break / RMB place",
-                cell.q,
-                cell.r,
-                cell.y,
-                self.inventory.selected_hotbar() + 1,
-                self.inventory
-                    .selected_stack()
-                    .map(|s| format!("{:?} x{}", s.item, s.count))
-                    .unwrap_or_else(|| "Empty".to_string()),
-                if self.inventory_open {
-                    "inventory open (UI pending)"
-                } else {
-                    "inventory"
-                }
-            )
-        } else {
-            format!(
-                "Hexel Engine | Looking at: nothing | Hotbar [{}] {} | E: {} | LMB break / RMB place",
-                self.inventory.selected_hotbar() + 1,
-                self.inventory
-                    .selected_stack()
-                    .map(|s| format!("{:?} x{}", s.item, s.count))
-                    .unwrap_or_else(|| "Empty".to_string()),
-                if self.inventory_open {
-                    "inventory open (UI pending)"
-                } else {
-                    "inventory"
-                }
-            )
-        };
+            })
+            .unwrap_or_else(|| {
+                "Hexel Engine | Globe | WASD move | Space jump | E inventory".to_string()
+            });
         window.set_title(&message);
-    }
-    fn edit_target(&mut self, remove: bool) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
-        let Some((hit, placement)) =
-            renderer.raycast(self.camera.position, self.camera.forward(), 8.0)
-        else {
-            return;
-        };
-        let target = if remove { hit } else { placement };
-        if !remove {
-            let player_cell =
-                Renderer::cell_from_world(self.player_feet + Vec3::Y * (PLAYER_HEIGHT * 0.5));
-            if target.q == player_cell.q
-                && target.r == player_cell.r
-                && (target.y - player_cell.y).abs() <= 2
-            {
-                return;
-            }
-            if renderer.block_at(target).is_solid() {
-                return;
-            }
-        }
-        renderer.edit_block(target, if remove { BlockId::Air } else { BlockId::Grass });
     }
 }
 
@@ -521,9 +374,10 @@ impl ApplicationHandler for HexelApp {
         match pollster::block_on(Renderer::new(window.clone(), seed)) {
             Ok(mut renderer) => {
                 if let Some(save) = loaded_save.as_ref() {
-                    renderer.restore_flat_edits(&save.flat_edits);
                     renderer.restore_planet_edits(&save.planet_edits);
-                    self.player_feet = Vec3::from_array(save.player_position);
+                    renderer.restore_planet_voxel_edits(&save.planet_voxel_edits);
+                    renderer.restore_planet_removed_trees(&save.planet_removed_trees);
+                    self.player_feet = Vec3::new(save.player_position[0] as f32, save.player_position[1] as f32, save.player_position[2] as f32);
                     self.camera.yaw = save.yaw;
                     self.camera.pitch = save.pitch.clamp(-1.52, 1.52);
                     self.inventory = Inventory::default();
@@ -532,18 +386,26 @@ impl ApplicationHandler for HexelApp {
                     }
                     self.inventory.select_hotbar(save.selected_hotbar);
                     if save.planet_mode {
-                        renderer.toggle_planet_preview();
                         self.camera.up = self.player_feet.normalize_or_zero();
                         if self.camera.up == Vec3::ZERO { self.camera.up = Vec3::X; }
+                        self.camera.position = self.player_feet + self.camera.up * PLAYER_EYE_HEIGHT;
                     } else {
-                        self.camera.up = Vec3::Y;
+                        // Legacy flat-world coordinates are not planet-centred coordinates.
+                        // Keep the player's inventory and planetary edits, but spawn safely
+                        // on the globe instead of silently placing them at an arbitrary location.
+                        self.player_feet = renderer.planet_surface_position(Vec3::X);
+                        self.camera.up = Vec3::X;
+                        self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
+                        self.camera.yaw = 0.0;
+                        self.camera.pitch = -0.15;
                     }
-                    self.camera.position = self.player_feet + self.camera.up * PLAYER_EYE_HEIGHT;
                     println!("Loaded saved Hexel world.");
                 } else {
-                    let ground = renderer.ground_height(0, 0);
-                    self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
-                    self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
+                    self.player_feet = renderer.planet_surface_position(Vec3::X);
+                    self.camera.up = Vec3::X;
+                    self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
+                    self.camera.yaw = 0.0;
+                    self.camera.pitch = -0.15;
                 }
                 info!(
                     seed,
@@ -622,45 +484,6 @@ impl ApplicationHandler for HexelApp {
                             KeyCode::F5 => {
                                 self.save_game();
                             }
-                            KeyCode::F3 if !self.pressed.contains(&code) => {
-                                let preview = if let Some(renderer) = self.renderer.as_mut() {
-                                    renderer.toggle_planet_preview();
-                                    renderer.planet_preview_enabled()
-                                } else {
-                                    false
-                                };
-                                if preview {
-                                    self.harvest_held = false;
-                                    self.harvest_target = None;
-                                    self.planet_harvest_target = None;
-                                    self.harvest_progress = 0.0;
-                                    self.jump_requested = false;
-                                    if let Some(renderer) = self.renderer.as_ref() {
-                                        self.player_feet = renderer.planet_surface_position(Vec3::X);
-                                        self.camera.up = Vec3::X;
-                                        self.camera.position = self.player_feet + Vec3::X * PLAYER_EYE_HEIGHT;
-                                    }
-                                    self.camera.yaw = 0.0;
-                                    self.camera.pitch = -0.15;
-                                } else {
-                                    self.camera.up = Vec3::Y;
-                                    if let Some(renderer) = self.renderer.as_mut() {
-                                        let ground = renderer.ground_height(0, 0);
-                                        self.player_feet = Vec3::new(0.0, ground + 0.02, 0.0);
-                                        self.camera.position = self.player_feet + Vec3::Y * PLAYER_EYE_HEIGHT;
-                                        renderer.update_streaming(self.player_feet);
-                                    }
-                                    self.camera.yaw = 0.0;
-                                    self.camera.pitch = -0.15;
-                                }
-                                if let Some(window) = self.window.as_ref() {
-                                    window.set_title(if preview {
-                                        "Hexel Engine | PLANET WALK | WASD move | Mouse look | F3 flat world"
-                                    } else {
-                                        "Hexel Engine | WASD move | Space jump | Hold left to break | Right place | Esc mouse"
-                                    });
-                                }
-                            }
                             _ => {}
                         }
                         if code == KeyCode::Space && !self.pressed.contains(&code) {
@@ -695,7 +518,7 @@ impl ApplicationHandler for HexelApp {
                 state: ElementState::Pressed,
                 ..
             } if self.cursor_locked => {
-                if self.planet_preview_active() { self.edit_planet_target(); } else { self.edit_target(false); }
+                self.edit_planet_target();
             },
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
@@ -746,15 +569,9 @@ impl ApplicationHandler for HexelApp {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
-        if self.planet_preview_active() {
-            self.update_planet_player(dt);
-            self.update_planet_harvesting(dt);
-            self.update_target_title(dt);
-        } else {
-            self.update_player(dt);
-            self.update_harvesting(dt);
-            self.update_target_title(dt);
-        }
+        self.update_planet_player(dt);
+        self.update_planet_harvesting(dt);
+        self.update_target_title(dt);
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }

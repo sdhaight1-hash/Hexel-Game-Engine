@@ -1,34 +1,28 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{
-        Arc,
-        mpsc::{self, Receiver, Sender},
-    },
-    thread,
+    sync::Arc,
 };
 
 use bytemuck::{Pod, Zeroable};
 use glam::{DVec3, Mat4, Vec3};
 use hexel_engine::{
-    planetary_chunks::{CubeFace, PlanetChunkKey, PlanetChunkMesh},
+    planetary_chunks::{chunk_keys_near_direction, CubeFace, PlanetChunkKey, PlanetChunkMesh},
+    planetary_frame::PlanetaryFrame,
+    planetary_world::PlanetaryWorld,
+    planetary_chunk_world::PlanetaryChunkWorld,
+    world_profile::PlanetaryWorldProfile,
+    planetary_voxels::{PlanetVoxelPos, PlanetVoxelVolume},
     BlockId, CellPos, ChunkPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
-    raycast_prism,
     surface_mesh::SurfaceMesh,
-    terrain_height,
     topology::SurfaceTopology,
 };
-use noise::{NoiseFn, Perlin};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-const CHUNK_SIZE: i32 = 16;
-const MAX_EDIT_HEIGHT: i32 = 12;
-const STREAM_RADIUS_CHUNKS: i32 = 5;
-const RENDER_DISTANCE: f32 = 110.0;
 
 const SHADER: &str = r#"
-struct Camera { view_proj: mat4x4<f32>, };
+struct Camera { view_proj: mat4x4<f32>, world_offset: vec4<f32>, };
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var tree_textures: texture_2d_array<f32>;
 @group(1) @binding(1) var foliage_sampler: sampler;
@@ -46,7 +40,7 @@ struct VertexOutput {
 };
 @vertex fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.clip_position = camera.view_proj * vec4<f32>(input.position, 1.0);
+    output.clip_position = camera.view_proj * vec4<f32>(input.position + camera.world_offset.xyz, 1.0);
     output.color = input.color;
     output.uv = input.uv;
     output.textured = input.textured;
@@ -103,6 +97,7 @@ impl Vertex {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+    world_offset: [f32; 4],
 }
 
 pub struct Camera {
@@ -129,40 +124,38 @@ impl Camera {
         let up = if up == Vec3::ZERO { Vec3::Y } else { up };
         let reference = if up.dot(Vec3::Y).abs() < 0.99 { Vec3::Y } else { Vec3::Z };
         let north = (reference - up * reference.dot(up)).normalize_or_zero();
-        let east = up.cross(north).normalize_or_zero();
+        // Match PlanetaryFrame's east = north × up convention. Keeping one
+        // handedness is essential: otherwise camera yaw and local movement reverse
+        // east/west relative to terrain rebasing and planetary chunk coordinates.
+        let east = north.cross(up).normalize_or_zero();
         (east, north, up)
     }
     pub fn forward(&self) -> Vec3 {
         let (east, north, up) = self.tangent_frame();
         (east * self.yaw.sin() * self.pitch.cos() + north * self.yaw.cos() * self.pitch.cos() + up * self.pitch.sin()).normalize_or_zero()
     }
-    fn view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
+    fn projection(&self, size: PhysicalSize<u32>) -> Mat4 {
         let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
         Mat4::perspective_rh(70.0_f32.to_radians(), aspect, 0.05, 900.0)
+    }
+    fn view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
+        self.projection(size)
             * Mat4::look_to_rh(self.position, self.forward(), self.up.normalize_or_zero())
     }
-}
-
-struct MeshJob {
-    revision: u64,
-    seed: u32,
-    edits: HashMap<CellPos, BlockId>,
-    chunks: Vec<ChunkPos>,
-}
-struct MeshResult {
-    revision: u64,
-    chunks: Vec<(ChunkPos, Vec<Vertex>)>,
-}
-struct ChunkMesh {
-    buffer: wgpu::Buffer,
-    vertex_count: u32,
-    bounds_min: Vec3,
-    bounds_max: Vec3,
+    /// View matrix for patch-local vertices. Their planetary origin is supplied
+    /// separately in double precision, avoiding Earth-radius f32 quantization.
+    fn relative_view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
+        self.projection(size)
+            * Mat4::look_to_rh(Vec3::ZERO, self.forward(), self.up.normalize_or_zero())
+    }
 }
 
 struct PlanetGpuChunk {
     buffer: wgpu::Buffer,
     vertex_count: u32,
+    origin: DVec3,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
 }
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -178,28 +171,23 @@ pub struct Renderer {
     planet_vertex_count: u32,
     planet_vertices: Vec<Vertex>,
     planet_cell_ranges: HashMap<u32, (u64, u64)>,
-    planet_cell_edits: HashMap<u32, BlockId>,
-    planet_topology: SurfaceTopology,
-    planet_terrain: PlanetGenerator,
-    planet_preview: bool,
+    planet_cell_wall_ranges: HashMap<u32, (usize, usize)>,
+    planet_world: PlanetaryWorld,
+    planet_hexel_chunks: PlanetaryChunkWorld,
+    planet_voxels: PlanetVoxelVolume,
+    removed_planet_trees: HashSet<u32>,
     planet_stream_chunks: HashMap<PlanetChunkKey, PlanetGpuChunk>,
     planet_stream_pending: VecDeque<PlanetChunkKey>,
-    chunks: HashMap<ChunkPos, ChunkMesh>,
+    planet_hexel_surface: Option<PlanetGpuChunk>,
+    planet_hexel_anchor: Option<DVec3>,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    camera_layout: wgpu::BindGroupLayout,
     foliage_bind_group: wgpu::BindGroup,
     size: PhysicalSize<u32>,
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     seed: u32,
-    edits: HashMap<CellPos, BlockId>,
-    mesh_job_tx: Sender<MeshJob>,
-    mesh_result_rx: Receiver<MeshResult>,
-    dirty_chunks: HashSet<ChunkPos>,
-    edit_revision: u64,
-    pending_mesh_chunks: VecDeque<(u64, ChunkPos, Vec<Vertex>)>,
-    pending_mesh_count: usize,
-    pending_mesh_revision: u64,
 }
 impl Renderer {
     pub async fn new(window: Arc<Window>, seed: u32) -> Result<Self, String> {
@@ -267,6 +255,7 @@ impl Renderer {
             label: Some("Camera uniform"),
             contents: bytemuck::bytes_of(&CameraUniform {
                 view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                world_offset: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -521,17 +510,27 @@ impl Renderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // Keep the spherical preview separate from the flat-world chunk meshes.
-        // It is generated once and only drawn while F3 preview mode is enabled.
+        // Build the globe's geodesic surface as the active world mesh. Nearby
+        // streamed patches add detail while the whole-planet mesh remains visible.
         let planet_config = PlanetConfig {
-            radius: 180.0,
-            elevation_scale: 14.0,
+            radius: 6_371_000.0,
+            elevation_scale: 4_500.0,
             axial_tilt_degrees: 23.5,
         };
-        let topology = SurfaceTopology::generate(16, planet_config.radius)
-            .map_err(|error| format!("Could not generate planet preview topology: {error}"))?;
-        let terrain = PlanetGenerator::with_config(seed, planet_config);
-        let planet_mesh = SurfaceMesh::generate(&topology, &terrain, 0.25);
+        let planet_world = PlanetaryWorld::new(seed, 16, planet_config)
+            .map_err(|error| format!("Could not generate planetary world: {error:?}"))?;
+        let planet_hexel_chunks = PlanetaryChunkWorld::new(
+            PlanetGenerator::with_config(seed, planet_config),
+            PlanetaryWorldProfile::default(),
+        )
+        .map_err(|error| format!("Could not initialize planetary Hexel chunks: {error:?}"))?;
+        let topology = planet_world.topology();
+        let terrain = planet_world.terrain();
+
+        // The fixed geodesic topology is the bedrock reference surface. It defines
+        // the planet's dimensions and cell layout, but is intentionally never drawn:
+        // immutable bedrock is represented by the unbreakable base Hexel layer.
+        let planet_mesh = SurfaceMesh::generate(topology, terrain, 0.25);
         let mut planet_vertices = Vec::new();
         let mut planet_cell_ranges = HashMap::new();
         for triangle in planet_mesh.triangles {
@@ -564,70 +563,22 @@ impl Renderer {
                 .or_insert((start, end));
         }
 
-        // Draw a narrow, slightly raised ribbon along every topology edge. This
-        // makes the actual pentagon/hexagon partition visible instead of showing
-        // a smooth biome-colored sphere that only happens to use topology inside.
+        // Keep empty wall ranges for legacy hit-test/edit APIs. The immutable
+        // shell is a separate continuous mesh; gameplay crust will own visible walls.
+        let mut planet_cell_wall_ranges = HashMap::new();
         for cell in topology.cells() {
-            let pentagon = cell.boundary.len() == 5;
-            let edge_color = if pentagon {
-                [1.0, 0.48, 0.10]
-            } else {
-                [0.035, 0.075, 0.11]
-            };
-            for index in 0..cell.boundary.len() {
-                let next = (index + 1) % cell.boundary.len();
-                let a = terrain
-                    .sample_direction(cell.boundary[index], 0.25)
-                    .surface_position
-                    .as_vec3()
-                    * 1.002;
-                let b = terrain
-                    .sample_direction(cell.boundary[next], 0.25)
-                    .surface_position
-                    .as_vec3()
-                    * 1.002;
-                let radial = (a + b).normalize_or_zero();
-                let side = (b - a).cross(radial).normalize_or_zero() * 0.035;
-                push_triangle(&mut planet_vertices, a - side, b - side, b + side, edge_color);
-                push_triangle(&mut planet_vertices, a - side, b + side, a + side, edge_color);
-            }
+            planet_cell_wall_ranges.insert(cell.id.0, (planet_vertices.len(), planet_vertices.len()));
         }
 
         let planet_vertex_count = planet_vertices.len() as u32;
         let planet_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Procedural spherical planet preview"),
+            label: Some("Procedural planetary world surface"),
             contents: bytemuck::cast_slice(&planet_vertices),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let (depth_texture, depth_view) = create_depth_target(&device, config.width, config.height);
-        let (mesh_job_tx, mesh_job_rx) = mpsc::channel::<MeshJob>();
-        let (mesh_result_tx, mesh_result_rx) = mpsc::channel::<MeshResult>();
-        thread::Builder::new()
-            .name("hexel-mesh-worker".into())
-            .spawn(move || {
-                while let Ok(mut job) = mesh_job_rx.recv() {
-                    while let Ok(newer) = mesh_job_rx.try_recv() {
-                        job = newer;
-                    }
-                    let chunks = job
-                        .chunks
-                        .iter()
-                        .map(|pos| (*pos, build_chunk_mesh(job.seed, &job.edits, *pos)))
-                        .collect();
-                    if mesh_result_tx
-                        .send(MeshResult {
-                            revision: job.revision,
-                            chunks,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
-            .map_err(|e| format!("Could not start mesh worker: {e}"))?;
-        let mut renderer = Self {
+        let renderer = Self {
             surface,
             device,
             queue,
@@ -641,179 +592,38 @@ impl Renderer {
             planet_vertex_count,
             planet_vertices,
             planet_cell_ranges,
-            planet_cell_edits: HashMap::new(),
-            planet_topology: topology,
-            planet_terrain: terrain,
-            planet_preview: false,
+            planet_cell_wall_ranges,
+            planet_voxels: PlanetVoxelVolume::new(),
+            removed_planet_trees: HashSet::new(),
+            planet_world,
+            planet_hexel_chunks,
             planet_stream_chunks: HashMap::new(),
             planet_stream_pending: VecDeque::new(),
-            chunks: HashMap::new(),
+            planet_hexel_surface: None,
+            planet_hexel_anchor: None,
             camera_buffer,
             camera_bind_group,
+            camera_layout,
             foliage_bind_group,
             size,
             _depth_texture: depth_texture,
             depth_view,
             seed,
-            edits: HashMap::new(),
-            mesh_job_tx,
-            mesh_result_rx,
-            dirty_chunks: HashSet::new(),
-            edit_revision: 0,
-            pending_mesh_chunks: VecDeque::new(),
-            pending_mesh_count: 0,
-            pending_mesh_revision: 0,
         };
-        renderer.update_streaming(Vec3::ZERO);
         Ok(renderer)
     }
 
-    /// True when the player capsule would overlap a generated tree's solid trunk.
-    /// Tree roots use the same deterministic hash and reduced-density threshold as meshing.
-    pub fn tree_blocks_player(
-        &self,
-        position: Vec3,
-        player_radius: f32,
-        player_height: f32,
-    ) -> bool {
-        let scale = WorldScale::default();
-        let cell = Self::cell_from_world(position);
-        for q in (cell.q - 2)..=(cell.q + 2) {
-            for r in (cell.r - 2)..=(cell.r + 2) {
-                let hash = vegetation_hash(self.seed, q, r);
-                if !hash.is_multiple_of(29) {
-                    continue;
-                }
-                let terrain = terrain_height(self.seed, q, r);
-                let warmth = Perlin::new(self.seed.wrapping_add(0x51ED_270B))
-                    .get([q as f64 / 90.0, r as f64 / 90.0]);
-                let wetness = Perlin::new(self.seed.wrapping_add(0x51ED_270B))
-                    .get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
-                let conifer = warmth < -0.25 || wetness < -0.32;
-                let tropical = warmth > 0.38 && wetness > 0.05;
-                let roll = (hash >> 16) % 1000;
-                let (min_m, max_m, trunk_radius, giant) = if tropical {
-                    if roll < 22 {
-                        (55.0_f32, 95.0, 2, true)
-                    } else if roll < 105 {
-                        (25.0, 45.0, 1, false)
-                    } else {
-                        (16.0, 32.0, 1, false)
-                    }
-                } else if conifer {
-                    if roll < 8 {
-                        (55.0_f32, 95.0, 2, true)
-                    } else if roll < 570 {
-                        (18.0, 38.0, 1, false)
-                    } else {
-                        (10.0, 24.0, 1, false)
-                    }
-                } else if wetness > 0.25 {
-                    if roll < 9 {
-                        (55.0_f32, 95.0, 2, true)
-                    } else if roll < 590 {
-                        (18.0, 32.0, 1, false)
-                    } else {
-                        (10.0, 24.0, 1, false)
-                    }
-                } else {
-                    (6.0, 16.0, 1, false)
-                };
-                let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
-                let mut height_m = min_m + (max_m - min_m) * variance;
-                if giant && !(hash >> 28).is_multiple_of(4) {
-                    height_m = min_m * 0.55;
-                }
-                let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
-                let trunk_top = layers * if tropical && roll < 22 { 3 } else { 2 } / 3;
-                let radius_cells = if trunk_radius > 1 { 0.70 } else { 0.43 };
-                let root = scale.prism_center(CellPos::new(q, r, terrain + 1));
-                let dx = position.x - root.x;
-                let dz = position.z - root.z;
-                let horizontal_limit = player_radius + scale.hex_radius * radius_cells;
-                let player_bottom = position.y;
-                let player_top = position.y + player_height;
-                let trunk_bottom = (terrain + 1) as f32 * scale.hexel_height;
-                let trunk_end = (terrain + 1 + trunk_top) as f32 * scale.hexel_height;
-                if dx * dx + dz * dz < horizontal_limit * horizontal_limit
-                    && player_top > trunk_bottom
-                    && player_bottom < trunk_end
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    pub fn ground_height(&self, q: i32, r: i32) -> f32 {
-        let scale = WorldScale::default();
-        let terrain_top = terrain_height(self.seed, q, r);
-        let has_column_edits = self.edits.keys().any(|cell| cell.q == q && cell.r == r);
-        if !has_column_edits {
-            return (terrain_top + 1) as f32 * scale.hexel_height;
-        }
-        let highest = self
-            .edits
-            .keys()
-            .filter(|cell| cell.q == q && cell.r == r)
-            .map(|cell| cell.y)
-            .max()
-            .unwrap_or(terrain_top)
-            .max(terrain_top);
-        for y in (0..=highest).rev() {
-            if self.block_at(CellPos::new(q, r, y)).is_solid() {
-                return (y + 1) as f32 * scale.hexel_height;
-            }
-        }
-        0.0
-    }
-    pub fn cell_from_world(position: Vec3) -> CellPos {
-        let scale = WorldScale::default();
-        let r_float = position.z / (scale.hex_radius * 1.5);
-        let q_float = position.x / (scale.hex_radius * 3.0_f32.sqrt()) - r_float * 0.5;
-
-        // Axial hex coordinates must be rounded together in cube space. Rounding q
-        // and r independently misclassifies points near hex corners, which can make
-        // both collision samples and block targeting select the wrong column.
-        let s_float = -q_float - r_float;
-        let mut q = q_float.round();
-        let mut r = r_float.round();
-        let s = s_float.round();
-        let q_error = (q - q_float).abs();
-        let r_error = (r - r_float).abs();
-        let s_error = (s - s_float).abs();
-        if q_error > r_error && q_error > s_error {
-            q = -r - s;
-        } else if r_error > s_error {
-            r = -q - s;
-        }
-        CellPos::new(
-            q as i32,
-            r as i32,
-            (position.y / scale.hexel_height).floor() as i32,
-        )
-    }
     pub fn world_seed(&self) -> u32 {
         self.seed
     }
 
-    pub fn flat_edits_snapshot(&self) -> Vec<(CellPos, BlockId)> {
-        let mut edits = self.edits.iter().map(|(cell, block)| (*cell, *block)).collect::<Vec<_>>();
-        edits.sort_by_key(|(cell, _)| (cell.q, cell.r, cell.y));
-        edits
-    }
-
-    pub fn restore_flat_edits(&mut self, edits: &[(CellPos, BlockId)]) {
-        for (cell, block) in edits {
-            self.edit_block(*cell, *block);
-        }
-    }
-
     pub fn planet_edits_snapshot(&self) -> Vec<(u32, BlockId)> {
-        let mut edits = self.planet_cell_edits.iter().map(|(id, block)| (*id, *block)).collect::<Vec<_>>();
-        edits.sort_by_key(|(id, _)| *id);
-        edits
+        self.planet_world
+            .save()
+            .edits
+            .into_iter()
+            .map(|(id, block)| (id.0, block))
+            .collect()
     }
 
     pub fn restore_planet_edits(&mut self, edits: &[(u32, BlockId)]) {
@@ -822,335 +632,134 @@ impl Renderer {
         }
     }
 
-    pub fn block_at(&self, cell: CellPos) -> BlockId {
-        self.edits.get(&cell).copied().unwrap_or_else(|| {
-            generated_block_from_height(cell, terrain_height(self.seed, cell.q, cell.r))
-        })
+    pub fn planet_voxel_edits_snapshot(&self) -> Vec<(u32, i32, BlockId)> {
+        self.planet_voxels.edited_voxels().iter()
+            .map(|(pos, block)| (pos.cell.0, pos.layer, *block))
+            .collect()
     }
 
-    /// Text inspection for the "What am I looking at?" debug/gameplay affordance.
-    #[allow(dead_code)]
-    pub fn describe_target(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> String {
-        let Some((cell, _)) = self.raycast(origin, direction, max_distance) else {
-            return "What am I looking at? Nothing identifiable in reach.".to_string();
-        };
-        let block = self.block_at(cell);
-        let surface = terrain_height(self.seed, cell.q, cell.r);
-        let layer = surface - cell.y;
-        let (name, detail) = match block {
-            BlockId::Grass => (
-                "Grass-covered ground",
-                "Surface cover over a soil layer. Soil fertility is not yet wired into the playable farming loop.",
-            ),
-            BlockId::Dirt if layer <= 3 => (
-                "Topsoil",
-                "Loose near-surface soil. Its color varies by procedural soil patch; nutrient state is not yet persisted per cell.",
-            ),
-            BlockId::Dirt => ("Subsoil", "Weathered material beneath the topsoil."),
-            BlockId::Stone => match cell.y.rem_euclid(11) {
-                0..=2 => (
-                    "Sedimentary-looking rock",
-                    "Pale, layered rock appearance; exact rock strata are not yet connected to world generation.",
-                ),
-                3..=5 => (
-                    "Gray bedrock",
-                    "Hard bedrock. Mining deposits and host-rock rules are not yet spawned into playable chunks.",
-                ),
-                6..=8 => (
-                    "Tan bedrock",
-                    "Weathered-looking bedrock; the geology module is currently a data foundation.",
-                ),
-                _ => (
-                    "Dark bedrock",
-                    "Dense-looking rock. Exact mineral identity and finite deposit state are not yet integrated.",
-                ),
-            },
-            BlockId::Foundation => (
-                "Unbreakable foundation",
-                "Below the playable terrain floor.",
-            ),
-            BlockId::Air => ("Air", "An empty cell."),
-        };
-        format!(
-            "What am I looking at?\\n{name}\\n{detail}\\nCell: q={}, r={}, y={} | Surface layer: {}",
-            cell.q,
-            cell.r,
-            cell.y,
-            layer.max(0)
-        )
+    pub fn restore_planet_voxel_edits(&mut self, edits: &[(u32, i32, BlockId)]) {
+        for (id, layer, block) in edits {
+            self.edit_planet_voxel(*id, *layer, *block);
+        }
     }
-    pub fn raycast(
-        &self,
-        origin: Vec3,
-        direction: Vec3,
-        max_distance: f32,
-    ) -> Option<(CellPos, CellPos)> {
-        let scale = WorldScale::default();
-        let dir = direction.normalize_or_zero();
-        if dir == Vec3::ZERO {
-            return None;
-        }
 
-        // Walk the ray to find candidate cells, then use the exact prism intersection
-        // face to choose the adjacent cell. The last sampled air cell can be diagonally
-        // adjacent or even on the wrong layer near hex corners.
-        let mut distance = 0.0;
-        while distance <= max_distance {
-            let cell = Self::cell_from_world(origin + dir * distance);
-            if self.block_at(cell).is_solid() {
-                let center = scale.prism_center(cell);
-                if let Some((hit_distance, face)) = raycast_prism(
-                    origin,
-                    dir,
-                    center,
-                    scale.hex_radius,
-                    scale.hexel_height,
-                    max_distance,
-                ) && hit_distance <= distance + 0.15
-                {
-                    let placement = match face {
-                        0 => CellPos::new(cell.q + 1, cell.r, cell.y),
-                        1 => CellPos::new(cell.q, cell.r + 1, cell.y),
-                        2 => CellPos::new(cell.q - 1, cell.r + 1, cell.y),
-                        3 => CellPos::new(cell.q - 1, cell.r, cell.y),
-                        4 => CellPos::new(cell.q, cell.r - 1, cell.y),
-                        5 => CellPos::new(cell.q + 1, cell.r - 1, cell.y),
-                        6 => CellPos::new(cell.q, cell.r, cell.y + 1),
-                        7 => CellPos::new(cell.q, cell.r, cell.y - 1),
-                        _ => cell,
-                    };
-                    return Some((cell, placement));
-                }
-            }
-            distance += 0.045;
-        }
-        None
+    pub fn planet_removed_trees_snapshot(&self) -> Vec<u32> {
+        let mut ids = self.removed_planet_trees.iter().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
     }
-    pub fn edit_block(&mut self, cell: CellPos, block: BlockId) {
-        if cell.y < 0 || cell.y > 255 {
-            return;
-        }
-        if self.block_at(cell).is_indestructible() {
-            return;
-        }
-        self.edits.insert(cell, block);
 
-        // Invalidate the chunk containing this cell and every chunk containing one
-        // of its actual neighbors. Axial hex neighbors can cross two chunk axes at
-        // once, so checking q/r boundaries independently misses diagonal chunks.
-        let affected = affected_chunks_for_cell(cell);
-        self.dirty_chunks.extend(
-            affected
-                .iter()
-                .copied()
-                .filter(|chunk| self.chunks.contains_key(chunk)),
-        );
-        self.edit_revision = self.edit_revision.wrapping_add(1);
-
-        // The worker intentionally coalesces queued jobs. Always include the union
-        // of dirty loaded chunks so an earlier edit cannot be lost when its job is
-        // superseded by a later edit.
-        let mut chunks = self
-            .dirty_chunks
-            .iter()
-            .copied()
-            .filter(|chunk| self.chunks.contains_key(chunk))
-            .collect::<Vec<_>>();
-        chunks.sort_by_key(|p| (p.q, p.r, p.y));
-        let _ = self.mesh_job_tx.send(MeshJob {
-            revision: self.edit_revision,
-            seed: self.seed,
-            edits: self.edits.clone(),
-            chunks,
-        });
+    pub fn restore_planet_removed_trees(&mut self, ids: &[u32]) {
+        self.removed_planet_trees.extend(ids.iter().copied());
+        self.planet_stream_chunks.clear();
+        self.planet_stream_pending.clear();
     }
-    /// Active meshes are bounded to a moving neighborhood; edits persist separately.
-    pub fn update_streaming(&mut self, player_position: Vec3) {
-        let cell = Self::cell_from_world(player_position);
-        let center = ChunkPos {
-            q: cell.q.div_euclid(CHUNK_SIZE),
-            r: cell.r.div_euclid(CHUNK_SIZE),
-            y: cell.y.max(0).div_euclid(CHUNK_SIZE),
-        };
-        let mut wanted = HashSet::new();
-        for dq in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
-            for dr in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
-                if dq * dq + dr * dr > STREAM_RADIUS_CHUNKS * STREAM_RADIUS_CHUNKS {
-                    continue;
-                }
-                for dy in -1..=1 {
-                    let cy = center.y + dy;
-                    if cy >= 0 {
-                        wanted.insert(ChunkPos {
-                            q: center.q + dq,
-                            r: center.r + dr,
-                            y: cy,
-                        });
-                    }
-                }
+
+    pub fn remove_planet_tree(&mut self, id: u32) -> bool {
+        let Some(cell) = self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)) else { return false; };
+        let sample = self.planet_world.terrain().sample_direction(cell.center, 0.25);
+        let hash = vegetation_hash(self.seed ^ id.wrapping_mul(0x27D4_EB2D), id as i32, id.rotate_left(13) as i32);
+        if planet_tree_spec(sample.biome, hash).is_none() || self.removed_planet_trees.contains(&id) {
+            return false;
+        }
+        self.removed_planet_trees.insert(id);
+        self.planet_stream_chunks.clear();
+        self.planet_stream_pending.clear();
+        true
+    }
+
+    pub fn planet_voxel_block_at(&self, id: u32, layer: i32) -> BlockId {
+        self.planet_voxels.block_at(
+            &self.planet_world,
+            PlanetVoxelPos::new(hexel_engine::topology::SurfaceCellId(id), layer),
+        ).unwrap_or(BlockId::Air)
+    }
+
+    /// The first solid voxel in the radial column, starting at the surface.
+    pub fn planet_top_solid_voxel(&self, id: u32) -> (i32, BlockId) {
+        let layer = self.planet_top_solid_layer(id);
+        (layer, self.planet_voxel_block_at(id, layer))
+    }
+
+    fn planet_top_solid_layer(&self, id: u32) -> i32 {
+        let cell = hexel_engine::topology::SurfaceCellId(id);
+        let positive_start = PlanetVoxelPos::new(cell, 1);
+        let positive_end = PlanetVoxelPos::new(cell, PlanetVoxelVolume::MAX_BUILD_HEIGHT);
+        if let Some((pos, _)) = self.planet_voxels.edited_voxels()
+            .range(positive_start..=positive_end).rev().find(|(_, block)| block.is_solid()) {
+            return pos.layer;
+        }
+        if self.planet_world.edited_cells().get(&cell) != Some(&BlockId::Air) {
+            return 0;
+        }
+        for layer in (PlanetVoxelVolume::BEDROCK_LAYER + 1..0).rev() {
+            let pos = PlanetVoxelPos::new(cell, layer);
+            match self.planet_voxels.edited_voxels().get(&pos) {
+                Some(block) if !block.is_solid() => continue,
+                Some(_) => return layer,
+                None => return layer,
             }
         }
-        self.chunks.retain(|pos, _| wanted.contains(pos));
-        let missing: Vec<_> = wanted
-            .iter()
-            .copied()
-            .filter(|pos| !self.chunks.contains_key(pos))
-            .collect();
-        for pos in missing {
-            let mesh = self.create_chunk(pos);
-            self.chunks.insert(pos, mesh);
-        }
+        PlanetVoxelVolume::BEDROCK_LAYER
     }
 
-    fn poll_mesh_results(&mut self) {
-        while let Ok(result) = self.mesh_result_rx.try_recv() {
-            if result.revision != self.edit_revision {
-                continue;
-            }
-            let revision = result.revision;
-            self.pending_mesh_chunks.clear();
-            self.pending_mesh_chunks.extend(
-                result
-                    .chunks
-                    .into_iter()
-                    .map(|(index, vertices)| (revision, index, vertices)),
-            );
-            self.pending_mesh_count = self.pending_mesh_chunks.len();
-            self.pending_mesh_revision = revision;
-        }
-
-        if self.pending_mesh_revision != self.edit_revision {
-            self.pending_mesh_chunks.clear();
-            self.pending_mesh_count = 0;
-            return;
-        }
-
-        // Upload at most one rebuilt chunk per frame. CPU meshing is already on
-        // the worker; spreading GPU buffer creation avoids multi-chunk edit spikes.
-        if let Some((revision, index, vertices)) = self.pending_mesh_chunks.pop_front()
-            && revision == self.edit_revision
-        {
-            let vertex_count = vertices.len() as u32;
-            let buffer = if vertices.is_empty() {
-                self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("Empty hexel chunk"),
-                    size: 4,
-                    usage: wgpu::BufferUsages::VERTEX,
-                    mapped_at_creation: false,
-                })
-            } else {
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Updated hexel chunk mesh"),
-                        contents: bytemuck::cast_slice(&vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    })
-            };
-            if let Some(chunk) = self.chunks.get_mut(&index) {
-                chunk.buffer = buffer;
-                chunk.vertex_count = vertex_count;
-            }
-            self.pending_mesh_count = self.pending_mesh_count.saturating_sub(1);
-            if self.pending_mesh_count == 0 {
-                self.dirty_chunks.clear();
-            }
-        }
-    }
-    fn create_chunk(&self, pos: ChunkPos) -> ChunkMesh {
-        let q_start = pos.q * CHUNK_SIZE;
-        let r_start = pos.r * CHUNK_SIZE;
-        let q_end = q_start + CHUNK_SIZE;
-        let r_end = r_start + CHUNK_SIZE;
-        let vertices = build_chunk_mesh(self.seed, &self.edits, pos);
-        let vertex_count = vertices.len() as u32;
-        let buffer = if vertices.is_empty() {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Empty hexel chunk"),
-                size: 4,
-                usage: wgpu::BufferUsages::VERTEX,
-                mapped_at_creation: false,
-            })
-        } else {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Hexel chunk mesh"),
-                    contents: bytemuck::cast_slice(&vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
-        };
-        let scale = WorldScale::default();
-        let mut min = Vec3::new(f32::INFINITY, 0.0, f32::INFINITY);
-        let y_start = pos.y * CHUNK_SIZE;
-        let y_end = y_start + CHUNK_SIZE;
-        let mut max = Vec3::new(
-            f32::NEG_INFINITY,
-            if pos.y == 0 {
-                (y_end as f32 * scale.hexel_height).max(105.0)
-            } else {
-                y_end as f32 * scale.hexel_height
-            },
-            f32::NEG_INFINITY,
-        );
-        for q in [q_start, q_end - 1] {
-            for r in [r_start, r_end - 1] {
-                let center = scale.prism_center(CellPos::new(q, r, 0));
-                min.x = min.x.min(center.x);
-                min.z = min.z.min(center.z);
-                max.x = max.x.max(center.x);
-                max.z = max.z.max(center.z);
-            }
-        }
-        min.x -= scale.hex_radius * 2.0;
-        min.z -= scale.hex_radius * 2.0;
-        max.x += scale.hex_radius * 2.0;
-        max.z += scale.hex_radius * 2.0;
-        min.y = y_start as f32 * scale.hexel_height;
-        ChunkMesh {
-            buffer,
-            vertex_count,
-            bounds_min: min,
-            bounds_max: max,
-        }
-    }
     pub fn planet_block_at(&self, id: u32) -> BlockId {
-        if let Some(block) = self.planet_cell_edits.get(&id) {
-            return *block;
-        }
-        let Some(cell) = self
-            .planet_topology
-            .cell(hexel_engine::topology::SurfaceCellId(id))
-        else {
-            return BlockId::Air;
-        };
-        let sample = self.planet_terrain.sample_direction(cell.center, 0.25);
-        use hexel_engine::planet::Biome;
-        match sample.biome {
-            Biome::DeepOcean | Biome::ShallowOcean => BlockId::Stone,
-            Biome::Mountain | Biome::PolarIce | Biome::Tundra => BlockId::Stone,
-            Biome::Desert | Biome::Savanna => BlockId::Dirt,
-            _ => BlockId::Grass,
-        }
+        self.planet_top_solid_voxel(id).1
     }
 
-    pub fn edit_planet_cell(&mut self, id: u32, block: BlockId) {
-        if !self.planet_cell_ranges.contains_key(&id) || block == BlockId::Foundation {
-            return;
+    pub fn edit_planet_voxel(&mut self, id: u32, layer: i32, block: BlockId) -> bool {
+        let pos = PlanetVoxelPos::new(hexel_engine::topology::SurfaceCellId(id), layer);
+        if self.planet_voxels.block_at(&self.planet_world, pos).is_none()
+            || !self.planet_voxels.set_block(&self.planet_world, pos, block) {
+            return false;
         }
-        self.planet_cell_edits.insert(id, block);
-        let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else {
-            return;
-        };
-        let color = match block {
-            BlockId::Air => [0.025, 0.055, 0.10],
-            BlockId::Grass => [0.20, 0.62, 0.22],
-            BlockId::Dirt => [0.48, 0.29, 0.14],
-            BlockId::Stone => [0.42, 0.45, 0.49],
-            BlockId::Foundation => [0.75, 0.75, 0.78],
-        };
+        if layer == 0 && self.planet_world.set_block(pos.cell, block).is_err() {
+            return false;
+        }
+        self.refresh_planet_cell_and_neighbors(id);
+        true
+    }
+
+    pub fn edit_planet_cell(&mut self, id: u32, block: BlockId) -> bool {
+        if block == BlockId::Foundation || !self.planet_cell_ranges.contains_key(&id) {
+            return false;
+        }
+        let cell = hexel_engine::topology::SurfaceCellId(id);
+        if self.planet_world.set_block(cell, block).is_err()
+            || !self.planet_voxels.set_block(&self.planet_world, PlanetVoxelPos::new(cell, 0), block) {
+            return false;
+        }
+        self.refresh_planet_cell_and_neighbors(id);
+        true
+    }
+
+    fn refresh_planet_cell_and_neighbors(&mut self, id: u32) {
+        self.refresh_planet_cell(id);
+        let neighbors = self.planet_world.topology()
+            .cell(hexel_engine::topology::SurfaceCellId(id))
+            .map(|cell| cell.neighbors.iter().map(|neighbor| neighbor.0).collect::<Vec<_>>())
+            .unwrap_or_default();
+        for neighbor in neighbors {
+            self.refresh_planet_cell(neighbor);
+        }
+        self.planet_stream_chunks.clear();
+        self.planet_stream_pending.clear();
+    }
+
+    fn refresh_planet_cell(&mut self, id: u32) {
+        let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else { return; };
+        let (top_layer, block) = self.planet_top_solid_voxel(id);
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
+        let offset = -(top_layer as f64) * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64;
+        let color = planet_block_color(block);
         for vertex in &mut self.planet_vertices[first..end_index] {
+            let direction = Vec3::from_array(vertex.position).normalize_or_zero();
+            let radial = DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64);
+            let sample = self.planet_world.terrain().sample_direction(radial, 0.25);
+            vertex.position = (sample.surface_position - sample.direction * offset).as_vec3().to_array();
             vertex.color = color;
         }
         self.queue.write_buffer(
@@ -1158,39 +767,259 @@ impl Renderer {
             start,
             bytemuck::cast_slice(&self.planet_vertices[first..end_index]),
         );
+
+        if let (Some(cell), Some((wall_start, wall_end))) = (
+            self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)),
+            self.planet_cell_wall_ranges.get(&id).copied(),
+        ) {
+            const BLOCK_DEPTH: f64 = 1.0;
+            let mut deepest_neighbor = (-top_layer).max(0) as f64 * BLOCK_DEPTH;
+            for neighbor in &cell.neighbors {
+                let neighbor_layer = self.planet_top_solid_layer(neighbor.0);
+                deepest_neighbor = deepest_neighbor.max((-neighbor_layer).max(0) as f64 * BLOCK_DEPTH);
+            }
+            let top_offset = top_layer as f64 * BLOCK_DEPTH;
+            let wall_depth = (top_offset + deepest_neighbor + BLOCK_DEPTH).max(BLOCK_DEPTH);
+            let mut wall_positions = Vec::with_capacity(wall_end - wall_start);
+            for index in 0..cell.boundary.len() {
+                let next = (index + 1) % cell.boundary.len();
+                let raw_a = self.planet_world.terrain().sample_direction(cell.boundary[index], 0.25).surface_position;
+                let raw_b = self.planet_world.terrain().sample_direction(cell.boundary[next], 0.25).surface_position;
+                let top_a = raw_a - raw_a.normalize() * offset;
+                let top_b = raw_b - raw_b.normalize() * offset;
+                let bottom_a = top_a - top_a.normalize() * wall_depth;
+                let bottom_b = top_b - top_b.normalize() * wall_depth;
+                let mut quad = [
+                    top_a.as_vec3(), bottom_a.as_vec3(), top_b.as_vec3(),
+                    top_b.as_vec3(), bottom_a.as_vec3(), bottom_b.as_vec3(),
+                ];
+                for tri in quad.as_chunks_mut::<3>().0 {
+                    let a = tri[0];
+                    let b = tri[1];
+                    let c = tri[2];
+                    if (b - a).cross(c - a).dot((a + b + c) / 3.0) < 0.0 {
+                        tri.swap(1, 2);
+                    }
+                }
+                wall_positions.extend(quad);
+            }
+            for (vertex, position) in self.planet_vertices[wall_start..wall_end].iter_mut().zip(wall_positions) {
+                vertex.position = position.to_array();
+            }
+            let byte_offset = wall_start as u64 * std::mem::size_of::<Vertex>() as u64;
+            self.queue.write_buffer(
+                &self.planet_vertex_buffer,
+                byte_offset,
+                bytemuck::cast_slice(&self.planet_vertices[wall_start..wall_end]),
+            );
+        }
+    }
+
+    /// Collision against trunks generated by the same biome/hash rule as the
+    /// streamed planetary vegetation meshes.
+    pub fn planet_tree_blocks_player(
+        &self,
+        position: Vec3,
+        player_radius: f32,
+        player_height: f32,
+    ) -> bool {
+        let radial = DVec3::new(
+            position.x as f64,
+            position.y as f64,
+            position.z as f64,
+        )
+        .normalize_or_zero();
+        let Some(current_id) = self.planet_world.topology().cell_id_for_direction(radial) else {
+            return false;
+        };
+        let Some(current_cell) = self.planet_world.topology().cell(current_id) else {
+            return false;
+        };
+        let mut candidates = HashSet::new();
+        candidates.insert(current_id.0);
+        candidates.extend(current_cell.neighbors.iter().map(|id| id.0));
+        for id in candidates {
+            if self.removed_planet_trees.contains(&id)
+                || self.planet_world.edited_cells().get(&hexel_engine::topology::SurfaceCellId(id)) == Some(&BlockId::Air) {
+                continue;
+            }
+            let Some(cell) = self.planet_world.topology().cell(
+                hexel_engine::topology::SurfaceCellId(id),
+            ) else {
+                continue;
+            };
+            let sample = self.planet_world.terrain().sample_direction(cell.center, 0.25);
+            let hash = vegetation_hash(
+                self.seed ^ id.wrapping_mul(0x27D4_EB2D),
+                id as i32,
+                id.rotate_left(13) as i32,
+            );
+            let Some(spec) = planet_tree_spec(sample.biome, hash) else {
+                continue;
+            };
+            let up = sample.direction;
+            let delta = DVec3::new(
+                position.x as f64,
+                position.y as f64,
+                position.z as f64,
+            ) - sample.surface_position;
+            let vertical = delta.dot(up);
+            let tangent = delta - up * vertical;
+            let trunk_fraction = if spec.species == 4 { 1.0 } else { 2.0 / 3.0 };
+            let trunk_top = spec.height_layers as f64
+                * WorldScale::default().hexel_height as f64
+                * trunk_fraction;
+            if tangent.length() < player_radius as f64 + 0.48
+                && vertical + player_height as f64 > 0.0
+                && vertical < trunk_top
+            {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn planet_surface_position(&self, direction: Vec3) -> Vec3 {
-        self.planet_terrain.sample_direction(DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64), 0.25).surface_position.as_vec3()
+        let radial = DVec3::new(
+            direction.x as f64,
+            direction.y as f64,
+            direction.z as f64,
+        ).normalize_or_zero();
+        let sample = self.planet_world.terrain().sample_direction(radial, 0.25);
+        let surface = self.planet_world.topology().cell_id_for_direction(radial)
+            .map(|id| {
+                let (layer, _) = self.planet_top_solid_voxel(id.0);
+                sample.surface_position + sample.direction * (layer as f64 * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64)
+            })
+            .unwrap_or(sample.surface_position);
+        surface.as_vec3()
     }
 
     pub fn planet_cell_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
+        self.planet_cell_hit_at_ray(origin, direction).map(|(id, _)| id)
+    }
+
+    /// Intersect the live edited surface triangles and inward cell walls. The
+    /// returned distance is the same geometry used for rendering, not an ideal sphere.
+    pub fn planet_cell_hit_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<(u32, f32)> {
         let dir = direction.normalize_or_zero();
         if dir == Vec3::ZERO { return None; }
-        // Intersect a local-radius sphere: terrain elevation varies around the
-        // globe, so the configured base radius can put an ocean-level player inside
-        // the ideal sphere and incorrectly select the far side.
-        let local_radius = self.planet_terrain
-            .sample_direction(DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64), 0.25)
-            .surface_position.length() as f32;
-        let b = origin.dot(dir);
-        let c = origin.length_squared() - local_radius * local_radius;
-        let discriminant = b * b - c;
-        if discriminant < 0.0 { return None; }
-        let root = discriminant.sqrt();
-        let near = -b - root;
-        let far = -b + root;
-        let distance = if near >= 0.0 { near } else if far >= 0.0 { far } else { return None; };
-        let hit = origin + dir * distance;
-        self.planet_topology.cell_id_for_direction(DVec3::new(hit.x as f64, hit.y as f64, hit.z as f64)).map(|id| id.0)
+        let mut best: Option<(u32, f32)> = None;
+        let vertex_size = std::mem::size_of::<Vertex>() as u64;
+        let radius = self.planet_world.descriptor().radius;
+        let elevation = self.planet_world.descriptor().elevation_scale;
+        for (id, (start, end)) in &self.planet_cell_ranges {
+            let cell_id = hexel_engine::topology::SurfaceCellId(*id);
+            let Some(cell) = self.planet_world.topology().cell(cell_id) else { continue; };
+            let layer = self.planet_top_solid_layer(*id);
+            let offset = layer as f64 * hexel_engine::world_profile::HEXEL_HEIGHT_METRES as f64;
+            let mut max_extent = offset.abs();
+            for neighbor in &cell.neighbors {
+                let neighbor_extent = self.planet_top_solid_layer(neighbor.0).abs() as f64 * 1.0;
+                max_extent = max_extent.max(neighbor_extent);
+            }
+            let center = (cell.center * radius + cell.center * (offset * 0.5)).as_vec3();
+            let bound_radius = radius * 0.18 + elevation + max_extent + offset.abs() * 0.5 + 1.0;
+            let Some(bound_hit) = ray_sphere_distance(origin, dir, center, bound_radius as f32) else {
+                continue;
+            };
+            if best.is_some_and(|(_, distance)| bound_hit > distance) {
+                continue;
+            }
+            let first = (*start / vertex_size) as usize;
+            let last = (*end / vertex_size) as usize;
+            if let Some(distance) = ray_triangle_range(&self.planet_vertices, origin, dir, first, last)
+                && best.is_none_or(|(_, current)| distance < current) {
+                best = Some((*id, distance));
+            }
+            if let Some((wall_start, wall_end)) = self.planet_cell_wall_ranges.get(id)
+                && let Some(distance) = ray_triangle_range(&self.planet_vertices, origin, dir, *wall_start, *wall_end)
+                && best.is_none_or(|(_, current)| distance < current) {
+                best = Some((*id, distance));
+            }
+        }
+        best.filter(|(_, distance)| *distance <= 8.0)
+    }
+
+    /// Ray-test deterministic trunk cylinders and canopy spheres before the terrain hit.
+    /// Returned IDs are stable across streamed chunk rebuilds and face seams.
+    pub fn planet_tree_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<u32> {
+        let dir = direction.normalize_or_zero();
+        if dir == Vec3::ZERO { return None; }
+        let (surface_id, surface_distance) = self.planet_cell_hit_at_ray(origin, dir)?;
+        let surface_distance = surface_distance as f64;
+        let origin_d = DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64);
+        let dir_d = DVec3::new(dir.x as f64, dir.y as f64, dir.z as f64);
+
+        let surface_cell = self.planet_world.topology()
+            .cell(hexel_engine::topology::SurfaceCellId(surface_id))?;
+        let mut candidates = HashSet::new();
+        candidates.insert(surface_id);
+        candidates.extend(surface_cell.neighbors.iter().map(|id| id.0));
+        let scale = WorldScale::default();
+        let mut best: Option<(f64, u32)> = None;
+        for id in candidates {
+            if self.removed_planet_trees.contains(&id)
+                || self.planet_world.edited_cells()
+                    .get(&hexel_engine::topology::SurfaceCellId(id)) == Some(&BlockId::Air) {
+                continue;
+            }
+            let Some(cell) = self.planet_world.topology()
+                .cell(hexel_engine::topology::SurfaceCellId(id)) else { continue; };
+            let sample = self.planet_world.terrain().sample_direction(cell.center, 0.25);
+            let hash = vegetation_hash(
+                self.seed ^ id.wrapping_mul(0x27D4_EB2D),
+                id as i32,
+                id.rotate_left(13) as i32,
+            );
+            let Some(spec) = planet_tree_spec(sample.biome, hash) else { continue; };
+            let up = sample.direction;
+            let rel = origin_d - sample.surface_position;
+            let axial_origin = rel.dot(up);
+            let axial_dir = dir_d.dot(up);
+            let perpendicular_origin = rel - up * axial_origin;
+            let perpendicular_dir = dir_d - up * axial_dir;
+            let trunk_radius = (spec.trunk_radius as f64 * scale.hex_radius as f64 * 0.72).max(0.28);
+            let trunk_fraction = if spec.species == 4 { 1.0 } else { 2.0 / 3.0 };
+            let trunk_top = spec.height_layers as f64 * scale.hexel_height as f64 * trunk_fraction;
+            let a = perpendicular_dir.length_squared();
+            if a > 1.0e-10 {
+                let bb = 2.0 * perpendicular_origin.dot(perpendicular_dir);
+                let cc = perpendicular_origin.length_squared() - trunk_radius * trunk_radius;
+                let discriminant = bb * bb - 4.0 * a * cc;
+                if discriminant >= 0.0 {
+                    for t in [(-bb - discriminant.sqrt()) / (2.0 * a), (-bb + discriminant.sqrt()) / (2.0 * a)] {
+                        let height = axial_origin + t * axial_dir;
+                        if t >= 0.0 && t < surface_distance && (0.0..=trunk_top).contains(&height)
+                            && best.is_none_or(|(distance, _)| t < distance) {
+                            best = Some((t, id));
+                        }
+                    }
+                }
+            }
+            let crown_center = sample.surface_position + up * (trunk_top * 0.78);
+            let crown_radius = (spec.crown_radius as f64 * scale.hex_radius as f64 * 1.35).max(0.8);
+            let sphere_offset = origin_d - crown_center;
+            let sphere_b = sphere_offset.dot(dir_d);
+            let sphere_c = sphere_offset.length_squared() - crown_radius * crown_radius;
+            let sphere_disc = sphere_b * sphere_b - sphere_c;
+            if sphere_disc >= 0.0 {
+                let t = -sphere_b - sphere_disc.sqrt();
+                if t >= 0.0 && t < surface_distance
+                    && best.is_none_or(|(distance, _)| t < distance) {
+                    best = Some((t, id));
+                }
+            }
+        }
+        best.filter(|(distance, _)| *distance <= 8.0).map(|(_, id)| id)
     }
 
     fn build_planet_cell_outline(&self, id: u32) -> Vec<Vertex> {
-        let Some(cell) = self.planet_topology.cell(hexel_engine::topology::SurfaceCellId(id)) else { return Vec::new(); };
+        let Some(cell) = self.planet_world.topology().cell(hexel_engine::topology::SurfaceCellId(id)) else { return Vec::new(); };
         let mut vertices = Vec::with_capacity(cell.boundary.len() * 2);
         for i in 0..cell.boundary.len() {
-            let a = self.planet_terrain.sample_direction(cell.boundary[i], 0.25).surface_position.as_vec3() * 1.006;
-            let b = self.planet_terrain.sample_direction(cell.boundary[(i + 1) % cell.boundary.len()], 0.25).surface_position.as_vec3() * 1.006;
+            let a = self.planet_world.terrain().sample_direction(cell.boundary[i], 0.25).surface_position.as_vec3() * 1.006;
+            let b = self.planet_world.terrain().sample_direction(cell.boundary[(i + 1) % cell.boundary.len()], 0.25).surface_position.as_vec3() * 1.006;
             for point in [a, b] {
                 vertices.push(Vertex { position: point.to_array(), color: [1.0, 0.92, 0.22], uv: [0.0, 0.0], textured: 0.0 });
             }
@@ -1202,10 +1031,22 @@ impl Renderer {
     /// The low-detail whole-planet mesh remains as a distant backdrop while these
     /// camera-near patches are rebuilt only when the desired neighborhood changes.
     fn update_planet_streaming(&mut self, player_position: Vec3) {
-        const CHUNKS_PER_FACE: u32 = 24;
-        const MESH_RESOLUTION: u32 = 10;
-        const ANGULAR_RADIUS_COS: f64 = 0.9637708963658905; // cos(0.27 radians)
-        const MAX_NEW_CHUNKS_PER_FRAME: usize = 3;
+        // At Earth's radius, 400,000 cube-face patches produce roughly
+        // 30-metre patch spacing near face centers. Plan a generous bounded
+        // neighborhood around the player; never enumerate the whole planet grid.
+        // Stream a coarser outer ring quickly enough to close the visible gaps
+        // in the distant surface, while retaining enough triangles for terrain
+        // relief. At Earth's radius this grid is about 120 m per patch near a
+        // cube-face centre; camera-relative vertex storage is the next precision
+        // step before pushing the grid back toward metre-scale patches.
+        // The previous 400k grid created tiny patches, but also magnified cracks
+        // from planet-centred f32 vertices. Use a 200k grid for broader overlap,
+        // a denser mesh per patch, and a bounded queue so the close surface fills
+        // quickly without trying to build the whole neighbourhood in one frame.
+        const CHUNKS_PER_FACE: u32 = 200_000;
+        const MESH_RESOLUTION: u32 = 64;
+        const LOCAL_PATCH_RADIUS: u32 = 5;
+        const MAX_NEW_CHUNKS_PER_FRAME: usize = 32;
 
         let radial = DVec3::new(
             player_position.x as f64,
@@ -1219,28 +1060,14 @@ impl Renderer {
 
         let mut wanted = HashSet::new();
         let mut prioritized = Vec::new();
-        for face in [
-            CubeFace::PositiveX,
-            CubeFace::NegativeX,
-            CubeFace::PositiveY,
-            CubeFace::NegativeY,
-            CubeFace::PositiveZ,
-            CubeFace::NegativeZ,
-        ] {
-            let (normal, axis_u, axis_v) = face.basis();
-            for y in 0..CHUNKS_PER_FACE {
-                let v = -1.0 + 2.0 * (y as f64 + 0.5) / CHUNKS_PER_FACE as f64;
-                for x in 0..CHUNKS_PER_FACE {
-                    let u = -1.0 + 2.0 * (x as f64 + 0.5) / CHUNKS_PER_FACE as f64;
-                    let direction = (normal + axis_u * u + axis_v * v).normalize();
-                    let dot = direction.dot(radial);
-                    if dot >= ANGULAR_RADIUS_COS {
-                        let key = PlanetChunkKey { face, x, y };
-                        wanted.insert(key);
-                        prioritized.push((dot, key));
-                    }
-                }
-            }
+        for key in chunk_keys_near_direction(radial, CHUNKS_PER_FACE, LOCAL_PATCH_RADIUS) {
+            let (normal, axis_u, axis_v) = key.face.basis();
+            let u = -1.0 + 2.0 * (key.x as f64 + 0.5) / CHUNKS_PER_FACE as f64;
+            let v = -1.0 + 2.0 * (key.y as f64 + 0.5) / CHUNKS_PER_FACE as f64;
+            let direction = (normal + axis_u * u + axis_v * v).normalize();
+            let dot = direction.dot(radial);
+            wanted.insert(key);
+            prioritized.push((dot, key));
         }
 
         self.planet_stream_chunks.retain(|key, _| wanted.contains(key));
@@ -1265,7 +1092,7 @@ impl Renderer {
                 continue;
             }
             let Ok(mesh) = PlanetChunkMesh::generate(
-                &self.planet_terrain,
+                self.planet_world.terrain(),
                 key,
                 CHUNKS_PER_FACE,
                 MESH_RESOLUTION,
@@ -1273,17 +1100,90 @@ impl Renderer {
             ) else {
                 continue;
             };
-            let mut vertices = Vec::with_capacity(mesh.indices.len());
-            for index in mesh.indices {
-                let source = mesh.vertices[index as usize];
-                let position = source.position + source.normal * 0.035;
-                let sample = self.planet_terrain.sample_direction(source.normal, 0.25);
-                vertices.push(Vertex {
-                    position: position.as_vec3().to_array(),
-                    color: planet_vertex_color(sample),
+            // Resolve cell ownership once per patch-grid vertex, not once per
+            // expanded triangle index. Nearest-cell lookup is linear in topology
+            // size, so this avoids repeating that work for shared mesh vertices.
+            let patch_origin = mesh.vertices[0].position;
+            let mut grid_vertices = Vec::with_capacity(mesh.vertices.len());
+            for source in &mesh.vertices {
+                let sample = self.planet_world.terrain().sample_direction(source.normal, 0.25);
+                let cell_block = self
+                    .planet_world.topology()
+                    .cell_id_for_direction(source.normal)
+                    .map(|id| self.planet_block_at(id.0));
+                let surface_position = if cell_block == Some(BlockId::Air) {
+                    source.position - source.normal * 1.0
+                } else {
+                    source.position
+                };
+                // Keep the streamed surface offset small; camera-relative rebasing is handled separately.
+                let position = surface_position + source.normal * 0.035;
+                let color = cell_block
+                    .map(planet_block_color)
+                    .unwrap_or_else(|| planet_vertex_color(sample));
+                grid_vertices.push(Vertex {
+                    position: (position - patch_origin).as_vec3().to_array(),
+                    color,
                     uv: [0.0, 0.0],
                     textured: 0.0,
                 });
+            }
+            let mut vertices = mesh
+                .indices
+                .iter()
+                .map(|index| grid_vertices[*index as usize])
+                .collect::<Vec<_>>();
+
+            // Add a radial skirt around each streamed patch. Adjacent patches
+            // sample the same terrain in f64, but casting Earth-centred positions
+            // to f32 can separate their borders by fractions of a metre. The
+            // skirt extends below the terrain edge so those precision cracks
+            // cannot expose the empty background at ground level.
+            let side = mesh.resolution + 1;
+            let mut perimeter = Vec::with_capacity((mesh.resolution * 4) as usize);
+            for column in 0..mesh.resolution {
+                perimeter.push(column as usize);
+            }
+            for row in 0..mesh.resolution {
+                perimeter.push((row * side + mesh.resolution) as usize);
+            }
+            for column in (1..=mesh.resolution).rev() {
+                perimeter.push((mesh.resolution * side + column) as usize);
+            }
+            for row in (1..=mesh.resolution).rev() {
+                perimeter.push((row * side) as usize);
+            }
+            const PATCH_SKIRT_DEPTH: f32 = 12.0;
+            for edge in 0..perimeter.len() {
+                let a = grid_vertices[perimeter[edge]];
+                let b = grid_vertices[perimeter[(edge + 1) % perimeter.len()]];
+                let lower = |vertex: Vertex| {
+                    let position = Vec3::from_array(vertex.position);
+                    let radial = (patch_origin.as_vec3() + position).normalize_or_zero();
+                    let mut skirt = vertex;
+                    skirt.position = (position - radial * PATCH_SKIRT_DEPTH).to_array();
+                    skirt.color = [vertex.color[0] * 0.72, vertex.color[1] * 0.72, vertex.color[2] * 0.72];
+                    skirt
+                };
+                let lower_a = lower(a);
+                let lower_b = lower(b);
+                vertices.extend_from_slice(&[a, lower_a, b, b, lower_a, lower_b]);
+            }
+
+            let terrain_vertex_count = vertices.len();
+            append_planetary_trees(
+                &mut vertices,
+                key,
+                CHUNKS_PER_FACE,
+                self.planet_world.topology(),
+                self.planet_world.terrain(),
+                self.seed,
+                self.planet_world.edited_cells(),
+                &self.removed_planet_trees,
+            );
+            for vertex in &mut vertices[terrain_vertex_count..] {
+                let p = DVec3::new(vertex.position[0] as f64, vertex.position[1] as f64, vertex.position[2] as f64);
+                vertex.position = (p - patch_origin).as_vec3().to_array();
             }
             if vertices.is_empty() {
                 continue;
@@ -1293,22 +1193,193 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
+            let chunk_camera_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Camera-relative terrain patch uniform"),
+                contents: bytemuck::bytes_of(&CameraUniform {
+                    view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                    world_offset: [0.0; 4],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+            let chunk_camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Camera-relative terrain patch bind group"),
+                layout: &self.camera_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: chunk_camera_buffer.as_entire_binding(),
+                }],
+            });
             self.planet_stream_chunks.insert(
                 key,
                 PlanetGpuChunk {
                     buffer,
                     vertex_count: vertices.len() as u32,
+                    origin: patch_origin,
+                    camera_buffer: chunk_camera_buffer,
+                    camera_bind_group: chunk_camera_bind_group,
                 },
             );
         }
     }
 
-    pub fn toggle_planet_preview(&mut self) {
-        self.planet_preview = !self.planet_preview;
-    }
 
-    pub fn planet_preview_enabled(&self) -> bool {
-        self.planet_preview
+    /// Build the near-field gameplay ground from real six-sided Hexel prisms.
+    /// The smooth cube-sphere mesh remains a distant backdrop; this local mesh is
+    /// camera-relative and regenerated only after the player has crossed its radius.
+    fn update_planet_hexel_surface(&mut self, player_position: Vec3) {
+        const GRID_RADIUS: i32 = 24;
+        const REBUILD_DISTANCE: f64 = 7.0;
+        let player_d = DVec3::new(
+            player_position.x as f64,
+            player_position.y as f64,
+            player_position.z as f64,
+        );
+        let radial = player_d.normalize_or_zero();
+        if radial == DVec3::ZERO { return; }
+
+        let base_sample = self.planet_world.terrain().sample_direction(radial, 0.25);
+        let origin = base_sample.surface_position;
+        if self.planet_hexel_anchor.is_some_and(|old| (origin - old).length() < REBUILD_DISTANCE) {
+            return;
+        }
+        let frame = PlanetaryFrame::at(origin);
+        let scale = WorldScale::default();
+        let radius = scale.hex_radius as f64;
+        let step_height = scale.hexel_height as f64;
+        let anchor_cell = self.planet_world.topology()
+            .cell_id_for_direction(radial)
+            .map(|id| id.0)
+            .unwrap_or(0);
+
+        // Materialize the real 16³ chunk data beneath the visible near-field crust.
+        // The horizontal neighbourhood covers this 49×49 cell mesh; adjacent
+        // chunks share one vertical datum and are generated only once per anchor.
+        for chunk_r in -2..=1 {
+            for chunk_q in -2..=1 {
+                for chunk_y in -1..=1 {
+                    let _ = self.planet_hexel_chunks.ensure_chunk(
+                        anchor_cell,
+                        radial,
+                        ChunkPos { q: chunk_q, r: chunk_r, y: chunk_y },
+                    );
+                }
+            }
+        }
+
+        let mut vertices: Vec<Vertex> = Vec::with_capacity(90_000);
+
+        for r in -GRID_RADIUS..=GRID_RADIUS {
+            for q in -GRID_RADIUS..=GRID_RADIUS {
+                // Axial hex spacing: one-metre-wide cells, no square-grid approximation.
+                let x = radius * 3.0_f64.sqrt() * (q as f64 + r as f64 * 0.5);
+                let z = radius * 1.5 * r as f64;
+                let approximate = origin + frame.east * x + frame.north * z;
+                let direction = approximate.normalize_or_zero();
+                let sample = self.planet_world.terrain().sample_direction(direction, 0.25);
+                let layer = ((sample.elevation - base_sample.elevation) / step_height).round();
+                // Read the top material from the chunk-backed crust, not from a
+                // separate decorative material pass. Terrain generation and the
+                // visible Hexel now agree on the surface block where the chunk is loaded.
+                let stored_block = self.planet_hexel_chunks.get_loaded(
+                    anchor_cell,
+                    CellPos::new(q, r, layer as i32),
+                );
+                // Chunk data is the authority for this near-field surface cell.
+                // An air cell must not be painted back in as procedural terrain.
+                // (The global LOD still needs to be replaced with the same chunk
+                // data before digging can expose this as a true hole through the crust.)
+                if !stored_block.is_solid() {
+                    continue;
+                }
+                // Lift slightly above the distant LOD surface until the smooth
+                // backdrop is replaced by the same chunk mesh in the near field.
+                let top_y = layer * step_height + 0.075;
+                let bottom_y = top_y - step_height;
+                let variation = if (q - r).rem_euclid(2) == 0 { 1.035 } else { 0.965 };
+                let base_color = if stored_block.is_solid() {
+                    planet_block_color(stored_block)
+                } else {
+                    planet_vertex_color(sample)
+                };
+                let color = base_color.map(|c| (c * variation).min(1.0));
+                let edge_color = [color[0] * 0.34, color[1] * 0.34, color[2] * 0.34];
+                let center = Vec3::new(x as f32, top_y as f32, z as f32);
+                let mut corners = [Vec3::ZERO; 6];
+                let mut inner_corners = [Vec3::ZERO; 6];
+                // A 30-degree offset matches the pointy-top axial grid used by WorldScale.
+                for i in 0..6 {
+                    let angle = (i as f64 * 60.0 + 30.0).to_radians();
+                    let dx = angle.cos();
+                    let dz = angle.sin();
+                    corners[i] = Vec3::new(
+                        (x + radius * dx) as f32,
+                        top_y as f32,
+                        (z + radius * dz) as f32,
+                    );
+                    let inset = radius * 0.90;
+                    inner_corners[i] = Vec3::new(
+                        (x + inset * dx) as f32,
+                        (top_y + 0.004) as f32,
+                        (z + inset * dz) as f32,
+                    );
+                }
+                for i in 0..6 {
+                    let next = (i + 1) % 6;
+                    // Dark bevel/rim on top makes each one-metre cell visible at a glance.
+                    push_triangle(&mut vertices, corners[i], inner_corners[i], inner_corners[next], edge_color);
+                    push_triangle(&mut vertices, corners[i], inner_corners[next], corners[next], edge_color);
+                    push_triangle(&mut vertices, center, inner_corners[i], inner_corners[next], color);
+                    let lower_a = Vec3::new(corners[i].x, bottom_y as f32, corners[i].z);
+                    let lower_b = Vec3::new(corners[next].x, bottom_y as f32, corners[next].z);
+                    let side_color = [color[0] * 0.58, color[1] * 0.58, color[2] * 0.58];
+                    push_triangle(&mut vertices, corners[i], lower_a, corners[next], side_color);
+                    push_triangle(&mut vertices, corners[next], lower_a, lower_b, side_color);
+                }
+            }
+        }
+
+        // The generated Hexel grid is expressed in tangent-local coordinates
+        // (east=x, up=y, north=z). Rotate those offsets into planet space before
+        // uploading; leaving them in global XYZ makes the local terrain stand
+        // upright except at one special orientation, producing the wall/plane
+        // split visible in gameplay.
+        for vertex in &mut vertices {
+            let local = Vec3::from_array(vertex.position);
+            let planet_delta = frame.east * local.x as f64
+                + frame.up * local.y as f64
+                + frame.north * local.z as f64;
+            vertex.position = planet_delta.as_vec3().to_array();
+        }
+
+        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Near-field six-sided Hexel terrain"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let camera_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Hexel terrain camera-relative uniform"),
+            contents: bytemuck::bytes_of(&CameraUniform {
+                view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                world_offset: [0.0; 4],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Hexel terrain camera-relative bind group"),
+            layout: &self.camera_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+        self.planet_hexel_surface = Some(PlanetGpuChunk {
+            buffer,
+            vertex_count: vertices.len() as u32,
+            origin,
+            camera_buffer,
+            camera_bind_group,
+        });
+        self.planet_hexel_anchor = Some(origin);
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -1331,25 +1402,39 @@ impl Renderer {
         inventory_open: bool,
         item_counts: [u16; 36],
     ) -> Result<(), wgpu::SurfaceError> {
-        self.poll_mesh_results();
-        if self.planet_preview {
-            self.update_planet_streaming(camera.position);
-        }
+        self.update_planet_streaming(camera.position);
+        self.update_planet_hexel_surface(camera.position);
         let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
+            world_offset: [0.0; 4],
         };
+        let relative_view_proj = camera.relative_view_projection(self.size);
+        let camera_position_d = DVec3::new(
+            camera.position.x as f64, camera.position.y as f64, camera.position.z as f64,
+        );
+        for chunk in self.planet_stream_chunks.values() {
+            let offset = chunk.origin - camera_position_d;
+            let patch_uniform = CameraUniform {
+                view_proj: relative_view_proj.to_cols_array_2d(),
+                world_offset: [offset.x as f32, offset.y as f32, offset.z as f32, 0.0],
+            };
+            self.queue.write_buffer(&chunk.camera_buffer, 0, bytemuck::bytes_of(&patch_uniform));
+        }
+        if let Some(hexels) = self.planet_hexel_surface.as_ref() {
+            let offset = hexels.origin - camera_position_d;
+            let hexel_uniform = CameraUniform {
+                view_proj: relative_view_proj.to_cols_array_2d(),
+                world_offset: [offset.x as f32, offset.y as f32, offset.z as f32, 0.0],
+            };
+            self.queue.write_buffer(&hexels.camera_buffer, 0, bytemuck::bytes_of(&hexel_uniform));
+        }
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
-        let target_vertices = if self.planet_preview {
-            self.planet_cell_at_ray(camera.position, camera.forward())
-                .map(|id| self.build_planet_cell_outline(id))
-                .unwrap_or_default()
-        } else {
-            self.raycast(camera.position, camera.forward(), 8.0)
-                .map(|(cell, _)| build_target_outline(cell))
-                .unwrap_or_default()
-        };
+        let target_vertices = self
+            .planet_cell_at_ray(camera.position, camera.forward())
+            .map(|id| self.build_planet_cell_outline(id))
+            .unwrap_or_default();
         if !target_vertices.is_empty() {
             self.queue.write_buffer(
                 &self.target_buffer,
@@ -1448,20 +1533,11 @@ impl Renderer {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(if self.planet_preview {
-                            wgpu::Color {
-                                r: 0.008,
-                                g: 0.012,
-                                b: 0.035,
-                                a: 1.0,
-                            }
-                        } else {
-                            wgpu::Color {
-                                r: 0.52,
-                                g: 0.72,
-                                b: 0.88,
-                                a: 1.0,
-                            }
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.008,
+                            g: 0.012,
+                            b: 0.035,
+                            a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -1480,36 +1556,25 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.foliage_bind_group, &[]);
-            if self.planet_preview {
-                pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
-                pass.draw(0..self.planet_vertex_count, 0..1);
-                for chunk in self.planet_stream_chunks.values() {
-                    if chunk.vertex_count == 0 { continue; }
-                    pass.set_vertex_buffer(0, chunk.buffer.slice(..));
-                    pass.draw(0..chunk.vertex_count, 0..1);
-                }
-                if !target_vertices.is_empty() {
-                    pass.set_pipeline(&self.outline_pipeline);
-                    pass.set_vertex_buffer(0, self.target_buffer.slice(..));
-                    pass.draw(0..target_vertices.len() as u32, 0..1);
-                }
-            } else {
-                let forward = camera.forward();
-                for chunk in self.chunks.values() {
-                    if chunk.vertex_count == 0
-                        || !chunk_visible(view_proj, camera.position, forward, chunk)
-                    {
-                        continue;
-                    }
-                    pass.set_vertex_buffer(0, chunk.buffer.slice(..));
-                    pass.draw(0..chunk.vertex_count, 0..1);
-                }
-                if !target_vertices.is_empty() {
-                    pass.set_pipeline(&self.outline_pipeline);
-                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                    pass.set_vertex_buffer(0, self.target_buffer.slice(..));
-                    pass.draw(0..target_vertices.len() as u32, 0..1);
-                }
+            // Bedrock is an unrendered base layer; only editable Hexel meshes are drawn.
+            pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
+            pass.draw(0..self.planet_vertex_count, 0..1);
+            for chunk in self.planet_stream_chunks.values() {
+                if chunk.vertex_count == 0 { continue; }
+                pass.set_bind_group(0, &chunk.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, chunk.buffer.slice(..));
+                pass.draw(0..chunk.vertex_count, 0..1);
+            }
+            if let Some(hexels) = self.planet_hexel_surface.as_ref() {
+                pass.set_bind_group(0, &hexels.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, hexels.buffer.slice(..));
+                pass.draw(0..hexels.vertex_count, 0..1);
+            }
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            if !target_vertices.is_empty() {
+                pass.set_pipeline(&self.outline_pipeline);
+                pass.set_vertex_buffer(0, self.target_buffer.slice(..));
+                pass.draw(0..target_vertices.len() as u32, 0..1);
             }
         }
         {
@@ -1531,14 +1596,210 @@ impl Renderer {
             overlay.set_vertex_buffer(0, self.crosshair_buffer.slice(..));
             overlay.draw(0..4, 0..1);
             overlay.draw(4..8, 0..1);
-            if !self.planet_preview {
-                overlay.set_vertex_buffer(0, hud_buffer.slice(..));
-                overlay.draw(0..hud_vertices.len() as u32, 0..1);
-            }
+            // The survival HUD is part of the single planetary world too.
+            overlay.set_vertex_buffer(0, hud_buffer.slice(..));
+            overlay.draw(0..hud_vertices.len() as u32, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PlanetTreeSpec {
+    species: u8,
+    height_layers: i32,
+    trunk_radius: i32,
+    crown_radius: i32,
+    trunk_color: [f32; 3],
+    foliage_color: [f32; 3],
+    leaf_layer: u32,
+    bark_layer: u32,
+}
+
+fn planet_tree_spec(biome: Biome, hash: u32) -> Option<PlanetTreeSpec> {
+    let (frequency, species, min_height, height_span, crown_radius, foliage_color, leaf_layer, bark_layer) =
+        match biome {
+            Biome::BorealForest => (3, 2, 10, 9, 2, [0.12, 0.30, 0.15], 8, 23),
+            Biome::TemperateForest => (3, 0, 9, 8, 3, [0.18, 0.46, 0.15], 7, 22),
+            Biome::TropicalForest => (2, 3, 13, 9, 3, [0.10, 0.39, 0.13], 5, 19),
+            Biome::Grassland => (9, 6, 6, 5, 2, [0.30, 0.39, 0.17], 6, 21),
+            Biome::Savanna => (12, 3, 7, 7, 2, [0.18, 0.46, 0.15], 0, 15),
+            _ => return None,
+        };
+    if !hash.is_multiple_of(frequency) {
+        return None;
+    }
+    Some(PlanetTreeSpec {
+        species,
+        height_layers: min_height + (hash.rotate_left(11) % height_span) as i32,
+        trunk_radius: 1,
+        crown_radius,
+        trunk_color: if species == 1 { [0.78, 0.75, 0.65] } else { [0.38, 0.25, 0.14] },
+        foliage_color,
+        leaf_layer,
+        bark_layer,
+    })
+}
+
+fn planetary_chunk_owns_direction(
+    direction: DVec3,
+    key: PlanetChunkKey,
+    chunks_per_face: u32,
+) -> bool {
+    let direction = direction.normalize_or_zero();
+    if direction == DVec3::ZERO || chunks_per_face == 0 {
+        return false;
+    }
+    let faces = [
+        CubeFace::PositiveX,
+        CubeFace::NegativeX,
+        CubeFace::PositiveY,
+        CubeFace::NegativeY,
+        CubeFace::PositiveZ,
+        CubeFace::NegativeZ,
+    ];
+    let mut selected_face = CubeFace::PositiveX;
+    let mut best_dot = f64::NEG_INFINITY;
+    for face in faces {
+        let (normal, _, _) = face.basis();
+        let dot = direction.dot(normal);
+        if dot > best_dot {
+            best_dot = dot;
+            selected_face = face;
+        }
+    }
+    if selected_face != key.face {
+        return false;
+    }
+    let (normal, axis_u, axis_v) = key.face.basis();
+    let denominator = direction.dot(normal);
+    if denominator <= 0.0 {
+        return false;
+    }
+    let u = direction.dot(axis_u) / denominator;
+    let v = direction.dot(axis_v) / denominator;
+    let grid = chunks_per_face as f64;
+    let x = (((u + 1.0) * 0.5 * grid).floor() as i64)
+        .clamp(0, chunks_per_face as i64 - 1) as u32;
+    let y = (((v + 1.0) * 0.5 * grid).floor() as i64)
+        .clamp(0, chunks_per_face as i64 - 1) as u32;
+    x == key.x && y == key.y
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_planetary_trees(
+    vertices: &mut Vec<Vertex>,
+    key: PlanetChunkKey,
+    chunks_per_face: u32,
+    topology: &SurfaceTopology,
+    terrain: &PlanetGenerator,
+    seed: u32,
+    edits: &std::collections::BTreeMap<hexel_engine::topology::SurfaceCellId, BlockId>,
+    removed_trees: &HashSet<u32>,
+) {
+    let scale = WorldScale::default();
+    for cell in topology.cells() {
+        if !planetary_chunk_owns_direction(cell.center, key, chunks_per_face)
+            || removed_trees.contains(&cell.id.0)
+            || edits.get(&cell.id) == Some(&BlockId::Air)
+        {
+            continue;
+        }
+        let sample = terrain.sample_direction(cell.center, 0.25);
+        let hash = vegetation_hash(
+            seed ^ cell.id.0.wrapping_mul(0x27D4_EB2D),
+            cell.id.0 as i32,
+            cell.id.0.rotate_left(13) as i32,
+        );
+        let Some(spec) = planet_tree_spec(sample.biome, hash) else {
+            continue;
+        };
+        let mut tree = Vec::new();
+        append_hexel_tree(
+            &mut tree,
+            CellPos::new(0, 0, 0),
+            spec.height_layers,
+            spec.trunk_radius,
+            spec.crown_radius,
+            (spec.trunk_color, spec.foliage_color),
+            spec.species,
+            hash,
+            spec.leaf_layer,
+            spec.bark_layer,
+            scale,
+        );
+        let frame = PlanetaryFrame::at(sample.surface_position);
+        for mut vertex in tree {
+            let local = Vec3::from_array(vertex.position);
+            let planet_position = frame.to_planet(DVec3::new(
+                local.x as f64,
+                local.y as f64,
+                local.z as f64,
+            ));
+            vertex.position = planet_position.as_vec3().to_array();
+            vertices.push(vertex);
+        }
+    }
+}
+
+fn ray_triangle_range(vertices: &[Vertex], origin: Vec3, direction: Vec3, start: usize, end: usize) -> Option<f32> {
+    let mut nearest: Option<f32> = None;
+    for index in (start..end).step_by(3) {
+        let a = Vec3::from_array(vertices[index].position);
+        let b = Vec3::from_array(vertices[index + 1].position);
+        let c = Vec3::from_array(vertices[index + 2].position);
+        if let Some(distance) = ray_triangle_distance(origin, direction, a, b, c)
+            && nearest.is_none_or(|current| distance < current) {
+            nearest = Some(distance);
+        }
+    }
+    nearest
+}
+
+fn ray_sphere_distance(origin: Vec3, direction: Vec3, center: Vec3, radius: f32) -> Option<f32> {
+    let relative = origin - center;
+    let b = relative.dot(direction);
+    let c = relative.length_squared() - radius * radius;
+    let discriminant = b * b - c;
+    if discriminant < 0.0 { return None; }
+    let root = discriminant.sqrt();
+    let near = -b - root;
+    let far = -b + root;
+    if far < 0.0 { None } else { Some(near.max(0.0)) }
+}
+
+fn ray_triangle_distance(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
+    let edge_ab = b - a;
+    let edge_ac = c - a;
+    let p = direction.cross(edge_ac);
+    let determinant = edge_ab.dot(p);
+    if determinant.abs() < 1.0e-7 {
+        return None;
+    }
+    let inverse = determinant.recip();
+    let from_a = origin - a;
+    let u = from_a.dot(p) * inverse;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = from_a.cross(edge_ab);
+    let v = direction.dot(q) * inverse;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let distance = edge_ac.dot(q) * inverse;
+    (distance > 0.001 && distance.is_finite()).then_some(distance)
+}
+
+fn planet_block_color(block: BlockId) -> [f32; 3] {
+    match block {
+        BlockId::Air => [0.025, 0.055, 0.10],
+        BlockId::Grass => [0.20, 0.62, 0.22],
+        BlockId::Dirt => [0.48, 0.29, 0.14],
+        BlockId::Stone => [0.42, 0.45, 0.49],
+        BlockId::Foundation => [0.75, 0.75, 0.78],
     }
 }
 
@@ -1556,68 +1817,6 @@ fn planet_vertex_color(sample: PlanetSample) -> [f32; 3] {
         Biome::TropicalForest => [0.04, 0.38, 0.17],
         Biome::Mountain => [0.47, 0.46, 0.43],
     }
-}
-
-fn generated_block_from_height(cell: CellPos, height: i32) -> BlockId {
-    if cell.y < 0 {
-        BlockId::Foundation
-    } else if cell.y > height {
-        BlockId::Air
-    } else if cell.y == height {
-        BlockId::Grass
-    } else if cell.y >= height - 3 {
-        BlockId::Dirt
-    } else {
-        BlockId::Stone
-    }
-}
-
-fn build_target_outline(cell: CellPos) -> Vec<Vertex> {
-    let scale = WorldScale::default();
-    let center = scale.prism_center(cell);
-    let radius = scale.hex_radius * 1.025;
-    let bottom = cell.y as f32 * scale.hexel_height - 0.002;
-    let top = (cell.y + 1) as f32 * scale.hexel_height + 0.002;
-    let ring: [Vec3; 6] = std::array::from_fn(|i| {
-        let angle = (30.0_f32 + i as f32 * 60.0).to_radians();
-        Vec3::new(
-            center.x + angle.cos() * radius,
-            0.0,
-            center.z + angle.sin() * radius,
-        )
-    });
-    let color = [1.0, 0.92, 0.12];
-    let mut vertices = Vec::with_capacity(36);
-    let mut edge = |a: Vec3, b: Vec3| {
-        vertices.push(Vertex {
-            position: a.to_array(),
-            color,
-            uv: [0.0, 0.0],
-            textured: 0.0,
-        });
-        vertices.push(Vertex {
-            position: b.to_array(),
-            color,
-            uv: [0.0, 0.0],
-            textured: 0.0,
-        });
-    };
-    for i in 0..6 {
-        let next = (i + 1) % 6;
-        edge(
-            Vec3::new(ring[i].x, bottom, ring[i].z),
-            Vec3::new(ring[next].x, bottom, ring[next].z),
-        );
-        edge(
-            Vec3::new(ring[i].x, top, ring[i].z),
-            Vec3::new(ring[next].x, top, ring[next].z),
-        );
-        edge(
-            Vec3::new(ring[i].x, bottom, ring[i].z),
-            Vec3::new(ring[i].x, top, ring[i].z),
-        );
-    }
-    vertices
 }
 
 fn create_depth_target(
@@ -1642,287 +1841,6 @@ fn create_depth_target(
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
-fn chunk_visible(view_proj: Mat4, camera_position: Vec3, forward: Vec3, chunk: &ChunkMesh) -> bool {
-    let center = (chunk.bounds_min + chunk.bounds_max) * 0.5;
-    let radius = (chunk.bounds_max - center).length();
-    let to_center = center - camera_position;
-    if to_center.length() - radius > RENDER_DISTANCE || to_center.dot(forward) < -radius {
-        return false;
-    }
-    let corners = [
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_min.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_min.y, chunk.bounds_max.z),
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_max.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_min.x, chunk.bounds_max.y, chunk.bounds_max.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_min.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_min.y, chunk.bounds_max.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_max.y, chunk.bounds_min.z),
-        Vec3::new(chunk.bounds_max.x, chunk.bounds_max.y, chunk.bounds_max.z),
-    ];
-    let clip = corners.map(|p| view_proj * p.extend(1.0));
-    if clip.iter().all(|p| p.x < -p.w)
-        || clip.iter().all(|p| p.x > p.w)
-        || clip.iter().all(|p| p.y < -p.w)
-        || clip.iter().all(|p| p.y > p.w)
-        || clip.iter().all(|p| p.z < 0.0)
-        || clip.iter().all(|p| p.z > p.w)
-    {
-        return false;
-    }
-    true
-}
-fn affected_chunks_for_cell(cell: CellPos) -> Vec<ChunkPos> {
-    let mut affected = cell
-        .neighbors()
-        .into_iter()
-        .map(|neighbor| neighbor.chunk_and_local().0)
-        .collect::<Vec<_>>();
-    affected.push(cell.chunk_and_local().0);
-    affected.sort_by_key(|p| (p.q, p.r, p.y));
-    affected.dedup();
-    affected
-}
-
-fn build_chunk_mesh(seed: u32, edits: &HashMap<CellPos, BlockId>, chunk: ChunkPos) -> Vec<Vertex> {
-    let scale = WorldScale::default();
-    let q_start = chunk.q * CHUNK_SIZE;
-    let r_start = chunk.r * CHUNK_SIZE;
-    let y_start = chunk.y * CHUNK_SIZE;
-    let q_end = q_start + CHUNK_SIZE;
-    let r_end = r_start + CHUNK_SIZE;
-    let y_end = y_start + CHUNK_SIZE;
-    let mut vertices = Vec::with_capacity(70_000);
-    let noise = Perlin::new(seed);
-    let mut heights = HashMap::with_capacity(((CHUNK_SIZE + 2) * (CHUNK_SIZE + 2)) as usize);
-    for q in (q_start - 1)..=q_end {
-        for r in (r_start - 1)..=r_end {
-            let height = (8.0 + noise.get([q as f64 / 28.0, r as f64 / 28.0]) * 5.0).round() as i32;
-            heights.insert((q, r), height);
-        }
-    }
-    let block_at = |cell: CellPos| {
-        edits.get(&cell).copied().unwrap_or_else(|| {
-            if cell.y < 0 {
-                return BlockId::Foundation;
-            }
-            let height = *heights.get(&(cell.q, cell.r)).unwrap_or(&0);
-            if cell.y > height {
-                BlockId::Air
-            } else if cell.y == height {
-                BlockId::Grass
-            } else if cell.y >= height - 3 {
-                BlockId::Dirt
-            } else {
-                BlockId::Stone
-            }
-        })
-    };
-    let mut edited_tops = HashMap::<(i32, i32), i32>::new();
-    for cell in edits.keys() {
-        if (q_start..q_end).contains(&cell.q) && (r_start..r_end).contains(&cell.r) {
-            edited_tops
-                .entry((cell.q, cell.r))
-                .and_modify(|top| *top = (*top).max(cell.y))
-                .or_insert(cell.y);
-        }
-    }
-    for q in q_start..q_end {
-        for r in r_start..r_end {
-            let terrain_top = *heights.get(&(q, r)).unwrap_or(&0);
-            let edited_top = edited_tops.get(&(q, r)).copied().unwrap_or(terrain_top);
-            let min_y = y_start.max(0);
-            let max_y = y_end.min(
-                (terrain_top + MAX_EDIT_HEIGHT)
-                    .max(edited_top)
-                    .max(terrain_top)
-                    .min(256)
-                    + 1,
-            );
-            for y in min_y..max_y {
-                let cell = CellPos::new(q, r, y);
-                let block = block_at(cell);
-                if block == BlockId::Air {
-                    continue;
-                }
-                let center = scale.prism_center(cell);
-                let bottom_y = y as f32 * scale.hexel_height;
-                let top_y = (y + 1) as f32 * scale.hexel_height;
-                let ring = std::array::from_fn::<_, 6, _>(|i| {
-                    let angle = (30.0_f32 + i as f32 * 60.0).to_radians();
-                    Vec3::new(
-                        center.x + angle.cos() * scale.hex_radius,
-                        center.y,
-                        center.z + angle.sin() * scale.hex_radius,
-                    )
-                });
-                let base = block_color_at(block, cell, seed);
-                if !block_at(CellPos::new(q, r, y + 1)).is_solid() {
-                    let top = [
-                        (base[0] * 1.12).min(1.0),
-                        (base[1] * 1.12).min(1.0),
-                        (base[2] * 1.12).min(1.0),
-                    ];
-                    for i in 0..6 {
-                        push_triangle(
-                            &mut vertices,
-                            Vec3::new(center.x, top_y, center.z),
-                            Vec3::new(ring[i].x, top_y, ring[i].z),
-                            Vec3::new(ring[(i + 1) % 6].x, top_y, ring[(i + 1) % 6].z),
-                            top,
-                        );
-                    }
-                }
-                let neighbors = [(0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0)];
-                for (i, (dq, dr)) in neighbors.into_iter().enumerate() {
-                    let nq = q + dq;
-                    let nr = r + dr;
-                    if block_at(CellPos::new(nq, nr, y)).is_solid() {
-                        continue;
-                    }
-                    let a = ring[i];
-                    let b = ring[(i + 1) % 6];
-                    let shade = 0.48 + ((i * 7 % 6) as f32) * 0.055;
-                    let side = [base[0] * shade, base[1] * shade, base[2] * shade];
-                    push_triangle(
-                        &mut vertices,
-                        Vec3::new(a.x, bottom_y, a.z),
-                        Vec3::new(a.x, top_y, a.z),
-                        Vec3::new(b.x, top_y, b.z),
-                        side,
-                    );
-                    push_triangle(
-                        &mut vertices,
-                        Vec3::new(a.x, bottom_y, a.z),
-                        Vec3::new(b.x, top_y, b.z),
-                        Vec3::new(b.x, bottom_y, b.z),
-                        side,
-                    );
-                }
-            }
-        }
-    }
-    // Coordinate-hashed trees are stable across chunk reloads.
-    let vegetation_climate = Perlin::new(seed.wrapping_add(0x51ED_270B));
-    for q in q_start..q_end {
-        for r in r_start..r_end {
-            let height = *heights.get(&(q, r)).unwrap_or(&0);
-            if height < 0 || chunk.y != height.div_euclid(CHUNK_SIZE) {
-                continue;
-            }
-            let hash = vegetation_hash(seed, q, r);
-            if !hash.is_multiple_of(29) {
-                continue;
-            } // Reduced baseline density; biome patches are tuned below.
-            let warmth = vegetation_climate.get([q as f64 / 90.0, r as f64 / 90.0]);
-            let wetness = vegetation_climate.get([q as f64 / 37.0 + 31.0, r as f64 / 37.0 - 17.0]);
-            let conifer = warmth < -0.25 || wetness < -0.32;
-            let tropical = warmth > 0.38 && wetness > 0.05;
-            let roll = (hash >> 16) % 1000;
-            // Adult height ranges are metres, converted to hexel layers below.
-            let (species, min_m, max_m, trunk_radius, crown_radius, giant) = if tropical {
-                if roll < 22 {
-                    (4_u8, 55.0_f32, 95.0, 2, 4, true)
-                } else if roll < 105 {
-                    (5, 25.0, 45.0, 1, 3, false)
-                } else {
-                    (3, 16.0, 32.0, 1, 3, false)
-                }
-            } else if conifer {
-                if roll < 8 {
-                    (4, 55.0_f32, 95.0, 2, 4, true)
-                } else if roll < 570 {
-                    (2, 18.0, 38.0, 1, 2, false)
-                } else {
-                    (1, 10.0, 24.0, 1, 2, false)
-                }
-            } else if wetness > 0.25 {
-                if roll < 9 {
-                    (4, 55.0_f32, 95.0, 2, 4, true)
-                } else if roll < 590 {
-                    (0, 18.0, 32.0, 1, 3, false)
-                } else {
-                    (1, 10.0, 24.0, 1, 2, false)
-                }
-            } else {
-                (6, 6.0, 16.0, 1, 2, false)
-            };
-            let variance = ((hash >> 8) % 10_001) as f32 / 10_000.0;
-            let mut height_m = min_m + (max_m - min_m) * variance;
-            if giant && !(hash >> 28).is_multiple_of(4) {
-                height_m = min_m * 0.55;
-            }
-            let layers = (height_m / scale.hexel_height).round().max(3.0) as i32;
-            let trunk = if species == 1 {
-                [0.78, 0.75, 0.65]
-            } else {
-                [0.38, 0.25, 0.14]
-            };
-            let foliage = match species {
-                1 => [0.24, 0.40, 0.19],
-                2 => [0.12, 0.30, 0.15],
-                4 => [0.07, 0.31, 0.11],
-                5 => [0.10, 0.39, 0.13],
-                6 => [0.30, 0.39, 0.17],
-                _ => [0.18, 0.46, 0.15],
-            };
-            let (leaf_layer, bark_layer) = match species {
-                0 => (7, 22),             // oak
-                1 => (3, 17),             // birch
-                2 => (8, 23),             // pine
-                3 if tropical => (5, 19), // kapok
-                3 => (0, 15),             // acacia-like
-                4 if tropical => (9, 24), // purpleheart
-                4 => (7, 22),             // large temperate tree
-                5 => (1, 16),             // bald cypress
-                6 => (6, 21),             // maple
-                _ => (7, 22),
-            };
-            append_hexel_tree(
-                &mut vertices,
-                CellPos::new(q, r, height + 1),
-                layers,
-                trunk_radius,
-                crown_radius,
-                (trunk, foliage),
-                species,
-                hash,
-                leaf_layer,
-                bark_layer,
-                scale,
-            );
-        }
-    }
-    vertices
-}
-fn block_color_at(block: BlockId, cell: CellPos, seed: u32) -> [f32; 3] {
-    let hash = vegetation_hash(
-        seed ^ (cell.y as u32).wrapping_mul(0x27D4_EB2D),
-        cell.q,
-        cell.r,
-    );
-    match block {
-        BlockId::Grass => match hash % 9 {
-            0 => [0.34, 0.52, 0.24],
-            1 => [0.43, 0.57, 0.29],
-            _ => [0.25, 0.66, 0.25],
-        },
-        BlockId::Dirt => match hash % 5 {
-            0 => [0.38, 0.25, 0.15],
-            1 => [0.55, 0.39, 0.24],
-            2 => [0.31, 0.22, 0.15],
-            _ => [0.47, 0.29, 0.16],
-        },
-        BlockId::Stone => match cell.y.rem_euclid(11) {
-            0..=2 => [0.49, 0.48, 0.43],
-            3..=5 => [0.43, 0.46, 0.49],
-            6..=8 => [0.53, 0.50, 0.45],
-            _ => [0.38, 0.40, 0.43],
-        },
-        BlockId::Foundation => [0.22, 0.23, 0.27],
-        BlockId::Air => [0.0, 0.0, 0.0],
-    }
-}
-
 fn vegetation_hash(seed: u32, q: i32, r: i32) -> u32 {
     let mut x = seed ^ (q as u32).wrapping_mul(0x9E37_79B9) ^ (r as u32).wrapping_mul(0x85EB_CA6B);
     x ^= x >> 16;
@@ -2220,10 +2138,16 @@ fn append_hexel_prism(
         }
     }
 }
-fn push_triangle(vertices: &mut Vec<Vertex>, a: Vec3, b: Vec3, c: Vec3, color: [f32; 3]) {
-    for point in [a, b, c] {
+fn push_triangle(
+    vertices: &mut Vec<Vertex>,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    color: [f32; 3],
+) {
+    for position in [a, b, c] {
         vertices.push(Vertex {
-            position: point.to_array(),
+            position: position.to_array(),
             color,
             uv: [0.0, 0.0],
             textured: 0.0,
@@ -2396,22 +2320,76 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
     pixels
 }
 
+
 #[cfg(test)]
-mod tests {
+mod raycast_tests {
     use super::*;
 
+
     #[test]
-    fn edit_invalidates_diagonal_axial_neighbor_chunk() {
-        // The (q + 1, r - 1) neighbor crosses both chunk axes here.
-        let chunks = affected_chunks_for_cell(CellPos::new(15, 16, 4));
-        assert!(chunks.contains(&ChunkPos { q: 1, r: 0, y: 0 }));
+    fn camera_tangent_frame_matches_planetary_frame_handedness() {
+        for radial in [
+            Vec3::X,
+            Vec3::Y,
+            -Vec3::Y,
+            Vec3::Z,
+            Vec3::new(1.0, 2.0, -3.0).normalize(),
+        ] {
+            let camera = Camera {
+                up: radial,
+                ..Camera::default()
+            };
+            let (east, north, up) = camera.tangent_frame();
+            let planetary = PlanetaryFrame::at(DVec3::new(
+                radial.x as f64,
+                radial.y as f64,
+                radial.z as f64,
+            ));
+            assert!((east.as_dvec3() - planetary.east).length() < 1.0e-5);
+            assert!((north.as_dvec3() - planetary.north).length() < 1.0e-5);
+            assert!((up.as_dvec3() - planetary.up).length() < 1.0e-5);
+        }
     }
 
     #[test]
-    fn edit_invalidates_vertical_chunks_at_layer_boundaries() {
-        let below = affected_chunks_for_cell(CellPos::new(4, 4, 16));
-        let above = affected_chunks_for_cell(CellPos::new(4, 4, 15));
-        assert!(below.contains(&ChunkPos { q: 0, r: 0, y: 0 }));
-        assert!(above.contains(&ChunkPos { q: 0, r: 0, y: 1 }));
+    fn camera_yaw_zero_faces_planetary_north() {
+        let camera = Camera {
+            up: Vec3::X,
+            yaw: 0.0,
+            pitch: 0.0,
+            ..Camera::default()
+        };
+        let planetary = PlanetaryFrame::at(DVec3::X);
+        assert!((camera.forward().as_dvec3() - planetary.north).length() < 1.0e-5);
+    }
+
+    #[test]
+    fn ray_triangle_intersection_returns_nearest_positive_distance() {
+        let hit = ray_triangle_distance(
+            Vec3::new(0.2, 0.2, -1.0),
+            Vec3::Z,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+        );
+        assert!((hit.unwrap() - 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn ray_triangle_intersection_rejects_misses_and_behind_origin() {
+        assert!(ray_triangle_distance(
+            Vec3::new(2.0, 2.0, -1.0),
+            Vec3::Z,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+        ).is_none());
+        assert!(ray_triangle_distance(
+            Vec3::new(0.2, 0.2, 1.0),
+            Vec3::Z,
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+        ).is_none());
     }
 }
