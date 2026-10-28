@@ -530,9 +530,9 @@ impl Renderer {
         let terrain = planet_world.terrain();
 
         // Bake the immutable bedrock shell once at world creation. It sits below
-        // the complete generated elevation envelope and never follows terrain edits.
+        // the generated elevation envelope and never follows terrain edits.
         // The dual topology provides shared, consistently spherical hex/pent boundaries.
-        let bedrock_radius = (planet_config.radius - planet_config.elevation_scale).max(1.0);
+        let bedrock_radius = (planet_config.radius - planet_config.elevation_scale * 1.5).max(1.0);
         let mut shell_vertices = Vec::new();
         let shell_color = [0.20_f32, 0.22, 0.22];
         for cell in topology.cells() {
