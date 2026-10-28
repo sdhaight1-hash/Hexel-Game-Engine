@@ -1075,10 +1075,13 @@ impl Renderer {
         // relief. At Earth's radius this grid is about 120 m per patch near a
         // cube-face centre; camera-relative vertex storage is the next precision
         // step before pushing the grid back toward metre-scale patches.
-        const CHUNKS_PER_FACE: u32 = 100_000;
+        // Keep the high-detail ring close and dense enough that visible ground
+        // is covered immediately instead of appearing as isolated terrain islands.
+        // The low-detail globe remains the distant backdrop beyond this ring.
+        const CHUNKS_PER_FACE: u32 = 400_000;
         const MESH_RESOLUTION: u32 = 48;
-        const LOCAL_PATCH_RADIUS: u32 = 8;
-        const MAX_NEW_CHUNKS_PER_FRAME: usize = 12;
+        const LOCAL_PATCH_RADIUS: u32 = 5;
+        const MAX_NEW_CHUNKS_PER_FRAME: usize = 48;
 
         let radial = DVec3::new(
             player_position.x as f64,
