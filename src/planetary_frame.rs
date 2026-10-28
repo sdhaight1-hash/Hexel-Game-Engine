@@ -6,7 +6,7 @@
 //! causes visible jitter. This module is the shared coordinate foundation for
 //! planetary movement, terrain streaming, collision, and rendering.
 
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 
 /// An orthonormal local frame anchored to a point on a spherical planet.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,6 +54,15 @@ impl PlanetaryFrame {
             delta.dot(self.up),
             delta.dot(self.north),
         )
+    }
+
+    /// Convert a planet-centred position directly to a camera-relative GPU coordinate.
+    ///
+    /// The subtraction and basis projection happen in f64; only the small local
+    /// result is cast to f32. Callers must never cast the absolute planet position
+    /// to f32 before rebasing, because metre-scale differences disappear at Earth radius.
+    pub fn to_local_f32(self, planet_position: DVec3) -> Vec3 {
+        self.to_local(planet_position).as_vec3()
     }
 
     /// Convert a local east/up/north coordinate back to planet-centred space.
@@ -120,6 +129,18 @@ mod tests {
         let round_trip = frame.to_local(planet);
         assert!((round_trip - local).length() < 1e-8);
         assert!((planet - frame.origin).length() < 200.0);
+    }
+
+    #[test]
+    fn rebasing_preserves_metre_offsets_at_earth_radius() {
+        let origin = DVec3::new(6_371_000.0, 0.0, 0.0);
+        let frame = PlanetaryFrame::at(origin);
+        let adjacent = origin + frame.east * 1.0 + frame.up * 2.0 + frame.north * 3.0;
+        let local = frame.to_local_f32(adjacent);
+        assert!((local - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+        // The test specifically guards the unsafe alternative: absolute f32
+        // coordinates at this magnitude cannot retain one-metre increments.
+        assert_eq!(origin.as_vec3(), adjacent.as_vec3());
     }
 
     #[test]
