@@ -126,6 +126,9 @@ impl PlanetaryChunkWorld {
     pub fn scale(&self) -> WorldScale { self.scale }
 
     fn generate_chunk_cells(&self, data: &mut Chunk, biome: Biome, chunk: ChunkPos) {
+        // Every vertical chunk uses one shared datum: y=0 is the surface layer,
+        // y=-1..-3 are soil, and deeper cells are stone. This keeps vertical
+        // chunks contiguous instead of regenerating a new surface in every chunk.
         for local_y in 0..16usize {
             let world_y = chunk.y * 16 + local_y as i32;
             for local_r in 0..16usize {
@@ -143,6 +146,7 @@ impl PlanetaryChunkWorld {
                 }
             }
         }
+        debug_assert_eq!(data.len(), HEXELS_PER_CHUNK);
     }
 }
 
