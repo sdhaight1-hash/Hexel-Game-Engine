@@ -185,13 +185,22 @@ impl PlanetaryChunkWorld {
                 let local_elevation = chunk_elevation
                     + relief * 2.1
                     + secondary * 0.55;
-                let surface_layer = ((local_elevation - chunk_base_elevation)
-                    / self.scale.hexel_height as f64).round() as i32;
+                // Y=0 is the permanent, unbreakable bedrock Hexel layer. Terrain
+                // grows above it; negative layers remain solid foundation below it.
+                // Keep the generated surface several Hexels above bedrock so the
+                // base never peeks through ordinary rolling relief.
+                let surface_layer = (8.0
+                    + (local_elevation - chunk_base_elevation)
+                        / self.scale.hexel_height as f64)
+                    .round() as i32;
+                let surface_layer = surface_layer.clamp(2, 30);
                 let sample_biome = chunk_biome;
                 for local_y in 0..16usize {
                     let world_y = chunk.y * 16 + local_y as i32;
                     let depth_below_surface = surface_layer - world_y;
-                    let block = if depth_below_surface < 0 {
+                    let block = if world_y <= 0 {
+                        BlockId::Foundation
+                    } else if depth_below_surface < 0 {
                         BlockId::Air
                     } else if depth_below_surface == 0 {
                         surface_block(sample_biome)
