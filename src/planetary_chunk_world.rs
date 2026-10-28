@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use glam::DVec3;
+use noise::NoiseFn;
 
 use crate::{
     BlockId, CellPos, Chunk, ChunkPos, WorldScale,
