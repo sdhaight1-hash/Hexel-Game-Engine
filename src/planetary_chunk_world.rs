@@ -98,7 +98,10 @@ impl PlanetaryChunkWorld {
             let frame = PlanetaryFrame::at(chunk_surface.surface_position);
             let placement = PlanetHexChunkPlacement::new(anchor_cell, frame, chunk);
             let mut data = Chunk::default();
-            self.generate_chunk_cells(&mut data, anchor_frame, chunk_surface.elevation, chunk);
+            // All horizontal chunks sharing this anchor use the same vertical datum.
+            // Using each chunk's own sampled elevation here made neighbouring chunks
+            // disagree about which y-layer a surface cell occupies, creating seams.
+            self.generate_chunk_cells(&mut data, anchor_frame, anchor_sample.elevation, chunk);
             self.chunks.insert(key, LoadedPlanetHexChunk { placement, data });
         }
         Ok(self.chunks.get(&key).expect("chunk inserted above"))
