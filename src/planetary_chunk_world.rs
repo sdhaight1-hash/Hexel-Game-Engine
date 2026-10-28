@@ -254,14 +254,17 @@ mod tests {
     #[test]
     fn generated_chunk_has_surface_dirt_and_stone_layers() {
         let mut world = store();
-        let surface = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
-        assert_eq!(surface.data.get([0, 0, 0]), BlockId::Foundation);
-        assert!(matches!(surface.data.get([0, 0, 1]), BlockId::Dirt | BlockId::Stone));
-        let underground = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: -1 }).unwrap();
-        assert_eq!(underground.data.get([0, 0, 15]), BlockId::Foundation);
-        assert_eq!(underground.data.get([0, 0, 0]), BlockId::Foundation);
-        let sky = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: 1 }).unwrap();
-        assert_eq!(sky.data.get([0, 0, 0]), BlockId::Air);
+        let base = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
+        assert_eq!(base.data.get([0, 0, 0]), BlockId::Foundation);
+        assert_eq!(base.data.get([0, 0, 1]), BlockId::Stone);
+        let sea_chunk = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: SEA_LEVEL_Y / 16 }).unwrap();
+        let sea_local_y = (SEA_LEVEL_Y % 16) as usize;
+        assert!(sea_chunk.data.get([0, 0, sea_local_y]).is_solid());
+        assert!(matches!(sea_chunk.data.get([0, 0, sea_local_y - 1]), BlockId::Dirt | BlockId::Stone));
+        let above_sea = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: 8 }).unwrap();
+        assert_eq!(above_sea.data.get([0, 0, 15]), BlockId::Air);
+        let below_world = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: -1 }).unwrap();
+        assert_eq!(below_world.data.get([0, 0, 15]), BlockId::Air);
     }
 
     #[test]
