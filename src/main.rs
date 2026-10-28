@@ -42,7 +42,7 @@ struct HexelApp {
     cursor_locked: bool,
     harvest_held: bool,
     harvest_target: Option<hexel_engine::CellPos>,
-    planet_harvest_target: Option<u32>,
+    planet_harvest_target: Option<hexel_engine::CellPos>,
     planet_tree_harvest_target: Option<u32>,
     harvest_progress: f32,
     target_ui_tick: f32,
@@ -231,7 +231,7 @@ impl HexelApp {
             self.planet_harvest_target = None;
             self.harvest_progress = 0.0;
         }
-        let hit = renderer.planet_cell_at_ray(self.camera.position, self.camera.forward());
+        let hit = renderer.planet_hexel_at_ray(self.camera.position, self.camera.forward());
         if hit != self.planet_harvest_target {
             self.planet_harvest_target = hit;
             self.harvest_progress = 0.0;
@@ -240,7 +240,7 @@ impl HexelApp {
             self.harvest_progress = 0.0;
             return;
         };
-        let block = renderer.planet_block_at(target);
+        let block = renderer.planet_hexel_block_at(target);
         if !block.is_solid() || block.is_indestructible() {
             self.harvest_progress = 0.0;
             return;
@@ -256,8 +256,7 @@ impl HexelApp {
         };
         self.harvest_progress += dt.max(0.0);
         if self.harvest_progress >= seconds {
-            let (layer, _) = renderer.planet_top_solid_voxel(target);
-            if renderer.edit_planet_voxel(target, layer, BlockId::Air) {
+            if renderer.edit_planet_hexel(target, BlockId::Air) {
                 let recovered = match block {
                     BlockId::Grass => Some(ItemId::GrassBlock),
                     BlockId::Dirt => Some(ItemId::DirtBlock),
@@ -283,7 +282,7 @@ impl HexelApp {
             return;
         };
         let Some(target) = renderer
-            .planet_cell_at_ray(self.camera.position, self.camera.forward())
+            .planet_hexel_at_ray(self.camera.position, self.camera.forward())
         else {
             return;
         };
@@ -297,11 +296,8 @@ impl HexelApp {
             ItemId::OakWood | ItemId::BirchWood | ItemId::PineWood
             | ItemId::GenericWood | ItemId::Stick | ItemId::GrassFiber => return,
         };
-        let (top_layer, _) = renderer.planet_top_solid_voxel(target);
-        let place_layer = top_layer + 1;
-        if place_layer <= hexel_engine::planetary_voxels::PlanetVoxelVolume::MAX_BUILD_HEIGHT
-            && renderer.edit_planet_voxel(target, place_layer, block)
-        {
+        let place_cell = hexel_engine::CellPos::new(target.q, target.r, target.y + 1);
+        if place_cell.y <= 16 && renderer.edit_planet_hexel(place_cell, block) {
             let slot = self.inventory.selected_hotbar();
             self.inventory.remove_from_slot(slot, 1);
         }
@@ -320,11 +316,11 @@ impl HexelApp {
             return;
         };
         let message = renderer
-            .planet_cell_at_ray(self.camera.position, self.camera.forward())
-            .map(|id| {
+            .planet_hexel_at_ray(self.camera.position, self.camera.forward())
+            .map(|cell| {
                 format!(
-                    "Hexel Engine | Globe | Cell {id} ({:?}) | Hotbar [{}] {} | E inventory | LMB harvest / RMB place",
-                    renderer.planet_block_at(id),
+                    "Hexel Engine | Globe | Hexel ({}, {}, {}) ({:?}) | Hotbar [{}] {} | E inventory | LMB harvest / RMB place",
+                    cell.q, cell.r, cell.y, renderer.planet_hexel_block_at(cell),
                     self.inventory.selected_hotbar() + 1,
                     self.inventory
                         .selected_stack()
