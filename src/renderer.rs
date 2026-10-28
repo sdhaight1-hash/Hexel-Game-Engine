@@ -1333,6 +1333,13 @@ impl Renderer {
                     anchor_cell,
                     CellPos::new(q, r, layer as i32),
                 );
+                // Chunk data is the authority for this near-field surface cell.
+                // An air cell must not be painted back in as procedural terrain.
+                // (The global LOD still needs to be replaced with the same chunk
+                // data before digging can expose this as a true hole through the crust.)
+                if !stored_block.is_solid() {
+                    continue;
+                }
                 // Lift slightly above the distant LOD surface until the smooth
                 // backdrop is replaced by the same chunk mesh in the near field.
                 let top_y = layer * step_height + 0.075;
