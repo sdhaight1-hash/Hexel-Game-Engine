@@ -44,13 +44,10 @@ impl CellPos {
     /// hex-neighbor definition from drifting away from mesh and navigation code.
     pub fn neighbors(self) -> [Self; 8] {
         let horizontal = Hex::new(self.q, self.r).all_neighbors();
-        [
-            Self::new(horizontal[0].x, horizontal[0].y, self.y),
-            Self::new(horizontal[1].x, horizontal[1].y, self.y),
-            Self::new(horizontal[2].x, horizontal[2].y, self.y),
-            Self::new(horizontal[3].x, horizontal[3].y, self.y),
-            Self::new(horizontal[4].x, horizontal[4].y, self.y),
-            Self::new(horizontal[5].x, horizontal[5].y, self.y),
+        // Preserve CellPos' established neighbor ordering while sourcing the
+        // coordinates from hexx. Hex's direction order starts at (q+1, r-1),
+        // whereas the original engine order starts at (q+1, r).
+        for_ordered_hex_neighbors(horizontal, self.y)
             Self::new(self.q, self.r, self.y + 1),
             Self::new(self.q, self.r, self.y - 1),
         ]
@@ -69,6 +66,13 @@ impl CellPos {
             ],
         )
     }
+}
+
+
+/// Adapt hexx's direction ordering to the engine's existing clockwise order.
+fn for_ordered_hex_neighbors(neighbors: [Hex; 6], y: i32) -> [CellPos; 6] {
+    let order = [5, 0, 4, 3, 2, 1];
+    order.map(|index| CellPos::new(neighbors[index].x, neighbors[index].y, y))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
