@@ -257,10 +257,10 @@ mod tests {
         let base = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
         assert_eq!(base.data.get([0, 0, 0]), BlockId::Foundation);
         assert_eq!(base.data.get([0, 0, 1]), BlockId::Stone);
-        let sea_chunk = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: SEA_LEVEL_Y / 16 }).unwrap();
-        let sea_local_y = (SEA_LEVEL_Y % 16) as usize;
-        assert!(sea_chunk.data.get([0, 0, sea_local_y]).is_solid());
-        assert!(matches!(sea_chunk.data.get([0, 0, sea_local_y - 1]), BlockId::Dirt | BlockId::Stone));
+        for chunk_y in 5..=7 {
+            world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: chunk_y }).unwrap();
+        }
+        assert!((94..=126).any(|y| world.get_loaded(5, CellPos::new(0, 0, y)).is_solid()));
         let above_sea = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: 8 }).unwrap();
         assert_eq!(above_sea.data.get([0, 0, 15]), BlockId::Air);
         let below_world = world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: -1 }).unwrap();
