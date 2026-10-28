@@ -1473,7 +1473,10 @@ impl Renderer {
                 for (layer, block) in occupied_layers {
                     let below = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, layer - 1));
                     let above = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, layer + 1));
-                    let color = planet_block_color(block);
+                    // Deterministic per-Hexel material variation: each block keeps its
+                    // recognizable palette, while neighbouring cells no longer look painted
+                    // with one flat colour. The same cell always gets the same colour.
+                    let color = planet_hexel_color(block, q, r, layer);
                     let edge_color = [color[0] * 0.34, color[1] * 0.34, color[2] * 0.34];
                     let top_y = layer as f64 * step_height + 0.34;
                     let bottom_y = top_y - step_height;
@@ -2022,11 +2025,51 @@ fn ray_triangle_distance(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec
 fn planet_block_color(block: BlockId) -> [f32; 3] {
     match block {
         BlockId::Air => [0.025, 0.055, 0.10],
-        BlockId::Grass => [0.20, 0.62, 0.22],
+        // Natural material palettes: living green, warm earth, cool rock, dark bedrock.
+        BlockId::Grass => [0.25, 0.52, 0.16],
         BlockId::Dirt => [0.48, 0.29, 0.14],
-        BlockId::Stone => [0.42, 0.45, 0.49],
-        BlockId::Foundation => [0.75, 0.75, 0.78],
+        BlockId::Stone => [0.43, 0.45, 0.47],
+        BlockId::Foundation => [0.20, 0.22, 0.25],
     }
+}
+
+/// Stable colour variation for the editable Hexel crust. Variation is deliberately
+/// material-bounded: grass stays green, dirt stays earthy, stone stays mineral, and
+/// foundation stays dark. Coordinate hashing avoids flicker when the mesh rebuilds.
+fn planet_hexel_color(block: BlockId, q: i32, r: i32, layer: i32) -> [f32; 3] {
+    let mut hash = (q as u32).wrapping_mul(0x9E37_79B9)
+        ^ (r as u32).wrapping_mul(0x85EB_CA6B)
+        ^ (layer as u32).wrapping_mul(0xC2B2_AE35);
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x7FEB_352D);
+    hash ^= hash >> 15;
+    let variation = ((hash & 0xFFFF) as f32 / 65535.0 - 0.5) * 0.20;
+    let base = planet_block_color(block);
+    let mut color = [
+        (base[0] * (1.0 + variation)).clamp(0.0, 1.0),
+        (base[1] * (1.0 + variation)).clamp(0.0, 1.0),
+        (base[2] * (1.0 + variation)).clamp(0.0, 1.0),
+    ];
+    match block {
+        BlockId::Grass => {
+            // Small hue shifts mimic mixed grass without ever leaving green.
+            color[0] = (color[0] * 0.94).clamp(0.0, 1.0);
+            color[1] = (color[1] * (1.0 + variation * 0.20)).clamp(0.0, 1.0);
+        }
+        BlockId::Dirt => {
+            color[0] = (color[0] * 1.04).clamp(0.0, 1.0);
+            color[2] = (color[2] * 0.92).clamp(0.0, 1.0);
+        }
+        BlockId::Stone => {
+            // Slight neutral/cool mineral variation rather than coloured noise.
+            color[2] = (color[2] * (1.0 + variation * 0.35)).clamp(0.0, 1.0);
+        }
+        BlockId::Foundation => {
+            color[0] = (color[0] * 0.92).clamp(0.0, 1.0);
+        }
+        BlockId::Air => {}
+    }
+    color
 }
 
 fn planet_vertex_color(sample: PlanetSample) -> [f32; 3] {
