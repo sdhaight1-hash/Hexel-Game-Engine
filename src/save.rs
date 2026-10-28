@@ -240,6 +240,25 @@ mod tests {
     }
 
     #[test]
+    fn version_two_preserves_metre_offsets_at_earth_radius() {
+        let mut save = GameSave::fresh(7);
+        save.planet_mode = true;
+        save.player_position = [6_371_000.125, 12.375, -0.0625];
+        let decoded = GameSave::decode(&save.encode()).unwrap();
+        assert_eq!(decoded.player_position, save.player_position);
+    }
+
+    #[test]
+    fn version_one_saves_remain_loadable() {
+        let legacy = "HEXEL_SAVE 1\\nseed 9\\nplayer 6371000.0 12.0 -4.0\\nlook 0.25 -0.1\\nmode planet\\nhotbar 0\\n";
+        let decoded = GameSave::decode(legacy).unwrap();
+        assert_eq!(decoded.seed, 9);
+        assert_eq!(decoded.player_position, [6_371_000.0, 12.0, -4.0]);
+        assert!(decoded.planet_mode);
+        assert_eq!(decoded.encode().lines().next(), Some("HEXEL_SAVE 2"));
+    }
+
+    #[test]
     fn rejects_unsupported_version_and_corrupt_blocks() {
         assert_eq!(GameSave::decode("HEXEL_SAVE 999\n"), Err(SaveError::UnsupportedVersion(999)));
         let corrupt = "HEXEL_SAVE 2\nseed 1\nplayer 0 0 0\nlook 0 0\nmode flat\nhotbar 0\nflat 0 0 0 99\n";
