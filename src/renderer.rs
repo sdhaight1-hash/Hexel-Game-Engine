@@ -969,7 +969,11 @@ impl Renderer {
             }
         }
         let current = self.planet_hexel_chunks.get_loaded(anchor_cell, pos);
-        if current == BlockId::Foundation || !current.is_solid() && block == BlockId::Air {
+        // Placement must fill air; mining must remove an existing solid. The
+        // immutable base is never editable, even if it becomes resident later.
+        if current == BlockId::Foundation
+            || (block == BlockId::Air && !current.is_solid())
+            || (block != BlockId::Air && current.is_solid()) {
             return false;
         }
         if !self.planet_hexel_chunks.set_loaded(anchor_cell, pos, block) { return false; }
