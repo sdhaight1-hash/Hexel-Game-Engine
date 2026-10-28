@@ -167,6 +167,8 @@ pub struct Renderer {
     overlay_pipeline: wgpu::RenderPipeline,
     crosshair_buffer: wgpu::Buffer,
     target_buffer: wgpu::Buffer,
+    planet_shell_vertex_buffer: wgpu::Buffer,
+    planet_shell_vertex_count: u32,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
     planet_vertices: Vec<Vertex>,
@@ -526,6 +528,43 @@ impl Renderer {
         .map_err(|error| format!("Could not initialize planetary Hexel chunks: {error:?}"))?;
         let topology = planet_world.topology();
         let terrain = planet_world.terrain();
+
+        // Bake the immutable bedrock shell once at world creation. It sits below
+        // the complete generated elevation envelope and never follows terrain edits.
+        // The dual topology provides shared, consistently spherical hex/pent boundaries.
+        let bedrock_radius = (planet_config.radius - planet_config.elevation_scale).max(1.0);
+        let mut shell_vertices = Vec::new();
+        let shell_color = [0.20_f32, 0.22, 0.22];
+        for cell in topology.cells() {
+            let center = cell.center.normalize() * bedrock_radius;
+            for index in 0..cell.boundary.len() {
+                let next = (index + 1) % cell.boundary.len();
+                let a = cell.boundary[index].normalize() * bedrock_radius;
+                let b = cell.boundary[next].normalize() * bedrock_radius;
+                let mut triangle = [center, a, b];
+                if (triangle[1] - triangle[0])
+                    .cross(triangle[2] - triangle[0])
+                    .dot(triangle[0] + triangle[1] + triangle[2]) < 0.0
+                {
+                    triangle.swap(1, 2);
+                }
+                for position in triangle {
+                    shell_vertices.push(Vertex {
+                        position: position.as_vec3().to_array(),
+                        color: shell_color,
+                        uv: [0.0, 0.0],
+                        textured: 0.0,
+                    });
+                }
+            }
+        }
+        let planet_shell_vertex_count = shell_vertices.len() as u32;
+        let planet_shell_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Immutable geodesic bedrock shell"),
+            contents: bytemuck::cast_slice(&shell_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         let planet_mesh = SurfaceMesh::generate(topology, terrain, 0.25);
         let mut planet_vertices = Vec::new();
         let mut planet_cell_ranges = HashMap::new();
@@ -559,80 +598,11 @@ impl Renderer {
                 .or_insert((start, end));
         }
 
-        // Give every geodesic surface cell a visible inward-facing side wall.
-        // The top remains terrain-displaced; the lower ring is inset radially so
-        // adjacent cells read as hexel/pentagon prisms at ground level.
-        const CELL_WALL_DEPTH: f64 = 1.0;
+        // Keep empty wall ranges for legacy hit-test/edit APIs. The immutable
+        // shell is a separate continuous mesh; gameplay crust will own visible walls.
         let mut planet_cell_wall_ranges = HashMap::new();
         for cell in topology.cells() {
-            let wall_start = planet_vertices.len();
-            let side_color = [0.16_f32, 0.18, 0.17];
-            for index in 0..cell.boundary.len() {
-                let next = (index + 1) % cell.boundary.len();
-                let top_a = terrain
-                    .sample_direction(cell.boundary[index], 0.25)
-                    .surface_position;
-                let top_b = terrain
-                    .sample_direction(cell.boundary[next], 0.25)
-                    .surface_position;
-                let bottom_a = top_a.normalize() * (top_a.length() - CELL_WALL_DEPTH).max(1.0);
-                let bottom_b = top_b.normalize() * (top_b.length() - CELL_WALL_DEPTH).max(1.0);
-                let mut quad = [
-                    top_a.as_vec3(),
-                    bottom_a.as_vec3(),
-                    top_b.as_vec3(),
-                    top_b.as_vec3(),
-                    bottom_a.as_vec3(),
-                    bottom_b.as_vec3(),
-                ];
-                // Orient each wall triangle consistently toward the outside.
-                for tri in quad.as_chunks_mut::<3>().0 {
-                    let a = tri[0];
-                    let b = tri[1];
-                    let c = tri[2];
-                    if (b - a).cross(c - a).dot((a + b + c) / 3.0) < 0.0 {
-                        tri.swap(1, 2);
-                    }
-                }
-                for position in quad {
-                    planet_vertices.push(Vertex {
-                        position: position.to_array(),
-                        color: side_color,
-                        uv: [0.0, 0.0],
-                        textured: 0.0,
-                    });
-                }
-            }
-            planet_cell_wall_ranges.insert(cell.id.0, (wall_start, planet_vertices.len()));
-        }
-
-        // Draw a narrow, slightly raised ribbon along every topology edge. This
-        // makes the actual pentagon/hexagon partition visible instead of showing
-        // a smooth biome-colored sphere that only happens to use topology inside.
-        for cell in topology.cells() {
-            let pentagon = cell.boundary.len() == 5;
-            let edge_color = if pentagon {
-                [1.0, 0.48, 0.10]
-            } else {
-                [0.035, 0.075, 0.11]
-            };
-            for index in 0..cell.boundary.len() {
-                let next = (index + 1) % cell.boundary.len();
-                let a = terrain
-                    .sample_direction(cell.boundary[index], 0.25)
-                    .surface_position
-                    .as_vec3()
-                    * 1.002;
-                let b = terrain
-                    .sample_direction(cell.boundary[next], 0.25)
-                    .surface_position
-                    .as_vec3()
-                    * 1.002;
-                let radial = (a + b).normalize_or_zero();
-                let side = (b - a).cross(radial).normalize_or_zero() * 0.035;
-                push_triangle(&mut planet_vertices, a - side, b - side, b + side, edge_color);
-                push_triangle(&mut planet_vertices, a - side, b + side, a + side, edge_color);
-            }
+            planet_cell_wall_ranges.insert(cell.id.0, (planet_vertices.len(), planet_vertices.len()));
         }
 
         let planet_vertex_count = planet_vertices.len() as u32;
@@ -653,6 +623,8 @@ impl Renderer {
             overlay_pipeline,
             crosshair_buffer,
             target_buffer,
+            planet_shell_vertex_buffer,
+            planet_shell_vertex_count,
             planet_vertex_buffer,
             planet_vertex_count,
             planet_vertices,
@@ -1614,6 +1586,9 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.foliage_bind_group, &[]);
+            // Draw immutable bedrock first; terrain and editable Hexels overlay it.
+            pass.set_vertex_buffer(0, self.planet_shell_vertex_buffer.slice(..));
+            pass.draw(0..self.planet_shell_vertex_count, 0..1);
             pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
             pass.draw(0..self.planet_vertex_count, 0..1);
             for chunk in self.planet_stream_chunks.values() {
