@@ -12,7 +12,7 @@ pub const HEXEL_HEIGHT_METRES: f32 = 0.6;
 /// Reference player height, in metres (three vertical Hexel steps).
 pub const REFERENCE_PLAYER_HEIGHT_METRES: f32 = 1.8;
 /// Initial total playable vertical budget, in metres.
-pub const DEFAULT_VERTICAL_BUDGET_METRES: f32 = WORLD_HEIGHT_LEVELS as f32 * HEXEL_HEIGHT_METRES;
+pub const DEFAULT_VERTICAL_BUDGET_METRES: f32 = (WORLD_HEIGHT_LEVELS - 1) as f32 * HEXEL_HEIGHT_METRES;
 /// Total playable Hexel layers, inclusive range Y=0..=255.
 pub const WORLD_HEIGHT_LEVELS: i32 = 256;
 /// Fixed sea-level datum in world Hexel coordinates.
@@ -91,7 +91,7 @@ mod tests {
         let profile = PlanetaryWorldProfile::default();
         assert!(profile.is_valid());
         assert_eq!(profile.planet_radius_metres, 6_371_000.0);
-        assert!((profile.vertical_budget_metres - 153.6).abs() < 0.001);
+        assert!((profile.vertical_budget_metres - 153.0).abs() < 0.001);
         assert_eq!(profile.lower_elevation_metres(), -128.0);
         assert_eq!(profile.upper_elevation_metres(), 128.0);
         assert_eq!(HEXELS_PER_CHUNK, 4096);
