@@ -4,7 +4,7 @@
 //! determines the biome and crust material; edits live in the chunk itself rather
 //! than in a parallel surface-cell or radial-column store.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::DVec3;
 
@@ -66,6 +66,12 @@ impl PlanetaryChunkWorld {
 
     pub fn loaded_chunk_mut(&mut self, key: PlanetHexChunkKey) -> Option<&mut LoadedPlanetHexChunk> {
         self.chunks.get_mut(&key)
+    }
+
+    /// Drop resident chunk data outside the active streaming window. Chunk keys and
+    /// deterministic generation remain stable, so persistence can restore them later.
+    pub fn retain_chunks(&mut self, keep: &HashSet<PlanetHexChunkKey>) {
+        self.chunks.retain(|key, _| keep.contains(key));
     }
 
     /// Load or generate a chunk addressed relative to a stable planetary anchor.
@@ -227,6 +233,19 @@ mod tests {
         assert!(world.set_loaded(12, pos, BlockId::Air));
         assert_eq!(world.get_loaded(12, pos), BlockId::Air);
         assert!(!world.set_loaded(12, CellPos::new(1000, 1000, 0), BlockId::Stone));
+    }
+
+    #[test]
+    fn streaming_window_can_release_chunks_without_changing_their_addresses() {
+        let mut world = store();
+        world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
+        world.ensure_chunk(5, DVec3::X, ChunkPos { q: 1, r: 0, y: 0 }).unwrap();
+        let keep = [PlanetHexChunkKey { anchor_cell: 5, q: 1, r: 0, y: 0 }]
+            .into_iter().collect();
+        world.retain_chunks(&keep);
+        assert_eq!(world.loaded_chunk_count(), 1);
+        assert!(world.loaded_chunk(PlanetHexChunkKey { anchor_cell: 5, q: 1, r: 0, y: 0 }).is_some());
+        assert!(world.loaded_chunk(PlanetHexChunkKey { anchor_cell: 5, q: 0, r: 0, y: 0 }).is_none());
     }
 
     #[test]
