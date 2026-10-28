@@ -34,6 +34,9 @@ pub struct PlanetaryChunkWorld {
     profile: PlanetaryWorldProfile,
     terrain: PlanetGenerator,
     scale: WorldScale,
+    // Meter-scale relief is sampled in stable axial coordinates so neighbouring
+    // chunks share exactly the same terrain profile at their boundaries.
+    local_relief: noise::Perlin,
     chunks: HashMap<PlanetHexChunkKey, LoadedPlanetHexChunk>,
     // Player edits outlive residency; evicting a chunk must never erase changes.
     overrides: HashMap<PlanetHexChunkKey, HashMap<[usize; 3], BlockId>>,
@@ -47,6 +50,7 @@ impl PlanetaryChunkWorld {
         if !profile.is_valid() {
             return Err(PlanetaryChunkError::InvalidAnchor);
         }
+        let local_relief = noise::Perlin::new(terrain.seed().wrapping_add(0x6D2B_79F5));
         Ok(Self {
             profile,
             terrain,
@@ -55,6 +59,7 @@ impl PlanetaryChunkWorld {
                 hexel_height: HEXEL_HEIGHT_METRES,
                 hex_radius: 0.5,
             },
+            local_relief,
             chunks: HashMap::new(),
             overrides: HashMap::new(),
         })
@@ -110,7 +115,16 @@ impl PlanetaryChunkWorld {
             // All horizontal chunks sharing this anchor use the same vertical datum.
             // Using each chunk's own sampled elevation here made neighbouring chunks
             // disagree about which y-layer a surface cell occupies, creating seams.
-            self.generate_chunk_cells(&mut data, anchor_frame, anchor_sample.elevation, chunk);
+            // The chunk-level sample supplies regional elevation and biome. Sampling
+            // the full climate model 256 times per chunk was needlessly expensive;
+            // meter-scale relief below is cheap, deterministic, and seam-free.
+            self.generate_chunk_cells(
+                &mut data,
+                anchor_frame,
+                anchor_sample.elevation,
+                chunk_surface.biome,
+                chunk,
+            );
             if let Some(edits) = self.overrides.get(&key) {
                 for (local, block) in edits {
                     data.set(*local, *block);
@@ -148,31 +162,36 @@ impl PlanetaryChunkWorld {
         data: &mut Chunk,
         anchor_frame: PlanetaryFrame,
         chunk_base_elevation: f64,
+        chunk_biome: Biome,
         chunk: ChunkPos,
     ) {
-        // Keep a single vertical datum for all chunks around this anchor while
-        // sampling terrain independently for each horizontal Hexel. Elevation
-        // differences become whole 0.6 m layers; the same seed/direction always
-        // yields the same surface and biome.
+        // Keep a single vertical datum for all chunks around this anchor. The
+        // planetary field provides broad landforms; this stable local field adds
+        // hills and shallow gullies at a scale the player can actually see.
         for local_r in 0..16usize {
             for local_q in 0..16usize {
-                let q = (chunk.q * 16 + local_q as i32) as f64;
-                let r = (chunk.r * 16 + local_r as i32) as f64;
-                let x = self.scale.hex_radius as f64 * 3.0_f64.sqrt() * (q + r * 0.5);
-                let z = self.scale.hex_radius as f64 * 1.5 * r;
-                let approximate = anchor_frame.origin
-                    + anchor_frame.east * x
-                    + anchor_frame.north * z;
-                let sample = self.terrain.sample_direction(approximate, 0.0);
-                let surface_layer = ((sample.elevation - chunk_base_elevation)
+                let q = chunk.q * 16 + local_q as i32;
+                let r = chunk.r * 16 + local_r as i32;
+                let relief = self.local_relief.get([q as f64 / 7.5, r as f64 / 7.5]);
+                let secondary = self.local_relief.get([
+                    q as f64 / 2.8 + 31.7,
+                    r as f64 / 2.8 - 12.4,
+                ]);
+                // About 2–4 metres of rolling relief with smaller rocky variation.
+                // Absolute axial coordinates make this identical across chunk edges.
+                let local_elevation = chunk_base_elevation
+                    + relief * 2.1
+                    + secondary * 0.55;
+                let surface_layer = ((local_elevation - chunk_base_elevation)
                     / self.scale.hexel_height as f64).round() as i32;
+                let sample_biome = chunk_biome;
                 for local_y in 0..16usize {
                     let world_y = chunk.y * 16 + local_y as i32;
                     let depth_below_surface = surface_layer - world_y;
                     let block = if depth_below_surface < 0 {
                         BlockId::Air
                     } else if depth_below_surface == 0 {
-                        surface_block(sample.biome)
+                        surface_block(sample_biome)
                     } else if depth_below_surface <= 3 {
                         BlockId::Dirt
                     } else {
