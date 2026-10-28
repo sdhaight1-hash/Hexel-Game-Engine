@@ -1755,15 +1755,8 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.foliage_bind_group, &[]);
-            // Bedrock is an unrendered base layer; only editable Hexel meshes are drawn.
-            pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
-            pass.draw(0..self.planet_vertex_count, 0..1);
-            for chunk in self.planet_stream_chunks.values() {
-                if chunk.vertex_count == 0 { continue; }
-                pass.set_bind_group(0, &chunk.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, chunk.buffer.slice(..));
-                pass.draw(0..chunk.vertex_count, 0..1);
-            }
+            // The geodesic shell and smooth cube-sphere patches are reference geometry
+            // only. Never draw either: the player must see the actual editable Hexel crust.
             if let Some(hexels) = self.planet_hexel_surface.as_ref() {
                 pass.set_bind_group(0, &hexels.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, hexels.buffer.slice(..));
