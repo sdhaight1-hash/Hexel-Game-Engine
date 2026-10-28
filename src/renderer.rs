@@ -20,7 +20,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 
 const SHADER: &str = r#"
-struct Camera { view_proj: mat4x4<f32>, };
+struct Camera { view_proj: mat4x4<f32>, world_offset: vec4<f32>, };
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var tree_textures: texture_2d_array<f32>;
 @group(1) @binding(1) var foliage_sampler: sampler;
@@ -38,7 +38,7 @@ struct VertexOutput {
 };
 @vertex fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.clip_position = camera.view_proj * vec4<f32>(input.position, 1.0);
+    output.clip_position = camera.view_proj * vec4<f32>(input.position + camera.world_offset.xyz, 1.0);
     output.color = input.color;
     output.uv = input.uv;
     output.textured = input.textured;
@@ -95,6 +95,7 @@ impl Vertex {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+    world_offset: [f32; 4],
 }
 
 pub struct Camera {
@@ -131,16 +132,29 @@ impl Camera {
         let (east, north, up) = self.tangent_frame();
         (east * self.yaw.sin() * self.pitch.cos() + north * self.yaw.cos() * self.pitch.cos() + up * self.pitch.sin()).normalize_or_zero()
     }
-    fn view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
+    fn projection(&self, size: PhysicalSize<u32>) -> Mat4 {
         let aspect = size.width.max(1) as f32 / size.height.max(1) as f32;
         Mat4::perspective_rh(70.0_f32.to_radians(), aspect, 0.05, 900.0)
+    }
+    fn view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
+        self.projection(size)
             * Mat4::look_to_rh(self.position, self.forward(), self.up.normalize_or_zero())
+    }
+    /// View matrix for patch-local vertices. Their planetary origin is supplied
+    /// separately in double precision, avoiding Earth-radius f32 quantization.
+    fn relative_view_projection(&self, size: PhysicalSize<u32>) -> Mat4 {
+        self.projection(size)
+            * Mat4::look_to_rh(Vec3::ZERO, self.forward(), self.up.normalize_or_zero())
     }
 }
 
 struct PlanetGpuChunk {
     buffer: wgpu::Buffer,
     vertex_count: u32,
+    origin: DVec3,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
+    camera_layout: wgpu::BindGroupLayout,
 }
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -236,6 +250,7 @@ impl Renderer {
             label: Some("Camera uniform"),
             contents: bytemuck::bytes_of(&CameraUniform {
                 view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                world_offset: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -640,6 +655,7 @@ impl Renderer {
             planet_stream_pending: VecDeque::new(),
             camera_buffer,
             camera_bind_group,
+            camera_layout,
             foliage_bind_group,
             size,
             _depth_texture: depth_texture,
@@ -1139,6 +1155,7 @@ impl Renderer {
             // Resolve cell ownership once per patch-grid vertex, not once per
             // expanded triangle index. Nearest-cell lookup is linear in topology
             // size, so this avoids repeating that work for shared mesh vertices.
+            let patch_origin = mesh.vertices[0].position;
             let mut grid_vertices = Vec::with_capacity(mesh.vertices.len());
             for source in &mesh.vertices {
                 let sample = self.planet_world.terrain().sample_direction(source.normal, 0.25);
@@ -1157,7 +1174,7 @@ impl Renderer {
                     .map(planet_block_color)
                     .unwrap_or_else(|| planet_vertex_color(sample));
                 grid_vertices.push(Vertex {
-                    position: position.as_vec3().to_array(),
+                    position: (position - patch_origin).as_vec3().to_array(),
                     color,
                     uv: [0.0, 0.0],
                     textured: 0.0,
@@ -1194,7 +1211,7 @@ impl Renderer {
                 let b = grid_vertices[perimeter[(edge + 1) % perimeter.len()]];
                 let lower = |vertex: Vertex| {
                     let position = Vec3::from_array(vertex.position);
-                    let radial = position.normalize_or_zero();
+                    let radial = (patch_origin.as_vec3() + position).normalize_or_zero();
                     let mut skirt = vertex;
                     skirt.position = (position - radial * PATCH_SKIRT_DEPTH).to_array();
                     skirt.color = [vertex.color[0] * 0.72, vertex.color[1] * 0.72, vertex.color[2] * 0.72];
@@ -1205,6 +1222,7 @@ impl Renderer {
                 vertices.extend_from_slice(&[a, lower_a, b, b, lower_a, lower_b]);
             }
 
+            let terrain_vertex_count = vertices.len();
             append_planetary_trees(
                 &mut vertices,
                 key,
@@ -1215,6 +1233,10 @@ impl Renderer {
                 self.planet_world.edited_cells(),
                 &self.removed_planet_trees,
             );
+            for vertex in &mut vertices[terrain_vertex_count..] {
+                let p = DVec3::new(vertex.position[0] as f64, vertex.position[1] as f64, vertex.position[2] as f64);
+                vertex.position = (p - patch_origin).as_vec3().to_array();
+            }
             if vertices.is_empty() {
                 continue;
             }
@@ -1223,11 +1245,30 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
+            let chunk_camera_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Camera-relative terrain patch uniform"),
+                contents: bytemuck::bytes_of(&CameraUniform {
+                    view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                    world_offset: [0.0; 4],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+            let chunk_camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Camera-relative terrain patch bind group"),
+                layout: &self.camera_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: chunk_camera_buffer.as_entire_binding(),
+                }],
+            });
             self.planet_stream_chunks.insert(
                 key,
                 PlanetGpuChunk {
                     buffer,
                     vertex_count: vertices.len() as u32,
+                    origin: patch_origin,
+                    camera_buffer: chunk_camera_buffer,
+                    camera_bind_group: chunk_camera_bind_group,
                 },
             );
         }
@@ -1257,7 +1298,20 @@ impl Renderer {
         let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
+            world_offset: [0.0; 4],
         };
+        let relative_view_proj = camera.relative_view_projection(self.size);
+        let camera_position_d = DVec3::new(
+            camera.position.x as f64, camera.position.y as f64, camera.position.z as f64,
+        );
+        for chunk in self.planet_stream_chunks.values() {
+            let offset = chunk.origin - camera_position_d;
+            let patch_uniform = CameraUniform {
+                view_proj: relative_view_proj.to_cols_array_2d(),
+                world_offset: [offset.x as f32, offset.y as f32, offset.z as f32, 0.0],
+            };
+            self.queue.write_buffer(&chunk.camera_buffer, 0, bytemuck::bytes_of(&patch_uniform));
+        }
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         let target_vertices = self
@@ -1389,9 +1443,11 @@ impl Renderer {
             pass.draw(0..self.planet_vertex_count, 0..1);
             for chunk in self.planet_stream_chunks.values() {
                 if chunk.vertex_count == 0 { continue; }
+                pass.set_bind_group(0, &chunk.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, chunk.buffer.slice(..));
                 pass.draw(0..chunk.vertex_count, 0..1);
             }
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
             if !target_vertices.is_empty() {
                 pass.set_pipeline(&self.outline_pipeline);
                 pass.set_vertex_buffer(0, self.target_buffer.slice(..));
