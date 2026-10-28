@@ -54,7 +54,7 @@ pub struct PlanetVoxelVolume {
 impl PlanetVoxelVolume {
     pub const SAVE_SCHEMA_VERSION: u32 = 1;
     /// A gameplay block's radial thickness in world units.
-    pub const DEFAULT_BLOCK_HEIGHT: f64 = 1.0;
+    pub const DEFAULT_BLOCK_HEIGHT: f64 = crate::world_profile::HEXEL_HEIGHT_METRES as f64;
     /// A non-removable bedrock layer bounds downward digging.
     pub const BEDROCK_LAYER: i32 = -64;
     /// Bound vertical construction above the procedural surface.
