@@ -880,6 +880,103 @@ impl Renderer {
         false
     }
 
+    /// Raycast the fine, resident Hexel prisms used by the near-field mesh.
+    /// Returns the solid cell hit; gameplay no longer has to pretend a whole
+    /// coarse geodesic topology cell is one editable block.
+    pub fn planet_hexel_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<CellPos> {
+        let surface_origin = self.planet_hexel_anchor?;
+        let radial = surface_origin.normalize_or_zero();
+        let anchor_cell = self.planet_world.topology()
+            .cell_id_for_direction(radial)?.0;
+        let frame = PlanetaryFrame::at(surface_origin);
+        let world_origin = DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64);
+        let world_direction = DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64)
+            .normalize_or_zero();
+        if world_direction == DVec3::ZERO { return None; }
+        let relative = world_origin - surface_origin;
+        let ray_origin = Vec3::new(
+            relative.dot(frame.east) as f32,
+            relative.dot(frame.up) as f32,
+            relative.dot(frame.north) as f32,
+        );
+        let ray_direction = Vec3::new(
+            world_direction.dot(frame.east) as f32,
+            world_direction.dot(frame.up) as f32,
+            world_direction.dot(frame.north) as f32,
+        ).normalize_or_zero();
+        if ray_direction == Vec3::ZERO { return None; }
+
+        // Intersect the tangent datum to find a small candidate neighbourhood,
+        // then test actual exposed prism triangles. Never scan the entire globe.
+        let plane_distance = if ray_direction.y.abs() > 1.0e-5 {
+            -ray_origin.y / ray_direction.y
+        } else { return None; };
+        if plane_distance < 0.0 || plane_distance > 10.0 { return None; }
+        let plane_hit = ray_origin + ray_direction * plane_distance;
+        let radius = self.planet_hexel_chunks.scale().hex_radius;
+        let r_est = plane_hit.z / (radius * 1.5);
+        let q_est = plane_hit.x / (radius * 3.0_f32.sqrt()) - r_est * 0.5;
+        let q_center = q_est.round() as i32;
+        let r_center = r_est.round() as i32;
+        let mut best: Option<(CellPos, f32)> = None;
+        for r in (r_center - 3)..=(r_center + 3) {
+            for q in (q_center - 3)..=(q_center + 3) {
+                let mut top = None;
+                for y in (-16..=16).rev() {
+                    let pos = CellPos::new(q, r, y);
+                    let block = self.planet_hexel_chunks.get_loaded(anchor_cell, pos);
+                    if block.is_solid() { top = Some((pos, block)); break; }
+                }
+                let Some((pos, _block)) = top else { continue; };
+                let distance = ray_hex_prism_distance(ray_origin, ray_direction, q, r, pos.y, radius);
+                if let Some(distance) = distance
+                    && distance <= 8.0
+                    && best.is_none_or(|(_, current)| distance < current) {
+                    best = Some((pos, distance));
+                }
+            }
+        }
+        best.map(|(pos, _)| pos)
+    }
+
+    pub fn planet_hexel_block_at(&self, pos: CellPos) -> BlockId {
+        let Some(origin) = self.planet_hexel_anchor else { return BlockId::Air; };
+        let Some(anchor_cell) = self.planet_world.topology()
+            .cell_id_for_direction(origin.normalize_or_zero()).map(|id| id.0) else {
+            return BlockId::Air;
+        };
+        self.planet_hexel_chunks.get_loaded(anchor_cell, pos)
+    }
+
+    /// Edit the same chunk cells that feed the visible near-field prism mesh.
+    /// The mesh is invalidated immediately and rebuilt on the next render update.
+    pub fn edit_planet_hexel(&mut self, pos: CellPos, block: BlockId) -> bool {
+        if block == BlockId::Foundation { return false; }
+        let Some(origin) = self.planet_hexel_anchor else { return false; };
+        let radial = origin.normalize_or_zero();
+        let Some(anchor_cell) = self.planet_world.topology()
+            .cell_id_for_direction(radial).map(|id| id.0) else {
+            return false;
+        };
+        let (chunk, _) = pos.chunk_and_local();
+        if self.planet_hexel_chunks.loaded_chunk(
+            hexel_engine::planetary_chunks::PlanetHexChunkKey {
+                anchor_cell, q: chunk.q, r: chunk.r, y: chunk.y,
+            }
+        ).is_none() {
+            if self.planet_hexel_chunks.ensure_chunk(anchor_cell, radial, chunk).is_err() {
+                return false;
+            }
+        }
+        let current = self.planet_hexel_chunks.get_loaded(anchor_cell, pos);
+        if current == BlockId::Foundation || !current.is_solid() && block == BlockId::Air {
+            return false;
+        }
+        if !self.planet_hexel_chunks.set_loaded(anchor_cell, pos, block) { return false; }
+        self.planet_hexel_anchor = None;
+        true
+    }
+
     pub fn planet_surface_position(&self, direction: Vec3) -> Vec3 {
         let radial = DVec3::new(
             direction.x as f64,
@@ -1769,6 +1866,36 @@ fn ray_triangle_range(vertices: &[Vertex], origin: Vec3, direction: Vec3, start:
             && nearest.is_none_or(|current| distance < current) {
             nearest = Some(distance);
         }
+    }
+    nearest
+}
+
+fn ray_hex_prism_distance(
+    origin: Vec3, direction: Vec3, q: i32, r: i32, y: i32, radius: f32,
+) -> Option<f32> {
+    let x = radius * 3.0_f32.sqrt() * (q as f32 + r as f32 * 0.5);
+    let z = radius * 1.5 * r as f32;
+    let top = y as f32 * 0.6 + 0.34;
+    let bottom = top - 0.6;
+    let center = Vec3::new(x, top, z);
+    let corners: [Vec3; 6] = std::array::from_fn(|i| {
+        let angle = (30.0_f32 + i as f32 * 60.0).to_radians();
+        Vec3::new(x + radius * angle.cos(), top, z + radius * angle.sin())
+    });
+    let mut nearest: Option<f32> = None;
+    let mut test = |a: Vec3, b: Vec3, c: Vec3| {
+        if let Some(distance) = ray_triangle_distance(origin, direction, a, b, c)
+            && nearest.is_none_or(|current| distance < current) {
+            nearest = Some(distance);
+        }
+    };
+    for i in 0..6 {
+        let j = (i + 1) % 6;
+        test(center, corners[i], corners[j]);
+        let lower_i = Vec3::new(corners[i].x, bottom, corners[i].z);
+        let lower_j = Vec3::new(corners[j].x, bottom, corners[j].z);
+        test(corners[i], lower_i, corners[j]);
+        test(corners[j], lower_i, lower_j);
     }
     nearest
 }
