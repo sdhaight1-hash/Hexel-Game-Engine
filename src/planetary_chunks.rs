@@ -1,3 +1,84 @@
+//! Spherical placement for the engine's fixed 16×16×16 Hexel chunks.
+//!
+//! A chunk remains a 4,096-cell axial-hex prism volume. This module maps its
+//! horizontal chunk address onto a tangent frame on the globe; it does not
+//! replace the chunk with a square terrain patch.
+
+use glam::{DVec3, DVec2};
+
+use crate::{ChunkPos, CHUNK_Q, CHUNK_R, CHUNK_Y, planetary_frame::PlanetaryFrame};
+
+/// Stable identity for a chunk anchored to a point on the planetary crust.
+/// q/r select the local horizontal chunk grid and y selects its radial layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PlanetHexChunkKey {
+    pub anchor_cell: u32,
+    pub q: i32,
+    pub r: i32,
+    pub y: i32,
+}
+
+/// Planet-space placement for one fixed-size Hexel chunk.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlanetHexChunkPlacement {
+    pub key: PlanetHexChunkKey,
+    pub frame: PlanetaryFrame,
+    pub chunk: ChunkPos,
+}
+
+impl PlanetHexChunkPlacement {
+    pub const CELLS_PER_CHUNK: usize =
+        (CHUNK_Q * CHUNK_R * CHUNK_Y) as usize;
+
+    pub fn new(anchor_cell: u32, frame: PlanetaryFrame, chunk: ChunkPos) -> Self {
+        Self {
+            key: PlanetHexChunkKey {
+                anchor_cell,
+                q: chunk.q,
+                r: chunk.r,
+                y: chunk.y,
+            },
+            frame,
+            chunk,
+        }
+    }
+
+    /// Map a local metre-scale point to the planet's double-precision coordinates.
+    /// The frame origin lies on the crust; +Y in chunk space is radial.
+    pub fn local_to_planet(self, local: DVec3) -> DVec3 {
+        self.frame.origin
+            + self.frame.east * local.x
+            + self.frame.up * local.y
+            + self.frame.north * local.z
+    }
+
+    /// Convert a planet-space point into the chunk's tangent coordinates.
+    pub fn planet_to_local(self, point: DVec3) -> DVec3 {
+        let delta = point - self.frame.origin;
+        DVec3::new(
+            delta.dot(self.frame.east),
+            delta.dot(self.frame.up),
+            delta.dot(self.frame.north),
+        )
+    }
+
+    /// Approximate the surface point for a horizontal chunk offset in metres.
+    /// The caller can re-anchor to a neighbouring crust cell when this offset
+    /// crosses a topology-cell boundary.
+    pub fn surface_offset(self, east_metres: f64, north_metres: f64) -> DVec3 {
+        self.frame.move_tangent(east_metres, north_metres)
+    }
+}
+
+/// Chunk-local horizontal centre in metres for the engine's axial hex grid.
+pub fn hex_chunk_horizontal_origin(chunk: ChunkPos, hex_radius_metres: f64) -> DVec2 {
+    let q = (chunk.q * CHUNK_Q) as f64;
+    let r = (chunk.r * CHUNK_R) as f64;
+    let x = hex_radius_metres * 3.0_f64.sqrt() * (q + r * 0.5);
+    let z = hex_radius_metres * 1.5 * r;
+    DVec2::new(x, z)
+}
+
 //! On-demand cube-sphere terrain patches for planetary surface streaming.
 //!
 //! Each patch is generated independently from a face + integer chunk coordinate.
