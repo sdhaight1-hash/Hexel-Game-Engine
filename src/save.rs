@@ -1,12 +1,12 @@
 //! Versioned, dependency-free text save format for player/world progress.
 use crate::{BlockId, CellPos, inventory::{Inventory, ItemId, ItemStack}};
 
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GameSave {
     pub seed: u32,
-    pub player_position: [f32; 3],
+    pub player_position: [f64; 3],
     pub yaw: f32,
     pub pitch: f32,
     pub planet_mode: bool,
@@ -51,7 +51,7 @@ impl GameSave {
     /// Encode as a stable, line-oriented format that is easy to inspect and diff.
     pub fn encode(&self) -> String {
         let mut out = format!(
-            "HEXEL_SAVE {SAVE_VERSION}\nseed {}\nplayer {:.9} {:.9} {:.9}\nlook {:.9} {:.9}\nmode {}\nhotbar {}\n",
+            "HEXEL_SAVE {SAVE_VERSION}\nseed {}\nplayer {:.17} {:.17} {:.17}\nlook {:.9} {:.9}\nmode {}\nhotbar {}\n",
             self.seed,
             self.player_position[0], self.player_position[1], self.player_position[2],
             self.yaw, self.pitch,
@@ -86,7 +86,7 @@ impl GameSave {
             return Err(SaveError::InvalidField("header"));
         }
         let version = parse(header_parts.next(), "version")?;
-        if version != SAVE_VERSION {
+        if version != 1 && version != SAVE_VERSION {
             return Err(SaveError::UnsupportedVersion(version));
         }
 
@@ -107,7 +107,7 @@ impl GameSave {
                         parse(parts.next(), "player y")?,
                         parse(parts.next(), "player z")?,
                     ];
-                    if !save.player_position.iter().all(|v: &f32| v.is_finite()) {
+                    if !save.player_position.iter().all(|v: &f64| v.is_finite()) {
                         return Err(SaveError::InvalidField("player position"));
                     }
                     saw_player = true;
@@ -242,10 +242,10 @@ mod tests {
     #[test]
     fn rejects_unsupported_version_and_corrupt_blocks() {
         assert_eq!(GameSave::decode("HEXEL_SAVE 999\n"), Err(SaveError::UnsupportedVersion(999)));
-        let corrupt = "HEXEL_SAVE 1\nseed 1\nplayer 0 0 0\nlook 0 0\nmode flat\nhotbar 0\nflat 0 0 0 99\n";
+        let corrupt = "HEXEL_SAVE 2\nseed 1\nplayer 0 0 0\nlook 0 0\nmode flat\nhotbar 0\nflat 0 0 0 99\n";
         assert_eq!(GameSave::decode(corrupt), Err(SaveError::InvalidBlock(99)));
         assert_eq!(
-            GameSave::decode("HEXEL_SAVE 1\npvoxel 0 65 1\n"),
+            GameSave::decode("HEXEL_SAVE 2\npvoxel 0 65 1\n"),
             Err(SaveError::InvalidField("planet voxel layer")),
         );
     }
@@ -256,3 +256,4 @@ mod tests {
         assert_eq!(GameSave::decode(corrupt), Err(SaveError::InvalidField("player position")));
     }
 }
+
