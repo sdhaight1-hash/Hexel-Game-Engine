@@ -939,6 +939,53 @@ impl Renderer {
         best.map(|(pos, _)| pos)
     }
 
+    /// Resolve the placement cell from the face actually hit: top/bottom faces
+    /// select a vertical neighbor, side faces select the matching axial neighbor.
+    pub fn planet_hexel_placement_at_ray(&self, origin: Vec3, direction: Vec3) -> Option<CellPos> {
+        let target = self.planet_hexel_at_ray(origin, direction)?;
+        let surface_origin = self.planet_hexel_anchor?;
+        let frame = PlanetaryFrame::at(surface_origin);
+        let world_origin = DVec3::new(origin.x as f64, origin.y as f64, origin.z as f64);
+        let world_direction = DVec3::new(direction.x as f64, direction.y as f64, direction.z as f64)
+            .normalize_or_zero();
+        let relative = world_origin - surface_origin;
+        let local_origin = Vec3::new(
+            relative.dot(frame.east) as f32,
+            relative.dot(frame.up) as f32,
+            relative.dot(frame.north) as f32,
+        );
+        let local_direction = Vec3::new(
+            world_direction.dot(frame.east) as f32,
+            world_direction.dot(frame.up) as f32,
+            world_direction.dot(frame.north) as f32,
+        ).normalize_or_zero();
+        let radius = self.planet_hexel_chunks.scale().hex_radius;
+        let distance = ray_hex_prism_distance(local_origin, local_direction, target.q, target.r, target.y, radius)?;
+        let hit = local_origin + local_direction * distance;
+        let center_x = radius * 3.0_f32.sqrt() * (target.q as f32 + target.r as f32 * 0.5);
+        let center_z = radius * 1.5 * target.r as f32;
+        let top_y = target.y as f32 * 0.6 + 0.34;
+        if hit.y >= top_y - 0.08 {
+            return Some(CellPos::new(target.q, target.r, target.y + 1));
+        }
+        if hit.y <= top_y - 0.52 {
+            return Some(CellPos::new(target.q, target.r, target.y - 1));
+        }
+        let directions = [
+            (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0),
+        ];
+        let mut best = None;
+        for (dq, dr) in directions {
+            let nx = radius * 3.0_f32.sqrt() * (dq as f32 + dr as f32 * 0.5);
+            let nz = radius * 1.5 * dr as f32;
+            let score = (hit.x - center_x - nx).powi(2) + (hit.z - center_z - nz).powi(2);
+            if best.is_none_or(|(_, current)| score < current) {
+                best = Some(((dq, dr), score));
+            }
+        }
+        best.map(|((dq, dr), _)| CellPos::new(target.q + dq, target.r + dr, target.y))
+    }
+
     pub fn planet_hexel_block_at(&self, pos: CellPos) -> BlockId {
         let Some(origin) = self.planet_hexel_anchor else { return BlockId::Air; };
         let Some(anchor_cell) = self.planet_world.topology()
@@ -1382,7 +1429,6 @@ impl Renderer {
                 let z = radius * 1.5 * r as f64;
                 let approximate = origin + frame.east * x + frame.north * z;
                 let direction = approximate.normalize_or_zero();
-                let sample = self.planet_world.terrain().sample_direction(direction, 0.25);
                 let mut occupied_layers = Vec::new();
                 for y in (-16..=16).rev() {
                     let block = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, y));
@@ -1422,12 +1468,12 @@ impl Renderer {
                     for i in 0..6 {
                         let next = (i + 1) % 6;
                         let neighbor = match i {
-                            0 => CellPos::new(q + 1, r, layer),
-                            1 => CellPos::new(q + 1, r - 1, layer),
-                            2 => CellPos::new(q, r - 1, layer),
-                            3 => CellPos::new(q - 1, r, layer),
-                            4 => CellPos::new(q - 1, r + 1, layer),
-                            _ => CellPos::new(q, r + 1, layer),
+                            0 => CellPos::new(q, r + 1, layer),
+                            1 => CellPos::new(q - 1, r + 1, layer),
+                            2 => CellPos::new(q - 1, r, layer),
+                            3 => CellPos::new(q, r - 1, layer),
+                            4 => CellPos::new(q + 1, r - 1, layer),
+                            _ => CellPos::new(q + 1, r, layer),
                         };
                         if self.planet_hexel_chunks.get_loaded(anchor_cell, neighbor).is_solid() {
                             continue;
