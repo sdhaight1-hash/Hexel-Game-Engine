@@ -922,7 +922,7 @@ impl Renderer {
         for r in (r_center - 3)..=(r_center + 3) {
             for q in (q_center - 3)..=(q_center + 3) {
                 let mut top = None;
-                for y in (-16..=16).rev() {
+                for y in (94..=126).rev() {
                     let pos = CellPos::new(q, r, y);
                     let block = self.planet_hexel_chunks.get_loaded(anchor_cell, pos);
                     if block.is_solid() { top = Some((pos, block)); break; }
@@ -1058,7 +1058,7 @@ impl Renderer {
             if let Some(anchor_cell) = self.planet_world.topology()
                 .cell_id_for_direction(frame.up).map(|id| id.0)
             {
-                for layer in (-16..=16).rev() {
+                for layer in (94..=126).rev() {
                     if self.planet_hexel_chunks
                         .get_loaded(anchor_cell, CellPos::new(nearest.0, nearest.1, layer))
                         .is_solid()
@@ -1447,7 +1447,7 @@ impl Renderer {
             vertical_radius_chunks: 1,
         };
         let active_chunks = chunks_in_render_region(
-            anchor_cell, 0, 0, 0, render_config,
+            anchor_cell, 0, 0, 6, render_config,
         );
         let keep_chunks: HashSet<_> = active_chunks.iter().copied().collect();
         for key in active_chunks {
@@ -1466,7 +1466,7 @@ impl Renderer {
                 let x = radius * 3.0_f64.sqrt() * (q as f64 + r as f64 * 0.5);
                 let z = radius * 1.5 * r as f64;
                 let mut occupied_layers = Vec::new();
-                for y in (-16..=16).rev() {
+                for y in (94..=126).rev() {
                     let block = self.planet_hexel_chunks.get_loaded(anchor_cell, CellPos::new(q, r, y));
                     if block.is_solid() { occupied_layers.push((y, block)); }
                 }
@@ -1522,7 +1522,7 @@ impl Renderer {
                         push_triangle(&mut vertices, corners[i], lower_a, corners[next], side_color);
                         push_triangle(&mut vertices, corners[next], lower_a, lower_b, side_color);
                     }
-                    if !below.is_solid() && layer > -16 {
+                    if !below.is_solid() && layer > 0 {
                         // The lower face is normally hidden by terrain; expose it only
                         // when a mined cavity opens beneath a block.
                         let lower_center = Vec3::new(x as f32, bottom_y as f32, z as f32);
@@ -2037,6 +2037,11 @@ fn planet_hexel_color(block: BlockId, q: i32, r: i32, layer: i32) -> [f32; 3] {
     hash = hash.wrapping_mul(0x7FEB_352D);
     hash ^= hash >> 15;
     let variation = ((hash & 0xFFFF) as f32 / 65535.0 - 0.5) * 0.20;
+    if block == BlockId::Foundation && layer == 0 {
+        let speckle = hash % 7;
+        let value = match speckle { 0 => 0.025, 1 => 0.045, 2 => 0.075, 3 => 0.11, 4 => 0.15, 5 => 0.19, _ => 0.23 };
+        return [value, value * 1.015, value * 1.04];
+    }
     let base = planet_block_color(block);
     let mut color = [
         (base[0] * (1.0 + variation)).clamp(0.0, 1.0),
