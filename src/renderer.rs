@@ -12,7 +12,7 @@ use hexel_engine::{
     planetary_chunk_world::PlanetaryChunkWorld,
     world_profile::PlanetaryWorldProfile,
     planetary_voxels::{PlanetVoxelPos, PlanetVoxelVolume},
-    BlockId, CellPos, WorldScale,
+    BlockId, CellPos, ChunkPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
     surface_mesh::SurfaceMesh,
     topology::SurfaceTopology,
@@ -1311,6 +1311,26 @@ impl Renderer {
         let scale = WorldScale::default();
         let radius = scale.hex_radius as f64;
         let step_height = scale.hexel_height as f64;
+        let anchor_cell = self.planet_world.topology()
+            .cell_id_for_direction(radial)
+            .map(|id| id.0)
+            .unwrap_or(0);
+
+        // Materialize the real 16³ chunk data beneath the visible near-field crust.
+        // The horizontal neighbourhood covers this 49×49 cell mesh; adjacent
+        // chunks share one vertical datum and are generated only once per anchor.
+        for chunk_r in -2..=1 {
+            for chunk_q in -2..=1 {
+                for chunk_y in -1..=1 {
+                    let _ = self.planet_hexel_chunks.ensure_chunk(
+                        anchor_cell,
+                        radial,
+                        ChunkPos { q: chunk_q, r: chunk_r, y: chunk_y },
+                    );
+                }
+            }
+        }
+
         let mut vertices: Vec<Vertex> = Vec::with_capacity(90_000);
 
         for r in -GRID_RADIUS..=GRID_RADIUS {
@@ -1322,13 +1342,24 @@ impl Renderer {
                 let direction = approximate.normalize_or_zero();
                 let sample = self.planet_world.terrain().sample_direction(direction, 0.25);
                 let layer = ((sample.elevation - base_sample.elevation) / step_height).round();
-                // Lift slightly above the smooth backdrop to avoid z-fighting.
+                // Read the top material from the chunk-backed crust, not from a
+                // separate decorative material pass. Terrain generation and the
+                // visible Hexel now agree on the surface block where the chunk is loaded.
+                let stored_block = self.planet_hexel_chunks.get_loaded(
+                    anchor_cell,
+                    CellPos::new(q, r, layer as i32),
+                );
+                // Lift slightly above the distant LOD surface until the smooth
+                // backdrop is replaced by the same chunk mesh in the near field.
                 let top_y = layer * step_height + 0.075;
                 let bottom_y = top_y - step_height;
-                // Keep neighbouring Hexels individually legible: a narrow dark
-                // perimeter separates their top faces instead of blending into a blob.
                 let variation = if (q - r).rem_euclid(2) == 0 { 1.035 } else { 0.965 };
-                let color = planet_vertex_color(sample).map(|c| (c * variation).min(1.0));
+                let base_color = if stored_block.is_solid() {
+                    planet_block_color(stored_block)
+                } else {
+                    planet_vertex_color(sample)
+                };
+                let color = base_color.map(|c| (c * variation).min(1.0));
                 let edge_color = [color[0] * 0.34, color[1] * 0.34, color[2] * 0.34];
                 let center = Vec3::new(x as f32, top_y as f32, z as f32);
                 let mut corners = [Vec3::ZERO; 6];
