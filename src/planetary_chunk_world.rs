@@ -98,7 +98,7 @@ impl PlanetaryChunkWorld {
             let frame = PlanetaryFrame::at(chunk_surface.surface_position);
             let placement = PlanetHexChunkPlacement::new(anchor_cell, frame, chunk);
             let mut data = Chunk::default();
-            self.generate_chunk_cells(&mut data, chunk_surface.biome, chunk);
+            self.generate_chunk_cells(&mut data, anchor_frame, chunk_surface.elevation, chunk);
             self.chunks.insert(key, LoadedPlanetHexChunk { placement, data });
         }
         Ok(self.chunks.get(&key).expect("chunk inserted above"))
@@ -125,19 +125,37 @@ impl PlanetaryChunkWorld {
 
     pub fn scale(&self) -> WorldScale { self.scale }
 
-    fn generate_chunk_cells(&self, data: &mut Chunk, biome: Biome, chunk: ChunkPos) {
-        // Every vertical chunk uses one shared datum: y=0 is the surface layer,
-        // y=-1..-3 are soil, and deeper cells are stone. This keeps vertical
-        // chunks contiguous instead of regenerating a new surface in every chunk.
-        for local_y in 0..16usize {
-            let world_y = chunk.y * 16 + local_y as i32;
-            for local_r in 0..16usize {
-                for local_q in 0..16usize {
-                    let block = if world_y > 0 {
+    fn generate_chunk_cells(
+        &self,
+        data: &mut Chunk,
+        anchor_frame: PlanetaryFrame,
+        chunk_base_elevation: f64,
+        chunk: ChunkPos,
+    ) {
+        // Keep a single vertical datum for all chunks around this anchor while
+        // sampling terrain independently for each horizontal Hexel. Elevation
+        // differences become whole 0.6 m layers; the same seed/direction always
+        // yields the same surface and biome.
+        for local_r in 0..16usize {
+            for local_q in 0..16usize {
+                let q = (chunk.q * 16 + local_q as i32) as f64;
+                let r = (chunk.r * 16 + local_r as i32) as f64;
+                let x = self.scale.hex_radius as f64 * 3.0_f64.sqrt() * (q + r * 0.5);
+                let z = self.scale.hex_radius as f64 * 1.5 * r;
+                let approximate = anchor_frame.origin
+                    + anchor_frame.east * x
+                    + anchor_frame.north * z;
+                let sample = self.terrain.sample_direction(approximate, 0.0);
+                let surface_layer = ((sample.elevation - chunk_base_elevation)
+                    / self.scale.hexel_height as f64).round() as i32;
+                for local_y in 0..16usize {
+                    let world_y = chunk.y * 16 + local_y as i32;
+                    let depth_below_surface = surface_layer - world_y;
+                    let block = if depth_below_surface < 0 {
                         BlockId::Air
-                    } else if world_y == 0 {
-                        surface_block(biome)
-                    } else if world_y >= -3 {
+                    } else if depth_below_surface == 0 {
+                        surface_block(sample.biome)
+                    } else if depth_below_surface <= 3 {
                         BlockId::Dirt
                     } else {
                         BlockId::Stone
