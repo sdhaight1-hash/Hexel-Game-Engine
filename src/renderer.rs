@@ -1193,9 +1193,11 @@ impl Renderer {
         // a denser mesh per patch, and a bounded queue so the close surface fills
         // quickly without trying to build the whole neighbourhood in one frame.
         const CHUNKS_PER_FACE: u32 = 200_000;
-        const MESH_RESOLUTION: u32 = 64;
-        const LOCAL_PATCH_RADIUS: u32 = 5;
-        const MAX_NEW_CHUNKS_PER_FRAME: usize = 32;
+        const MESH_RESOLUTION: u32 = 48;
+        const LOCAL_PATCH_RADIUS: u32 = 7;
+        // Build a small budget of distant patches each frame. A large burst of
+        // expensive terrain samples during startup looked like a hard freeze.
+        const MAX_NEW_CHUNKS_PER_FRAME: usize = 6;
 
         let radial = DVec3::new(
             player_position.x as f64,
