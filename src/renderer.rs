@@ -167,10 +167,6 @@ pub struct Renderer {
     overlay_pipeline: wgpu::RenderPipeline,
     crosshair_buffer: wgpu::Buffer,
     target_buffer: wgpu::Buffer,
-    planet_shell_vertex_buffer: wgpu::Buffer,
-    planet_shell_vertex_count: u32,
-    planet_shell_cell_ranges: HashMap<u32, (u32, u32)>,
-    exposed_shell_cells: HashSet<u32>,
     planet_vertex_buffer: wgpu::Buffer,
     planet_vertex_count: u32,
     planet_vertices: Vec<Vertex>,
@@ -531,45 +527,9 @@ impl Renderer {
         let topology = planet_world.topology();
         let terrain = planet_world.terrain();
 
-        // Bake the immutable bedrock shell once at world creation. It sits below
-        // the generated elevation envelope and never follows terrain edits.
-        // The dual topology provides shared, consistently spherical hex/pent boundaries.
-        let bedrock_radius = (planet_config.radius - planet_config.elevation_scale * 1.5).max(1.0);
-        let mut shell_vertices = Vec::new();
-        let mut planet_shell_cell_ranges = HashMap::new();
-        let shell_color = [0.20_f32, 0.22, 0.22];
-        for cell in topology.cells() {
-            let cell_start = shell_vertices.len() as u32;
-            let center = cell.center.normalize() * bedrock_radius;
-            for index in 0..cell.boundary.len() {
-                let next = (index + 1) % cell.boundary.len();
-                let a = cell.boundary[index].normalize() * bedrock_radius;
-                let b = cell.boundary[next].normalize() * bedrock_radius;
-                let mut triangle = [center, a, b];
-                if (triangle[1] - triangle[0])
-                    .cross(triangle[2] - triangle[0])
-                    .dot(triangle[0] + triangle[1] + triangle[2]) < 0.0
-                {
-                    triangle.swap(1, 2);
-                }
-                for position in triangle {
-                    shell_vertices.push(Vertex {
-                        position: position.as_vec3().to_array(),
-                        color: shell_color,
-                        uv: [0.0, 0.0],
-                        textured: 0.0,
-                    });
-                }
-            }
-            planet_shell_cell_ranges.insert(cell.id.0, (cell_start, shell_vertices.len() as u32 - cell_start));
-        }
-        let planet_shell_vertex_count = shell_vertices.len() as u32;
-        let planet_shell_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Immutable geodesic bedrock shell"),
-            contents: bytemuck::cast_slice(&shell_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
+        // The fixed geodesic topology is the bedrock reference surface. It defines
+        // the planet's dimensions and cell layout, but is intentionally never drawn:
+        // immutable bedrock is represented by the unbreakable base Hexel layer.
         let planet_mesh = SurfaceMesh::generate(topology, terrain, 0.25);
         let mut planet_vertices = Vec::new();
         let mut planet_cell_ranges = HashMap::new();
@@ -628,10 +588,6 @@ impl Renderer {
             overlay_pipeline,
             crosshair_buffer,
             target_buffer,
-            planet_shell_vertex_buffer,
-            planet_shell_vertex_count,
-            planet_shell_cell_ranges,
-            exposed_shell_cells: HashSet::new(),
             planet_vertex_buffer,
             planet_vertex_count,
             planet_vertices,
@@ -794,11 +750,6 @@ impl Renderer {
     fn refresh_planet_cell(&mut self, id: u32) {
         let Some((start, end)) = self.planet_cell_ranges.get(&id).copied() else { return; };
         let (top_layer, block) = self.planet_top_solid_voxel(id);
-        if top_layer <= PlanetVoxelVolume::BEDROCK_LAYER {
-            self.exposed_shell_cells.insert(id);
-        } else {
-            self.exposed_shell_cells.remove(&id);
-        }
         let vertex_size = std::mem::size_of::<Vertex>() as u64;
         let first = (start / vertex_size) as usize;
         let end_index = (end / vertex_size) as usize;
@@ -1605,14 +1556,7 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.foliage_bind_group, &[]);
-            // The shell is normally culled; draw only cells whose radial column has
-            // reached immutable bedrock, keeping exposed shell rendering local.
-            pass.set_vertex_buffer(0, self.planet_shell_vertex_buffer.slice(..));
-            for cell_id in &self.exposed_shell_cells {
-                if let Some(&(first, count)) = self.planet_shell_cell_ranges.get(cell_id) {
-                    pass.draw(first..first + count, 0..1);
-                }
-            }
+            // Bedrock is an unrendered base layer; only editable Hexel meshes are drawn.
             pass.set_vertex_buffer(0, self.planet_vertex_buffer.slice(..));
             pass.draw(0..self.planet_vertex_count, 0..1);
             for chunk in self.planet_stream_chunks.values() {
