@@ -10,6 +10,7 @@ use hexel_engine::{
     planetary_frame::PlanetaryFrame,
     planetary_world::PlanetaryWorld,
     planetary_chunk_world::PlanetaryChunkWorld,
+    planetary_hierarchy::{chunks_in_render_region, RenderRegionConfig},
     world_profile::PlanetaryWorldProfile,
     planetary_voxels::{PlanetVoxelPos, PlanetVoxelVolume},
     BlockId, CellPos, ChunkPos, WorldScale,
@@ -1251,20 +1252,26 @@ impl Renderer {
             .map(|id| id.0)
             .unwrap_or(0);
 
-        // Materialize the real 16³ chunk data beneath the visible near-field crust.
-        // The horizontal neighbourhood covers this 49×49 cell mesh; adjacent
-        // chunks share one vertical datum and are generated only once per anchor.
-        for chunk_r in -2..=1 {
-            for chunk_q in -2..=1 {
-                for chunk_y in -1..=1 {
-                    let _ = self.planet_hexel_chunks.ensure_chunk(
-                        anchor_cell,
-                        radial,
-                        ChunkPos { q: chunk_q, r: chunk_r, y: chunk_y },
-                    );
-                }
-            }
+        // The active render region is a moving chunk window, not a permanent
+        // world partition. Stable chunk addresses survive render-distance changes;
+        // resident data outside this window can be released and regenerated later.
+        // A two-chunk horizontal radius covers the current 49×49 near-field mesh.
+        let render_config = RenderRegionConfig {
+            horizontal_radius_chunks: 2,
+            vertical_radius_chunks: 1,
+        };
+        let active_chunks = chunks_in_render_region(
+            anchor_cell, 0, 0, 0, render_config,
+        );
+        let keep_chunks: HashSet<_> = active_chunks.iter().copied().collect();
+        for key in active_chunks {
+            let _ = self.planet_hexel_chunks.ensure_chunk(
+                anchor_cell,
+                radial,
+                ChunkPos { q: key.q, r: key.r, y: key.y },
+            );
         }
+        self.planet_hexel_chunks.retain_chunks(&keep_chunks);
 
         let mut vertices: Vec<Vertex> = Vec::with_capacity(90_000);
 
