@@ -1414,8 +1414,8 @@ impl Renderer {
     /// The smooth cube-sphere mesh remains a distant backdrop; this local mesh is
     /// camera-relative and regenerated only after the player has crossed its radius.
     fn update_planet_hexel_surface(&mut self, player_position: Vec3) {
-        const GRID_RADIUS: i32 = 40;
-        const REBUILD_DISTANCE: f64 = 7.0;
+        const GRID_RADIUS: i32 = 28;
+        const REBUILD_DISTANCE: f64 = 14.0;
         let player_d = DVec3::new(
             player_position.x as f64,
             player_position.y as f64,
@@ -1601,7 +1601,6 @@ impl Renderer {
         inventory_open: bool,
         item_counts: [u16; 36],
     ) -> Result<(), wgpu::SurfaceError> {
-        self.update_planet_streaming(camera.position);
         self.update_planet_hexel_surface(camera.position);
         let view_proj = camera.view_projection(self.size);
         let uniform = CameraUniform {
@@ -1612,14 +1611,6 @@ impl Renderer {
         let camera_position_d = DVec3::new(
             camera.position.x as f64, camera.position.y as f64, camera.position.z as f64,
         );
-        for chunk in self.planet_stream_chunks.values() {
-            let offset = chunk.origin - camera_position_d;
-            let patch_uniform = CameraUniform {
-                view_proj: relative_view_proj.to_cols_array_2d(),
-                world_offset: [offset.x as f32, offset.y as f32, offset.z as f32, 0.0],
-            };
-            self.queue.write_buffer(&chunk.camera_buffer, 0, bytemuck::bytes_of(&patch_uniform));
-        }
         if let Some(hexels) = self.planet_hexel_surface.as_ref() {
             let offset = hexels.origin - camera_position_d;
             let hexel_uniform = CameraUniform {
@@ -2023,6 +2014,29 @@ fn planet_block_color(block: BlockId) -> [f32; 3] {
         BlockId::Dirt => [0.48, 0.29, 0.14],
         BlockId::Stone => [0.43, 0.45, 0.47],
         BlockId::Foundation => [0.20, 0.22, 0.25],
+        BlockId::RockChert => [0.39, 0.37, 0.34],
+        BlockId::RockClaystone => [0.48, 0.40, 0.31],
+        BlockId::RockConglomerate => [0.50, 0.43, 0.34],
+        BlockId::RockLimestone => [0.69, 0.66, 0.57],
+        BlockId::RockSandstone => [0.72, 0.49, 0.29],
+        BlockId::RockShale => [0.34, 0.36, 0.38],
+        BlockId::RockChalk => [0.82, 0.80, 0.72],
+        BlockId::RockMetamorphosedClaystone => [0.40, 0.38, 0.37],
+        BlockId::RockMarble => [0.77, 0.75, 0.72],
+        BlockId::RockPhyllite => [0.40, 0.43, 0.46],
+        BlockId::RockQuartzite => [0.69, 0.62, 0.55],
+        BlockId::RockSchist => [0.37, 0.40, 0.42],
+        BlockId::RockSlate => [0.29, 0.34, 0.39],
+        BlockId::RockGneiss => [0.52, 0.50, 0.47],
+        BlockId::RockAndesite => [0.37, 0.39, 0.40],
+        BlockId::RockBasalt => [0.24, 0.27, 0.29],
+        BlockId::RockObsidian => [0.10, 0.12, 0.15],
+        BlockId::RockPeridotite => [0.31, 0.38, 0.24],
+        BlockId::RockRhyolite => [0.62, 0.55, 0.51],
+        BlockId::RockScoria => [0.28, 0.20, 0.17],
+        BlockId::RockTuff => [0.56, 0.51, 0.43],
+        BlockId::RockGranite => [0.55, 0.47, 0.45],
+        BlockId::RockKimberlite => [0.30, 0.33, 0.31],
     }
 }
 
@@ -2058,9 +2072,9 @@ fn planet_hexel_color(block: BlockId, q: i32, r: i32, layer: i32) -> [f32; 3] {
             color[0] = (color[0] * 1.04).clamp(0.0, 1.0);
             color[2] = (color[2] * 0.92).clamp(0.0, 1.0);
         }
-        BlockId::Stone => {
-            // Slight neutral/cool mineral variation rather than coloured noise.
-            color[2] = (color[2] * (1.0 + variation * 0.35)).clamp(0.0, 1.0);
+        BlockId::Stone | BlockId::RockChert | BlockId::RockClaystone | BlockId::RockConglomerate | BlockId::RockLimestone | BlockId::RockSandstone | BlockId::RockShale | BlockId::RockChalk | BlockId::RockMetamorphosedClaystone | BlockId::RockMarble | BlockId::RockPhyllite | BlockId::RockQuartzite | BlockId::RockSchist | BlockId::RockSlate | BlockId::RockGneiss | BlockId::RockAndesite | BlockId::RockBasalt | BlockId::RockObsidian | BlockId::RockPeridotite | BlockId::RockRhyolite | BlockId::RockScoria | BlockId::RockTuff | BlockId::RockGranite | BlockId::RockKimberlite => {
+            // Mineral materials retain their identity; only a restrained cool shift is added.
+            color[2] = (color[2] * (1.0 + variation * 0.22)).clamp(0.0, 1.0);
         }
         BlockId::Foundation => {
             color[0] = (color[0] * 0.92).clamp(0.0, 1.0);
