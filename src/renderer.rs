@@ -11,7 +11,7 @@ use hexel_engine::{
     planetary_world::PlanetaryWorld,
     planetary_chunk_world::PlanetaryChunkWorld,
     planetary_hierarchy::{chunks_in_render_region, RenderRegionConfig},
-    world_profile::PlanetaryWorldProfile,
+    world_profile::{PlanetaryWorldProfile, SEA_LEVEL_Y, HEXEL_HEIGHT_METRES},
     planetary_voxels::{PlanetVoxelPos, PlanetVoxelVolume},
     BlockId, CellPos, ChunkPos, WorldScale,
     planet::{Biome, PlanetConfig, PlanetGenerator, PlanetSample},
@@ -964,7 +964,7 @@ impl Renderer {
         let hit = local_origin + local_direction * distance;
         let center_x = radius * 3.0_f32.sqrt() * (target.q as f32 + target.r as f32 * 0.5);
         let center_z = radius * 1.5 * target.r as f32;
-        let top_y = target.y as f32 * 0.6 + 0.34;
+        let top_y = hexel_layer_top_y(target.y);
         if hit.y >= top_y - 0.08 {
             return Some(CellPos::new(target.q, target.r, target.y + 1));
         }
@@ -1478,7 +1478,7 @@ impl Renderer {
                     // with one flat colour. The same cell always gets the same colour.
                     let color = planet_hexel_color(block, q, r, layer);
                     let edge_color = [color[0] * 0.34, color[1] * 0.34, color[2] * 0.34];
-                    let top_y = layer as f64 * step_height + 0.34;
+                    let top_y = hexel_layer_top_y(layer) as f64;
                     let bottom_y = top_y - step_height;
                     let center = Vec3::new(x as f32, top_y as f32, z as f32);
                     let mut corners = [Vec3::ZERO; 6];
@@ -1941,12 +1941,16 @@ fn ray_triangle_range(vertices: &[Vertex], origin: Vec3, direction: Vec3, start:
     nearest
 }
 
+fn hexel_layer_top_y(layer: i32) -> f32 {
+    (layer - SEA_LEVEL_Y) as f32 * HEXEL_HEIGHT_METRES + 0.34
+}
+
 fn ray_hex_prism_distance(
     origin: Vec3, direction: Vec3, q: i32, r: i32, y: i32, radius: f32,
 ) -> Option<f32> {
     let x = radius * 3.0_f32.sqrt() * (q as f32 + r as f32 * 0.5);
     let z = radius * 1.5 * r as f32;
-    let top = y as f32 * 0.6 + 0.34;
+    let top = hexel_layer_top_y(y);
     let bottom = top - 0.6;
     let center = Vec3::new(x, top, z);
     let corners: [Vec3; 6] = std::array::from_fn(|i| {
@@ -2606,6 +2610,13 @@ fn fallback_tree_texture(layer: usize, size: u32) -> Vec<u8> {
 mod raycast_tests {
     use super::*;
 
+
+    #[test]
+    fn sea_level_layer_uses_the_planet_surface_as_its_vertical_datum() {
+        assert!((hexel_layer_top_y(SEA_LEVEL_Y) - 0.34).abs() < f32::EPSILON);
+        assert!((hexel_layer_top_y(0) - (-65.66)).abs() < 1.0e-4);
+        assert!((hexel_layer_top_y(255) - 87.34).abs() < 1.0e-4);
+    }
 
     #[test]
     fn camera_tangent_frame_matches_planetary_frame_handedness() {
