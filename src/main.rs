@@ -249,6 +249,7 @@ impl HexelApp {
             BlockId::Grass => 0.55,
             BlockId::Dirt => 0.8,
             BlockId::Stone => 1.8,
+            BlockId::RockChert | BlockId::RockClaystone | BlockId::RockConglomerate | BlockId::RockLimestone | BlockId::RockSandstone | BlockId::RockShale | BlockId::RockChalk | BlockId::RockMetamorphosedClaystone | BlockId::RockMarble | BlockId::RockPhyllite | BlockId::RockQuartzite | BlockId::RockSchist | BlockId::RockSlate | BlockId::RockGneiss | BlockId::RockAndesite | BlockId::RockBasalt | BlockId::RockObsidian | BlockId::RockPeridotite | BlockId::RockRhyolite | BlockId::RockScoria | BlockId::RockTuff | BlockId::RockGranite | BlockId::RockKimberlite => 2.0,
             BlockId::Foundation | BlockId::Air => {
                 self.harvest_progress = 0.0;
                 return;
@@ -260,7 +261,7 @@ impl HexelApp {
                 let recovered = match block {
                     BlockId::Grass => Some(ItemId::GrassBlock),
                     BlockId::Dirt => Some(ItemId::DirtBlock),
-                    BlockId::Stone => Some(ItemId::StoneBlock),
+                    BlockId::Stone | BlockId::RockChert | BlockId::RockClaystone | BlockId::RockConglomerate | BlockId::RockLimestone | BlockId::RockSandstone | BlockId::RockShale | BlockId::RockChalk | BlockId::RockMetamorphosedClaystone | BlockId::RockMarble | BlockId::RockPhyllite | BlockId::RockQuartzite | BlockId::RockSchist | BlockId::RockSlate | BlockId::RockGneiss | BlockId::RockAndesite | BlockId::RockBasalt | BlockId::RockObsidian | BlockId::RockPeridotite | BlockId::RockRhyolite | BlockId::RockScoria | BlockId::RockTuff | BlockId::RockGranite | BlockId::RockKimberlite => Some(ItemId::StoneBlock),
                     BlockId::Foundation | BlockId::Air => None,
                 };
                 if let Some(item) = recovered {
