@@ -1415,7 +1415,7 @@ impl Renderer {
     /// camera-relative and regenerated only after the player has crossed its radius.
     fn update_planet_hexel_surface(&mut self, player_position: Vec3) {
         const GRID_RADIUS: i32 = 28;
-        const REBUILD_DISTANCE: f64 = 14.0;
+        const REBUILD_DISTANCE: f64 = 20.0;
         let player_d = DVec3::new(
             player_position.x as f64,
             player_position.y as f64,
