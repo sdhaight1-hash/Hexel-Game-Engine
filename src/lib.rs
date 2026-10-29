@@ -125,6 +125,9 @@ impl BlockId {
     pub const fn is_indestructible(self) -> bool {
         matches!(self, Self::Foundation)
     }
+    pub const fn is_rock(self) -> bool {
+        matches!(self, Self::RockChert | Self::RockClaystone | Self::RockConglomerate | Self::RockLimestone | Self::RockSandstone | Self::RockShale | Self::RockChalk | Self::RockMetamorphosedClaystone | Self::RockMarble | Self::RockPhyllite | Self::RockQuartzite | Self::RockSchist | Self::RockSlate | Self::RockGneiss | Self::RockAndesite | Self::RockBasalt | Self::RockObsidian | Self::RockPeridotite | Self::RockRhyolite | Self::RockScoria | Self::RockTuff | Self::RockGranite | Self::RockKimberlite)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
