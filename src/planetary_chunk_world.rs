@@ -10,7 +10,7 @@ use glam::DVec3;
 use noise::NoiseFn;
 
 use crate::{
-    BlockId, CellPos, Chunk, ChunkPos, WorldScale,
+    BlockId, CellPos, Chunk, ChunkPos, WorldScale, geology::{RockType, DEFAULT_STRATIGRAPHY, rock_at_depth},
     planetary_chunks::{PlanetHexChunkKey, PlanetHexChunkPlacement},
     planetary_frame::PlanetaryFrame,
     planet::{Biome, PlanetGenerator},
@@ -205,13 +205,60 @@ impl PlanetaryChunkWorld {
                     } else if depth_below_surface <= 3 {
                         BlockId::Dirt
                     } else {
-                        BlockId::Stone
+                        // The 153 m playable crust compresses geological depth 3:1 so
+                        // sedimentary, metamorphic and igneous strata are all reachable.
+                        let geology_depth_m = (depth_below_surface as f64 * self.scale.hexel_height as f64 * 3.0).round() as u32;
+                        let base_rock = rock_at_depth(DEFAULT_STRATIGRAPHY, geology_depth_m).unwrap_or(RockType::Granite);
+                        let variation = geology_hash(self.terrain.seed(), q, r, depth_below_surface / 4) as usize;
+                        let rock = match base_rock {
+                            RockType::Limestone => [RockType::Chert, RockType::Claystone, RockType::Conglomerate, RockType::Limestone, RockType::Sandstone, RockType::Shale, RockType::Chalk][variation % 7],
+                            RockType::Shale => [RockType::MetamorphosedClaystone, RockType::Marble, RockType::Phyllite, RockType::Quartzite, RockType::Schist, RockType::Slate, RockType::Gneiss][variation % 7],
+                            _ => [RockType::Andesite, RockType::Basalt, RockType::Obsidian, RockType::Peridotite, RockType::Rhyolite, RockType::Scoria, RockType::Tuff, RockType::Granite, RockType::Kimberlite][variation % 9],
+                        };
+                        rock_block(rock)
                     };
                     data.set([local_q, local_r, local_y], block);
                 }
             }
         }
         debug_assert_eq!(data.len(), HEXELS_PER_CHUNK);
+    }
+}
+
+fn geology_hash(seed: u32, q: i32, r: i32, depth_band: i32) -> u32 {
+    let mut value = seed ^ (q as u32).wrapping_mul(0x9E37_79B9) ^ (r as u32).rotate_left(13).wrapping_mul(0x85EB_CA6B) ^ (depth_band as u32).wrapping_mul(0xC2B2_AE35);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846C_A68B);
+    value ^ (value >> 16)
+}
+
+fn rock_block(rock: RockType) -> BlockId {
+    match rock {
+        RockType::Chert => BlockId::RockChert,
+        RockType::Claystone => BlockId::RockClaystone,
+        RockType::Conglomerate => BlockId::RockConglomerate,
+        RockType::Limestone => BlockId::RockLimestone,
+        RockType::Sandstone => BlockId::RockSandstone,
+        RockType::Shale => BlockId::RockShale,
+        RockType::Chalk => BlockId::RockChalk,
+        RockType::MetamorphosedClaystone => BlockId::RockMetamorphosedClaystone,
+        RockType::Marble => BlockId::RockMarble,
+        RockType::Phyllite => BlockId::RockPhyllite,
+        RockType::Quartzite => BlockId::RockQuartzite,
+        RockType::Schist => BlockId::RockSchist,
+        RockType::Slate => BlockId::RockSlate,
+        RockType::Gneiss => BlockId::RockGneiss,
+        RockType::Andesite => BlockId::RockAndesite,
+        RockType::Basalt => BlockId::RockBasalt,
+        RockType::Obsidian => BlockId::RockObsidian,
+        RockType::Peridotite => BlockId::RockPeridotite,
+        RockType::Rhyolite => BlockId::RockRhyolite,
+        RockType::Scoria => BlockId::RockScoria,
+        RockType::Tuff => BlockId::RockTuff,
+        RockType::Granite => BlockId::RockGranite,
+        RockType::Kimberlite => BlockId::RockKimberlite,
     }
 }
 
