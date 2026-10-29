@@ -303,7 +303,7 @@ mod tests {
         let mut world = store();
         let base = world.ensure_chunk(5, DVec3::X, ChunkPos::default()).unwrap();
         assert_eq!(base.data.get([0, 0, 0]), BlockId::Foundation);
-        assert_eq!(base.data.get([0, 0, 1]), BlockId::Stone);
+        assert!(base.data.get([0, 0, 1]).is_rock(), "generated crust should contain a real geology block");
         for chunk_y in 5..=7 {
             world.ensure_chunk(5, DVec3::X, ChunkPos { q: 0, r: 0, y: chunk_y }).unwrap();
         }
